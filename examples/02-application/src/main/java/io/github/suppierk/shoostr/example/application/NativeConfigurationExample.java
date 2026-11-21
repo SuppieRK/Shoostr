@@ -24,10 +24,12 @@ public final class NativeConfigurationExample {
               // Native pool and listener settings stay with Jetty's own configuration types.
               var pool = (QueuedThreadPool) server.getThreadPool();
               pool.setMaxThreads(32);
+
               var connector = (ServerConnector) server.getConnectors()[0];
               connector.setHost("127.0.0.1");
               connector.setPort(port);
               connector.setIdleTimeout(10_000);
+
               server.setStopTimeout(1000);
             })
         .routes(routes -> routes.get("/health", (ignored, response) -> response.text("ready")));

@@ -1,5 +1,8 @@
 package io.github.suppierk.shoostr;
 
+import static io.github.suppierk.shoostr.Locks.getUnderLock;
+import static io.github.suppierk.shoostr.Locks.runUnderLock;
+
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
@@ -17,14 +20,15 @@ import org.eclipse.jetty.websocket.core.CloseStatus;
 import org.jspecify.annotations.Nullable;
 
 /** A connection with serialized, interruptible, transport-completing writes. */
-public sealed class WebSocketConnection implements AutoCloseable permits TypedWebSocketConnection {
+public sealed class WebSocketConnection implements AutoCloseable {
   private final Session session;
   private final String path;
   private final Map<String, String> parameters;
   private final @Nullable Principal principal;
   private final ManagedWebSocket listener;
-  private final Object lifecycle;
+  private final ReentrantLock lifecycleLock;
   private final ReentrantLock writes;
+
   private @Nullable CompletableFuture<@Nullable Void> pending;
   private boolean terminal;
 
@@ -48,8 +52,8 @@ public sealed class WebSocketConnection implements AutoCloseable permits TypedWe
     this.parameters = Map.copyOf(parameters);
     this.principal = principal;
     this.listener = Objects.requireNonNull(listener);
-    lifecycle = new Object();
-    writes = new ReentrantLock();
+    this.lifecycleLock = new ReentrantLock();
+    this.writes = new ReentrantLock();
   }
 
   /**
@@ -87,9 +91,7 @@ public sealed class WebSocketConnection implements AutoCloseable permits TypedWe
    * @return whether application writes remain open
    */
   public boolean isOpen() {
-    synchronized (lifecycle) {
-      return !terminal && session.isOpen();
-    }
+    return Objects.requireNonNull(getUnderLock(lifecycleLock, () -> !terminal && session.isOpen()));
   }
 
   /** Initiates normal 1000 closure without waiting for the peer's acknowledgment. */
@@ -115,16 +117,24 @@ public sealed class WebSocketConnection implements AutoCloseable permits TypedWe
       throw new IllegalArgumentException("Invalid WebSocket close code or reason");
     }
 
-    synchronized (lifecycle) {
-      if (terminal) {
-        return;
-      }
+    if (Boolean.FALSE.equals(
+        getUnderLock(
+            lifecycleLock,
+            () -> {
+              if (terminal) {
+                return false;
+              }
 
-      terminal = true;
-      if (pending != null) {
-        pending.completeExceptionally(new IOException("WebSocket is closing"));
-      }
+              terminal = true;
+              if (pending != null) {
+                pending.completeExceptionally(new IOException("WebSocket is closing"));
+              }
+
+              return true;
+            }))) {
+      return;
     }
+
     listener.closing();
 
     try {
@@ -146,6 +156,22 @@ public sealed class WebSocketConnection implements AutoCloseable permits TypedWe
   }
 
   /**
+   * Rejects future sends and settles an outstanding write independently of its write lock.
+   *
+   * @param failure observed transport termination
+   */
+  void terminate(Throwable failure) {
+    runUnderLock(
+        lifecycleLock,
+        () -> {
+          terminal = true;
+          if (pending != null) {
+            pending.completeExceptionally(failure);
+          }
+        });
+  }
+
+  /**
    * Sends a complete text message, waiting for native write completion, not peer receipt.
    * Concurrent producers are ordered by write-lock admission. Interruption after submission stops
    * further writes because the message may already have been transmitted.
@@ -156,6 +182,7 @@ public sealed class WebSocketConnection implements AutoCloseable permits TypedWe
    */
   public void send(String text) throws IOException, InterruptedException {
     Objects.requireNonNull(text);
+
     write(callback -> session.sendText(text, callback));
   }
 
@@ -169,6 +196,7 @@ public sealed class WebSocketConnection implements AutoCloseable permits TypedWe
    */
   public void send(byte[] bytes) throws IOException, InterruptedException {
     Objects.requireNonNull(bytes);
+
     write(callback -> session.sendBinary(ByteBuffer.wrap(bytes.clone()), callback));
   }
 
@@ -209,16 +237,18 @@ public sealed class WebSocketConnection implements AutoCloseable permits TypedWe
   @SuppressWarnings("ReferenceEquality")
   private void write(Consumer<Callback> submit) throws IOException, InterruptedException {
     writes.lockInterruptibly();
-    var completion = new CompletableFuture<@Nullable Void>();
+    final var completion = new CompletableFuture<@Nullable Void>();
 
     try {
-      synchronized (lifecycle) {
-        if (terminal) {
-          throw new IOException("WebSocket is closed");
-        }
+      runUnderLock(
+          lifecycleLock,
+          () -> {
+            if (terminal) {
+              throw new IOException("WebSocket is closed");
+            }
 
-        pending = completion;
-      }
+            pending = completion;
+          });
 
       try {
         submit.accept(
@@ -236,11 +266,13 @@ public sealed class WebSocketConnection implements AutoCloseable permits TypedWe
         throw failure;
       }
     } finally {
-      synchronized (lifecycle) {
-        if (pending == completion) {
-          pending = null;
-        }
-      }
+      runUnderLock(
+          lifecycleLock,
+          () -> {
+            if (pending == completion) {
+              pending = null;
+            }
+          });
       writes.unlock();
     }
   }
@@ -251,24 +283,51 @@ public sealed class WebSocketConnection implements AutoCloseable permits TypedWe
    * @throws IOException if this connection has closed
    */
   private void requireOpen() throws IOException {
-    synchronized (lifecycle) {
-      if (terminal || !session.isOpen()) {
-        throw new IOException("WebSocket is closed");
-      }
-    }
+    runUnderLock(
+        lifecycleLock,
+        () -> {
+          if (terminal || !session.isOpen()) {
+            throw new IOException("WebSocket is closed");
+          }
+        });
   }
 
-  /**
-   * Rejects future sends and settles an outstanding write independently of its write lock.
-   *
-   * @param failure observed transport termination
-   */
-  void terminate(Throwable failure) {
-    synchronized (lifecycle) {
-      terminal = true;
-      if (pending != null) {
-        pending.completeExceptionally(failure);
-      }
+  /** Codec-enabled connection; inherited text and byte sends bypass conversion. */
+  public static final class Typed extends WebSocketConnection {
+    private final Codec codec;
+
+    /**
+     * Initializes one connection over the ordinary transport lifecycle.
+     *
+     * @param session opened native session
+     * @param path detached handshake path
+     * @param parameters detached route parameters
+     * @param principal detached identity reference
+     * @param listener managed delivery owner
+     * @param codec shared application conversion
+     */
+    Typed(
+        Session session,
+        String path,
+        Map<String, String> parameters,
+        @Nullable Principal principal,
+        ManagedWebSocket listener,
+        Codec codec) {
+      super(session, path, parameters, principal, listener);
+      this.codec = Objects.requireNonNull(codec);
+    }
+
+    /**
+     * Encodes one nonnull object and sends its bytes as a binary message. Waits for native write
+     * completion, not peer receipt. Conversion shares ordinary write admission; a closed connection
+     * rejects the call before invoking the codec.
+     *
+     * @param value application representation, including strings or arrays to encode
+     * @throws Exception if conversion or transport completion fails
+     */
+    @SuppressWarnings("java:S112")
+    public void sendObject(Object value) throws Exception {
+      sendEncoded(codec, value);
     }
   }
 }

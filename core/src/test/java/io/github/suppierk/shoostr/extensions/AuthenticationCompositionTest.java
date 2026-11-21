@@ -3,7 +3,6 @@ package io.github.suppierk.shoostr.extensions;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.suppierk.shoostr.ApplicationCallbacks;
 import io.github.suppierk.shoostr.AuthenticationExtension;
@@ -11,6 +10,7 @@ import io.github.suppierk.shoostr.Request;
 import io.github.suppierk.shoostr.Response;
 import io.github.suppierk.shoostr.Shoostr;
 import io.github.suppierk.shoostr.testing.TestServer;
+import java.io.Closeable;
 import java.net.http.HttpResponse;
 import java.util.ArrayList;
 import java.util.List;
@@ -22,12 +22,15 @@ import org.junit.jupiter.params.provider.ValueSource;
 
 class AuthenticationCompositionTest {
   @Test
-  void installsMultipleIdentitySourcesAndReturnsTheApplication() throws Exception {
+  void activatesAuthenticationDefaultsAndReturnsTheApplication() throws Exception {
     var first = new IdentitySource("first");
-    var second = new IdentitySource("second");
 
-    try (var app = new Shoostr()) {
-      assertSame(app, app.authentication(first, second));
+    {
+      var app = new Shoostr();
+
+      try (Closeable appCleanup = app::close) {
+        assertSame(app, app.withExtension(first));
+      }
     }
   }
 
@@ -39,66 +42,80 @@ class AuthenticationCompositionTest {
     var second = new IdentitySource("second");
     var facts = new ArrayList<String>();
 
-    try (var app = new Shoostr()) {
-      app.authentication(first, second);
-      var routes = app.routes();
+    {
+      var app = new Shoostr();
 
-      assertThrows(
-          IllegalArgumentException.class,
-          () ->
-              routes.get(
-                  "/private",
-                  (ignored, response) -> response.text("private"),
-                  e -> {
-                    e.onRoute((ignored2, path) -> facts.add(path));
-                    e.with(reverse ? second : first);
-                    e.with(reverse ? first : second);
-                  }));
+      try (Closeable appCleanup1 = app::close) {
 
-      app.routes()
-          .get(
-              "/private",
-              (ignored3, response) -> response.text("corrected"),
-              e -> {
-                e.with(second);
-                e.onRoute((ignored4, path) -> facts.add(path));
-              });
+        var routes = app.routes();
 
-      try (var test = TestServer.start(app)) {
-        assertEquals(List.of("/private"), facts);
-        assertEquals(
-            "corrected",
-            test.send(request -> request.path("/private"), HttpResponse.BodyHandlers.ofString())
-                .body());
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                routes.get(
+                    "/private",
+                    (ignored, response) -> response.text("private"),
+                    lifecycle -> {
+                      lifecycle.onRoute((ignoredHttpMethods, path) -> facts.add(path));
+                      lifecycle.withExtension(reverse ? second : first);
+                      lifecycle.withExtension(reverse ? first : second);
+                    }));
+
+        app.routes()
+            .get(
+                "/private",
+                (ignoredRequest, response) -> response.text("corrected"),
+                lifecycle -> {
+                  lifecycle.withExtension(second);
+                  lifecycle.onRoute((ignoredHttpMethods, path) -> facts.add(path));
+                });
+
+        try (var test = TestServer.start(app)) {
+          assertEquals(List.of("/private"), facts);
+          assertEquals(
+              "corrected",
+              test.send(request -> request.path("/private"), HttpResponse.BodyHandlers.ofString())
+                  .body());
+        }
       }
     }
   }
 
   @Test
-  void rejectsAChildRequiringADifferentIdentitySourceThanItsParent() throws Exception {
+  void rejectsChildRequiringDifferentIdentitySourceThanItsParent() throws Exception {
     var first = new IdentitySource("first");
     var second = new IdentitySource("second");
 
-    try (var app = new Shoostr()) {
-      app.authentication(first, second);
-      var routes = app.routes();
+    {
+      var app = new Shoostr();
 
-      assertThrows(
-          IllegalArgumentException.class,
-          () ->
-              routes.path(
-                  "/private",
-                  child -> child.get("/child", (ignored5, ignored6) -> {}, e -> e.with(second)),
-                  e -> e.with(first)));
+      try (Closeable appCleanup2 = app::close) {
 
-      app.routes().get("/private/child", (ignored7, response) -> response.text("corrected"));
+        var routes = app.routes();
 
-      try (var test = TestServer.start(app)) {
-        assertEquals(
-            "corrected",
-            test.send(
-                    request -> request.path("/private/child"), HttpResponse.BodyHandlers.ofString())
-                .body());
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                routes.path(
+                    "/private",
+                    child ->
+                        child.get(
+                            "/child",
+                            (ignoredRequest, ignoredResponse) -> {},
+                            lifecycle -> lifecycle.withExtension(second)),
+                    lifecycle -> lifecycle.withExtension(first)));
+
+        app.routes()
+            .get("/private/child", (ignoredRequest, response) -> response.text("corrected"));
+
+        try (var test = TestServer.start(app)) {
+          assertEquals(
+              "corrected",
+              test.send(
+                      request -> request.path("/private/child"),
+                      HttpResponse.BodyHandlers.ofString())
+                  .body());
+        }
       }
     }
   }
@@ -108,36 +125,38 @@ class AuthenticationCompositionTest {
     var first = new IdentitySource("first");
     var second = new IdentitySource("second");
 
-    try (var app = new Shoostr()) {
-      app.authentication(first, second);
-      app.routes()
-          .path(
-              "/first",
-              child ->
-                  child.get(
-                      (request, response) ->
-                          response.text(request.principal().orElseThrow().getName())),
-              e -> e.with(first));
-      app.routes()
-          .path(
-              "/second",
-              child ->
-                  child.get(
-                      (request, response) ->
-                          response.text(request.principal().orElseThrow().getName())),
-              e -> e.with(second));
+    {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        assertEquals(
-            "first",
-            test.send(request -> request.path("/first"), HttpResponse.BodyHandlers.ofString())
-                .body());
-        assertEquals(
-            "second",
-            test.send(request -> request.path("/second"), HttpResponse.BodyHandlers.ofString())
-                .body());
-        assertEquals(1, first.requests.get());
-        assertEquals(1, second.requests.get());
+      try (Closeable appCleanup3 = app::close) {
+
+        app.routes()
+            .path(
+                "/first",
+                child ->
+                    child.get((request, response) ->
+                        response.text(request.principal().orElseThrow().getName())),
+                lifecycle -> lifecycle.withExtension(first));
+        app.routes()
+            .path(
+                "/second",
+                child ->
+                    child.get((request, response) ->
+                        response.text(request.principal().orElseThrow().getName())),
+                lifecycle -> lifecycle.withExtension(second));
+
+        try (var test = TestServer.start(app)) {
+          assertEquals(
+              "first",
+              test.send(request -> request.path("/first"), HttpResponse.BodyHandlers.ofString())
+                  .body());
+          assertEquals(
+              "second",
+              test.send(request -> request.path("/second"), HttpResponse.BodyHandlers.ofString())
+                  .body());
+          assertEquals(1, first.requests.get());
+          assertEquals(1, second.requests.get());
+        }
       }
     }
   }
@@ -146,110 +165,77 @@ class AuthenticationCompositionTest {
   void repeatedInheritedRequirementAuthenticatesOnce() throws Exception {
     var source = new IdentitySource("first");
 
-    try (var app = new Shoostr()) {
-      app.authentication(source);
-      app.routes()
-          .path(
-              "/private",
-              child ->
-                  child.get(
-                      (request, response) ->
-                          response.text(request.principal().orElseThrow().getName()),
-                      e -> e.with(source)),
-              e -> e.with(source));
+    {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        assertEquals(
-            "first",
-            test.send(request -> request.path("/private"), HttpResponse.BodyHandlers.ofString())
-                .body());
-        assertEquals(1, source.requests.get());
+      try (Closeable appCleanup4 = app::close) {
+
+        app.routes()
+            .path(
+                "/private",
+                child ->
+                    child.get(
+                        (request, response) ->
+                            response.text(request.principal().orElseThrow().getName()),
+                        lifecycle -> lifecycle.withExtension(source)),
+                lifecycle -> lifecycle.withExtension(source));
+
+        try (var test = TestServer.start(app)) {
+          assertEquals(
+              "first",
+              test.send(request -> request.path("/private"), HttpResponse.BodyHandlers.ofString())
+                  .body());
+          assertEquals(1, source.requests.get());
+        }
       }
     }
   }
 
   @Test
-  void installationDoesNotAuthenticatePublicEndpoints() throws Exception {
+  void scopedSelectionDoesNotAuthenticatePublicEndpoints() throws Exception {
     var first = new IdentitySource("first");
     var second = new IdentitySource("second");
 
-    try (var app = new Shoostr()) {
-      app.authentication(first, second);
-      app.routes()
-          .get(
-              "/metadata",
-              (request, response) ->
-                  response.text(request.principal().isEmpty() ? "public" : "private"));
+    {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        assertEquals(
-            "public",
-            test.send(request -> request.path("/metadata"), HttpResponse.BodyHandlers.ofString())
-                .body());
-        assertEquals(0, first.requests.get());
-        assertEquals(0, second.requests.get());
+      try (Closeable appCleanup5 = app::close) {
+        app.routes()
+            .get(
+                "/first",
+                (request, response) -> response.text("first"),
+                lifecycle -> lifecycle.withExtension(first))
+            .get(
+                "/second",
+                (request, response) -> response.text("second"),
+                lifecycle -> lifecycle.withExtension(second));
+        app.routes()
+            .get(
+                "/metadata",
+                (request, response) ->
+                    response.text(request.principal().isEmpty() ? "public" : "private"));
+
+        try (var test = TestServer.start(app)) {
+          assertEquals(
+              "public",
+              test.send(request -> request.path("/metadata"), HttpResponse.BodyHandlers.ofString())
+                  .body());
+          assertEquals(0, first.requests.get());
+          assertEquals(0, second.requests.get());
+        }
       }
     }
   }
 
   @Test
-  void nullAdditionalArrayInstallsAndClosesOnlyTheFirstIdentitySource() throws Exception {
-    var events = new ArrayList<String>();
-    var first = new IdentitySource("first", events);
+  void rejectsNullIdentitySourceBeforeClaimingOwnership() throws Exception {
+    var app = new Shoostr();
 
-    try (var app = new Shoostr()) {
-      assertSame(app, app.authentication(first, (AuthenticationExtension[]) null));
-      assertEquals(List.of("install-first"), events);
+    try (Closeable cleanup = app::close) {
+      assertThrows(NullPointerException.class, () -> app.withExtension(null));
+
+      app.withExtension(new IdentitySource("corrected"));
     }
-
-    assertEquals(List.of("install-first", "close-first"), events);
-  }
-
-  @Test
-  void rejectsNullIdentitySourcesBeforeInstallingAnyInstance() throws Exception {
-    var events = new ArrayList<String>();
-    var first = new IdentitySource("first", events);
-    var second = new IdentitySource("second", events);
-
-    try (var app = new Shoostr()) {
-      assertThrows(NullPointerException.class, () -> app.authentication(null, second));
-      assertThrows(NullPointerException.class, () -> app.authentication(first, second, null));
-      assertTrue(events.isEmpty());
-      app.authentication(first, second);
-    }
-
-    assertEquals(List.of("install-first", "install-second", "close-second", "close-first"), events);
-  }
-
-  @Test
-  void rejectsDuplicateIdentitySourcesBeforeInstallingAnyInstance() throws Exception {
-    var events = new ArrayList<String>();
-    var first = new IdentitySource("first", events);
-    var second = new IdentitySource("second", events);
-
-    try (var app = new Shoostr()) {
-      assertThrows(IllegalArgumentException.class, () -> app.authentication(first, second, first));
-      assertTrue(events.isEmpty());
-      app.authentication(first, second);
-    }
-
-    assertEquals(List.of("install-first", "install-second", "close-second", "close-first"), events);
-  }
-
-  @Test
-  void aPreviouslyInstalledInstanceRejectsTheWholeNewBatch() throws Exception {
-    var events = new ArrayList<String>();
-    var first = new IdentitySource("first", events);
-    var second = new IdentitySource("second", events);
-
-    try (var app = new Shoostr()) {
-      app.authentication(first);
-      assertThrows(IllegalArgumentException.class, () -> app.authentication(second, first));
-      assertEquals(List.of("install-first"), events);
-      app.authentication(second);
-    }
-
-    assertEquals(List.of("install-first", "install-second", "close-second", "close-first"), events);
   }
 
   private static final class IdentitySource extends AuthenticationExtension {
@@ -264,7 +250,7 @@ class AuthenticationCompositionTest {
     private IdentitySource(String name, List<String> events) {
       this.name = Objects.requireNonNull(name);
       this.events = Objects.requireNonNull(events);
-      requests = new AtomicInteger();
+      this.requests = new AtomicInteger();
     }
 
     @Override

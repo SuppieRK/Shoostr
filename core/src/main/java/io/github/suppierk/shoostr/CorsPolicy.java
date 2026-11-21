@@ -10,53 +10,45 @@ import java.util.Set;
 import org.jspecify.annotations.Nullable;
 
 /**
- * Complete immutable cross-origin permissions. Each policy has standalone defaults; selecting a
- * replacement does not merge collections or inherit omitted fields. Origins use exact serialized
- * HTTP(S) spelling, opaque {@code null}, or noncredentialed {@code *}.
+ * Mutable cross-origin configuration; Cors captures defensive copies before serving. Each policy
+ * has standalone defaults; selecting a replacement does not merge collections or inherit omitted
+ * fields. Origins use exact serialized HTTP(S) spelling, opaque {@code null}, or noncredentialed
+ * {@code *}.
  */
 public final class CorsPolicy {
-  private final Set<String> origins;
-  private final Set<HttpMethods> methods;
-  private final boolean allMethods;
-  private final Set<HttpHeaders> allowedHeaders;
-  private final boolean credentials;
-  private final Set<HttpHeaders> exposedHeaders;
-  private final long maxAgeSeconds;
+  private Set<String> origins;
+  private Set<HttpMethods> methods;
+  private boolean allMethods;
+  private Set<HttpHeaders> allowedHeaders;
+  private boolean credentials;
+  private Set<HttpHeaders> exposedHeaders;
+  private long maxAgeSeconds;
 
-  /**
-   * Creates a policy with every value explicitly configured.
-   *
-   * @param origins exact allowed serialized origins
-   * @param methods allowed methods, or an empty set to deny all
-   * @param allowedHeaders permitted preflight headers
-   * @param credentials whether credentialed sharing is allowed
-   * @param exposedHeaders additional response headers visible to scripts
-   * @param maxAgeSeconds nonnegative browser preflight cache lifetime
-   */
-  public CorsPolicy(
-      Set<String> origins,
-      Set<HttpMethods> methods,
-      Set<HttpHeaders> allowedHeaders,
-      boolean credentials,
-      Set<HttpHeaders> exposedHeaders,
-      long maxAgeSeconds) {
-    this(
-        builder()
-            .origins(origins)
-            .methods(methods)
-            .allowedHeaders(allowedHeaders)
-            .credentials(credentials)
-            .exposedHeaders(exposedHeaders)
-            .maxAgeSeconds(maxAgeSeconds));
+  /** Creates standalone default permissions for JavaBean configuration loading. */
+  public CorsPolicy() {
+    this.origins = Set.of();
+    this.methods = Set.of(HttpMethods.GET, HttpMethods.HEAD);
+    this.allMethods = false;
+    this.allowedHeaders = Set.of();
+    this.credentials = false;
+    this.exposedHeaders = Set.of();
+    this.maxAgeSeconds = 5;
   }
 
   /**
-   * Configures origins with standalone defaults for the other permissions.
+   * Copy constructor that captures and validates complete permissions before provider ownership.
    *
-   * @param origins exact allowed serialized origins
+   * @param source mutable caller configuration
    */
-  public CorsPolicy(Set<String> origins) {
-    this(builder().origins(origins));
+  CorsPolicy(CorsPolicy source) {
+    this.origins = Objects.requireNonNull(source, "source").origins;
+    this.methods = source.methods;
+    this.allMethods = source.allMethods;
+    this.allowedHeaders = source.allowedHeaders;
+    this.credentials = source.credentials;
+    this.exposedHeaders = source.exposedHeaders;
+    this.maxAgeSeconds = source.maxAgeSeconds;
+    validate();
   }
 
   /**
@@ -70,32 +62,16 @@ public final class CorsPolicy {
       Origins.validateOrigin(origin);
     }
 
-    origins = wildcard(builder.origins, HttpCharacters.ASTERISK_STRING);
-    methods = builder.methods;
-    allMethods = builder.allMethods;
-    allowedHeaders =
+    this.origins = wildcard(builder.origins, HttpCharacters.ASTERISK_STRING);
+    this.methods = builder.methods;
+    this.allMethods = builder.allMethods;
+    this.allowedHeaders =
         wildcard(builder.allowedHeaders, HttpHeaders.of(HttpCharacters.ASTERISK_STRING));
-    credentials = builder.credentials;
-    exposedHeaders =
+    this.credentials = builder.credentials;
+    this.exposedHeaders =
         wildcard(builder.exposedHeaders, HttpHeaders.of(HttpCharacters.ASTERISK_STRING));
-    maxAgeSeconds = builder.maxAgeSeconds;
-    if (allMethods && !methods.isEmpty()) {
-      throw new IllegalArgumentException("Wildcard methods require an explicitly empty method set");
-    }
-
-    if (credentials() && origins().contains(HttpCharacters.ASTERISK_STRING)) {
-      throw new IllegalArgumentException("Credentialed CORS requires explicit origins");
-    }
-
-    if (credentials()
-        && exposedHeaders().contains(HttpHeaders.of(HttpCharacters.ASTERISK_STRING))) {
-      throw new IllegalArgumentException(
-          "Credentialed CORS requires explicit exposed header names");
-    }
-
-    if (maxAgeSeconds() < 0) {
-      throw new IllegalArgumentException("CORS cache lifetime must be nonnegative");
-    }
+    this.maxAgeSeconds = builder.maxAgeSeconds;
+    validate();
   }
 
   /**
@@ -108,6 +84,38 @@ public final class CorsPolicy {
   }
 
   /**
+   * Collapses a wildcard to one immutable value.
+   *
+   * @param values configured immutable values
+   * @param wildcard wildcard value
+   * @param <T> value type
+   * @return normalized immutable values
+   */
+  private static <T> Set<T> wildcard(Set<T> values, T wildcard) {
+    return values.contains(wildcard) ? Set.of(wildcard) : values;
+  }
+
+  /**
+   * Returns the configured browser origins.
+   *
+   * @return immutable origins, defaulting to none
+   */
+  public Set<String> getOrigins() {
+    return origins;
+  }
+
+  /**
+   * Replaces browser origins without retaining the supplied collection.
+   *
+   * @param values exact serialized origins; null restores the empty default
+   */
+  public void setOrigins(@Nullable Set<String> values) {
+    var resolved = values == null ? Set.<String>of() : Set.copyOf(values);
+    resolved.forEach(Origins::validateOrigin);
+    origins = wildcard(resolved, HttpCharacters.ASTERISK_STRING);
+  }
+
+  /**
    * Returns allowed origins, defaulting to none.
    *
    * @return immutable origin set
@@ -117,12 +125,49 @@ public final class CorsPolicy {
   }
 
   /**
+   * Returns allowed methods, defaulting to GET and HEAD.
+   *
+   * @return configured methods
+   */
+  public Set<HttpMethods> getMethods() {
+    return methods;
+  }
+
+  /**
+   * Sets allowed methods, defaulting to GET and HEAD.
+   *
+   * @param value replacement setting. Null restores GET and HEAD; the wildcard flag is unchanged.
+   */
+  public void setMethods(@Nullable Set<HttpMethods> value) {
+    methods = value == null ? Set.of(HttpMethods.GET, HttpMethods.HEAD) : Set.copyOf(value);
+  }
+
+  /**
    * Returns allowed methods, defaulting to GET and HEAD only when unspecified.
    *
    * @return immutable method set; inspect allMethods() to distinguish wildcard from deny-all
    */
   public Set<HttpMethods> methods() {
     return methods;
+  }
+
+  /**
+   * Returns whether every valid HTTP method is allowed.
+   *
+   * @return configured allMethods
+   */
+  public Boolean getAllMethods() {
+    return allMethods;
+  }
+
+  /**
+   * Sets whether every valid HTTP method is allowed.
+   *
+   * @param value replacement setting. Null restores false. A wildcard policy requires an empty
+   *     {@code methods} collection.
+   */
+  public void setAllMethods(@Nullable Boolean value) {
+    allMethods = value != null && value;
   }
 
   /**
@@ -137,10 +182,49 @@ public final class CorsPolicy {
   /**
    * Returns permitted preflight headers, defaulting to none.
    *
+   * @return configured allowedHeaders
+   */
+  public Set<HttpHeaders> getAllowedHeaders() {
+    return allowedHeaders;
+  }
+
+  /**
+   * Sets permitted preflight headers, defaulting to none.
+   *
+   * @param value replacement setting. Null restores the empty default.
+   */
+  public void setAllowedHeaders(@Nullable Set<HttpHeaders> value) {
+    allowedHeaders =
+        wildcard(
+            value == null ? Set.of() : Set.copyOf(value),
+            HttpHeaders.of(HttpCharacters.ASTERISK_STRING));
+  }
+
+  /**
+   * Returns permitted preflight headers, defaulting to none.
+   *
    * @return immutable typed header set
    */
   public Set<HttpHeaders> allowedHeaders() {
     return allowedHeaders;
+  }
+
+  /**
+   * Returns whether credentialed sharing is allowed.
+   *
+   * @return configured credentials
+   */
+  public Boolean getCredentials() {
+    return credentials;
+  }
+
+  /**
+   * Sets whether credentialed sharing is allowed.
+   *
+   * @param value replacement setting. Null restores false.
+   */
+  public void setCredentials(@Nullable Boolean value) {
+    credentials = value != null && value;
   }
 
   /**
@@ -153,12 +237,57 @@ public final class CorsPolicy {
   }
 
   /**
+   * Returns additional response headers, defaulting to none.
+   *
+   * @return configured exposedHeaders
+   */
+  public Set<HttpHeaders> getExposedHeaders() {
+    return exposedHeaders;
+  }
+
+  /**
+   * Sets additional response headers, defaulting to none.
+   *
+   * @param value replacement setting. Null restores the empty default.
+   */
+  public void setExposedHeaders(@Nullable Set<HttpHeaders> value) {
+    exposedHeaders =
+        wildcard(
+            value == null ? Set.of() : Set.copyOf(value),
+            HttpHeaders.of(HttpCharacters.ASTERISK_STRING));
+  }
+
+  /**
    * Returns additional response headers visible to scripts, defaulting to none.
    *
    * @return immutable typed header set
    */
   public Set<HttpHeaders> exposedHeaders() {
     return exposedHeaders;
+  }
+
+  /**
+   * Returns browser preflight cache lifetime in seconds, defaulting to five.
+   *
+   * @return configured maxAgeSeconds
+   */
+  public Long getMaxAgeSeconds() {
+    return maxAgeSeconds;
+  }
+
+  /**
+   * Sets browser preflight cache lifetime in seconds, defaulting to five.
+   *
+   * @param value replacement setting. Null restores five seconds; zero disables caching.
+   * @throws IllegalArgumentException if the lifetime is negative
+   */
+  public void setMaxAgeSeconds(@Nullable Long value) {
+    long resolved = value == null ? 5 : value;
+    if (resolved < 0) {
+      throw new IllegalArgumentException("CORS cache lifetime must be nonnegative");
+    }
+
+    maxAgeSeconds = resolved;
   }
 
   /**
@@ -211,18 +340,31 @@ public final class CorsPolicy {
   }
 
   /**
-   * Collapses a wildcard to one immutable value.
+   * Validates cross-field permissions before a provider publishes its private copy.
    *
-   * @param values configured immutable values
-   * @param wildcard wildcard value
-   * @param <T> value type
-   * @return normalized immutable values
+   * @throws IllegalArgumentException if wildcard methods or credentialed wildcards conflict
    */
-  private static <T> Set<T> wildcard(Set<T> values, T wildcard) {
-    return values.contains(wildcard) ? Set.of(wildcard) : values;
+  private void validate() {
+    if (allMethods && !methods.isEmpty()) {
+      throw new IllegalArgumentException("Wildcard methods require an explicitly empty method set");
+    }
+
+    if (credentials() && origins().contains(HttpCharacters.ASTERISK_STRING)) {
+      throw new IllegalArgumentException("Credentialed CORS requires explicit origins");
+    }
+
+    if (credentials()
+        && exposedHeaders().contains(HttpHeaders.of(HttpCharacters.ASTERISK_STRING))) {
+      throw new IllegalArgumentException(
+          "Credentialed CORS requires explicit exposed header names");
+    }
+
+    if (maxAgeSeconds() < 0) {
+      throw new IllegalArgumentException("CORS cache lifetime must be nonnegative");
+    }
   }
 
-  /** Builds complete immutable permissions. */
+  /** Builds complete independent permissions. */
   public static final class Builder {
     private Set<String> origins;
     private Set<HttpMethods> methods;
@@ -234,13 +376,31 @@ public final class CorsPolicy {
 
     /** Creates standalone default permissions. */
     private Builder() {
-      origins = Set.of();
-      methods = Set.of(HttpMethods.GET, HttpMethods.HEAD);
-      allMethods = false;
-      allowedHeaders = Set.of();
-      credentials = false;
-      exposedHeaders = Set.of();
-      maxAgeSeconds = 5;
+      this.origins = Set.of();
+      this.methods = Set.of(HttpMethods.GET, HttpMethods.HEAD);
+      this.allMethods = false;
+      this.allowedHeaders = Set.of();
+      this.credentials = false;
+      this.exposedHeaders = Set.of();
+      this.maxAgeSeconds = 5;
+    }
+
+    /**
+     * Copies nonnull values without retaining a caller's array.
+     *
+     * @param first required first value
+     * @param additional optional remaining values
+     * @param <T> value type
+     * @return immutable values
+     */
+    private static <T> Set<T> values(T first, T @Nullable [] additional) {
+      var values = new HashSet<T>();
+      values.add(Objects.requireNonNull(first));
+      if (additional != null) {
+        values.addAll(Arrays.asList(additional));
+      }
+
+      return Set.copyOf(values);
     }
 
     /**
@@ -373,28 +533,10 @@ public final class CorsPolicy {
     /**
      * Snapshots and validates declared permissions.
      *
-     * @return immutable policy
+     * @return independent policy
      */
     public CorsPolicy build() {
       return new CorsPolicy(this);
-    }
-
-    /**
-     * Copies nonnull values without retaining a caller's array.
-     *
-     * @param first required first value
-     * @param additional optional remaining values
-     * @param <T> value type
-     * @return immutable values
-     */
-    private static <T> Set<T> values(T first, T @Nullable [] additional) {
-      var values = new HashSet<T>();
-      values.add(Objects.requireNonNull(first));
-      if (additional != null) {
-        values.addAll(Arrays.asList(additional));
-      }
-
-      return Set.copyOf(values);
     }
   }
 }

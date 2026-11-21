@@ -46,12 +46,14 @@ public final class PathPatternsExample {
                       (request, response) ->
                           response.text("digits:" + request.pathParam("digits").orElseThrow()))
                   // A suffix mismatch can fall back to the parameter branch for /fallback/fixed/y.
-                  .get("/fallback/fixed/x", (ignored2, response) -> response.text("literal-suffix"))
+                  .get(
+                      "/fallback/fixed/x",
+                      (ignoredRequest, response) -> response.text("literal-suffix"))
                   .get(
                       "/fallback/{name}/y",
                       (request, response) ->
                           response.text("fallback:" + request.pathParam("name").orElseThrow()))
-                  .get("/status", (ignored3, response) -> response.text("ok"));
+                  .get("/status", (ignoredRequest, response) -> response.text("ok"));
             });
   }
 }

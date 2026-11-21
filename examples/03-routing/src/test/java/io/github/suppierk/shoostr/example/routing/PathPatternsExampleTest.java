@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import io.github.suppierk.shoostr.testing.TestServer;
+import java.io.Closeable;
 import java.net.http.HttpResponse;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
@@ -30,6 +31,7 @@ class PathPatternsExampleTest {
   })
   void selectsTheMostSpecificCompleteMatch(String method, String path, String body)
       throws Exception {
+
     try (var test = TestServer.start(PathPatternsExample.application())) {
       var response =
           test.send(
@@ -42,6 +44,7 @@ class PathPatternsExampleTest {
 
   @Test
   void discoversMethodsAcrossAllMatchingPatterns() throws Exception {
+
     try (var test = TestServer.start(PathPatternsExample.application())) {
       var response = test.send(request -> request.path("/items/latest").method("DELETE"));
 
@@ -55,6 +58,7 @@ class PathPatternsExampleTest {
   @ParameterizedTest
   @ValueSource(strings = {"/Status", "/status/", "/items", "/items/", "/codes/1234", "/codes/abc"})
   void rejectsPathsOutsideTheRegisteredShapes(String path) throws Exception {
+
     try (var test = TestServer.start(PathPatternsExample.application())) {
       assertEquals(404, test.send(request -> request.path(path)).statusCode());
     }
@@ -63,6 +67,7 @@ class PathPatternsExampleTest {
   @ParameterizedTest
   @ValueSource(strings = {"/items/%2F", "/items/%252F"})
   void rejectsEncodedSlashesBeforeServingTheCapture(String path) throws Exception {
+
     try (var test = TestServer.start(PathPatternsExample.application())) {
       assertEquals(400, test.send(request -> request.path(path)).statusCode());
     }
@@ -77,22 +82,32 @@ class PathPatternsExampleTest {
         "/invalid/{id}/{id}"
       })
   void rejectsUnsupportedPatternSyntaxAtRegistration(String pattern) throws Exception {
-    try (var app = PathPatternsExample.application()) {
-      var routes = app.routes();
-      assertThrows(
-          IllegalArgumentException.class,
-          () -> routes.get(pattern, (ignored, response) -> response.text("unused")));
+    {
+      var app = PathPatternsExample.application();
+
+      try (Closeable appCleanup = app::close) {
+        var routes = app.routes();
+
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> routes.get(pattern, (ignored, response) -> response.text("unused")));
+      }
     }
   }
 
   @ParameterizedTest
   @ValueSource(strings = {"/items/{other}", "/items/{other:[0-9]+}", "/items/{*other}"})
   void rejectsEquivalentShapesEvenWithDifferentParameterNames(String pattern) throws Exception {
-    try (var app = PathPatternsExample.application()) {
-      var routes = app.routes();
-      assertThrows(
-          IllegalArgumentException.class,
-          () -> routes.get(pattern, (ignored2, response) -> response.text("unused")));
+    {
+      var app = PathPatternsExample.application();
+
+      try (Closeable appCleanup1 = app::close) {
+        var routes = app.routes();
+
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> routes.get(pattern, (ignoredRequest, response) -> response.text("unused")));
+      }
     }
   }
 }

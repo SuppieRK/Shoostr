@@ -8,7 +8,9 @@ import io.github.suppierk.shoostr.Shoostr;
 import io.github.suppierk.shoostr.testing.TestServer;
 import io.modelcontextprotocol.common.McpTransportContext;
 import io.modelcontextprotocol.server.McpServer;
+import io.modelcontextprotocol.server.McpSyncServer;
 import java.io.IOException;
+import java.io.InputStream;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
@@ -16,6 +18,7 @@ import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ForkJoinPool;
+import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -25,7 +28,7 @@ class McpExecutorExpiryTest {
   @ParameterizedTest
   @ValueSource(booleans = {false, true})
   @Timeout(20)
-  void expiresAStreamWithoutInterruptingTheReusedCallerOwnedWorker(boolean forkJoin)
+  void expiresStreamWithoutInterruptingTheReusedCallerOwnedWorker(boolean forkJoin)
       throws Exception {
     ExecutorService selected =
         forkJoin
@@ -34,89 +37,114 @@ class McpExecutorExpiryTest {
                 Thread.ofPlatform().name("mcp-http-worker").factory());
     var owner = new AtomicReference<Thread>();
     var expiry = new AtomicReference<Instant>();
-    var mcp =
-        Mcp.sync(
-            new McpHttpSecurity(
-                Set.of(),
-                request -> {
-                  if ("GET".equals(request.method())) {
-                    owner.set(Thread.currentThread());
-                    var verifiedExpiry = Instant.now().plusSeconds(1);
-                    expiry.set(verifiedExpiry);
-                    return new McpIdentity(
-                        "alice:client", McpTransportContext.EMPTY, verifiedExpiry);
-                  }
-
-                  return new McpIdentity("alice:client", McpTransportContext.EMPTY, null);
-                },
-                (ignored, ignored2) -> {}),
-            transport -> McpServer.sync(transport).build());
+    var mcp = createMcpForExpiresStreamWithoutInterruptingTheReusedCallerOwnedWorker(owner, expiry);
     var app = new Shoostr();
-    app.extensions(mcp)
-        .routes(
-            routes -> {
-              routes.path("/mcp", group -> mcp.routes(group, selected));
-              routes.get(
-                  "/probe",
-                  selected,
-                  (ignored3, response) ->
-                      response.text(
-                          (Thread.currentThread() == owner.get())
-                              + ":"
-                              + Thread.currentThread().isInterrupted()));
-            });
+    app.routes(routes -> {
+      routes.path("/mcp", group -> mcp.routes(group, selected));
+      routes.get(
+          "/probe",
+          selected,
+          (ignoredRequest, response) ->
+              response.text(
+                  (Thread.currentThread() == owner.get())
+                      + ":"
+                      + Thread.currentThread().isInterrupted()));
+    });
 
     try (selected;
         var readers = Executors.newVirtualThreadPerTaskExecutor();
         var test = TestServer.start(app)) {
       var initialized =
-          test.send(
-              request ->
-                  request
-                      .path("/mcp")
-                      .method("POST")
-                      .header("Content-Type", "application/json")
-                      .header("Accept", "application/json, text/event-stream")
-                      .body(
-                          """
-              {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
-                "protocolVersion":"2025-11-25","capabilities":{},
-                "clientInfo":{"name":"executor-expiry","version":"1.0"}}}
-              """
-                              .getBytes(StandardCharsets.UTF_8)));
+          sendInitializedRequestForExpiresStreamWithoutInterruptingTheReusedCallerOwnedWorker(test);
+
       assertEquals(200, initialized.statusCode());
+
       var listening =
-          test.send(
-              request ->
-                  request
-                      .path("/mcp")
-                      .header("Accept", "text/event-stream")
-                      .header(
-                          "Mcp-Session-Id",
-                          initialized.headers().firstValue("Mcp-Session-Id").orElseThrow()),
-              HttpResponse.BodyHandlers.ofInputStream());
+          sendListeningRequestForExpiresStreamWithoutInterruptingTheReusedCallerOwnedWorker(
+              test, initialized);
 
       try (var input = listening.body()) {
         assertEquals(200, listening.statusCode());
-        var ended =
-            readers.submit(
-                () -> {
-                  try {
-                    input.readAllBytes();
-                  } catch (IOException ignored4) {
-                    // A committed stream may end with transport failure rather than clean EOF.
-                  }
 
-                  return Instant.now();
-                });
+        var ended =
+            submitEndedForExpiresStreamWithoutInterruptingTheReusedCallerOwnedWorker(
+                readers, input);
         var verifiedExpiry = expiry.get();
         awaitTermination(verifiedExpiry, ended::isDone);
+
         assertNotBeforeExpiry(verifiedExpiry, ended.get());
       }
 
       var probe = test.send(request -> request.path("/probe"));
+
       assertEquals(200, probe.statusCode());
       assertEquals("true:false", new String(probe.body(), StandardCharsets.UTF_8));
     }
+  }
+
+  private Mcp<McpSyncServer> createMcpForExpiresStreamWithoutInterruptingTheReusedCallerOwnedWorker(
+      AtomicReference<Thread> owner, AtomicReference<Instant> expiry) {
+    return Mcp.sync(
+        new McpHttpSecurity(
+            Set.of(),
+            request -> {
+              if ("GET".equals(request.method())) {
+                owner.set(Thread.currentThread());
+                var verifiedExpiry = Instant.now().plusSeconds(1);
+                expiry.set(verifiedExpiry);
+
+                return new McpIdentity("alice:client", McpTransportContext.EMPTY, verifiedExpiry);
+              }
+
+              return new McpIdentity("alice:client", McpTransportContext.EMPTY, null);
+            },
+            (ignored, ignoredJsonRpcMessage) -> {}),
+        transport -> McpServer.sync(transport).build());
+  }
+
+  private HttpResponse<byte[]>
+      sendInitializedRequestForExpiresStreamWithoutInterruptingTheReusedCallerOwnedWorker(
+          TestServer test) throws IOException, InterruptedException {
+    return test.send(request ->
+        request
+            .path("/mcp")
+            .method("POST")
+            .header("Content-Type", "application/json")
+            .header("Accept", "application/json, text/event-stream")
+            .body(
+                """
+                {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+                  "protocolVersion":"2025-11-25","capabilities":{},
+                  "clientInfo":{"name":"executor-expiry","version":"1.0"}}}
+                """
+                    .getBytes(StandardCharsets.UTF_8)));
+  }
+
+  private HttpResponse<InputStream>
+      sendListeningRequestForExpiresStreamWithoutInterruptingTheReusedCallerOwnedWorker(
+          TestServer test, HttpResponse<byte[]> initialized)
+          throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/mcp")
+                .header("Accept", "text/event-stream")
+                .header(
+                    "Mcp-Session-Id",
+                    initialized.headers().firstValue("Mcp-Session-Id").orElseThrow()),
+        HttpResponse.BodyHandlers.ofInputStream());
+  }
+
+  private Future<Instant> submitEndedForExpiresStreamWithoutInterruptingTheReusedCallerOwnedWorker(
+      ExecutorService readers, InputStream input) {
+    return readers.submit(() -> {
+      try {
+        input.readAllBytes();
+      } catch (IOException ignoredFailure) {
+        // A committed stream may end with transport failure rather than clean EOF.
+      }
+
+      return Instant.now();
+    });
   }
 }

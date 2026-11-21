@@ -20,7 +20,9 @@ public final class McpExample {
    */
   public static void main(String[] args) throws Exception {
     var app = application();
+
     app.start();
+
     LOGGER.info("MCP endpoint: http://127.0.0.1:{}/mcp", app.port());
   }
 
@@ -49,13 +51,13 @@ public final class McpExample {
 
     // This example-local factory builds Shoostr's mcp extension using the official MCP Java SDK.
     var mcp = McpConfiguration.create(port);
-    // Install it for lifecycle management; installation alone does not register HTTP endpoints.
-    return app.extensions(mcp)
-        .routes(
-            routes -> {
-              routes.get("/health", (ignored, response) -> response.text("healthy"));
+    // Mounting below selects the extension and transfers its cleanup to the application.
+    return app.routes(
+        routes -> {
+          routes
+              .get("/health", (ignored, response) -> response.text("healthy"))
               // The extension contributes its protocol handlers beneath Shoostr's /mcp route group.
-              routes.path("/mcp", mcp::routes);
-            });
+              .path("/mcp", mcp::routes);
+        });
   }
 }

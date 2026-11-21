@@ -1,0 +1,43 @@
+def bootstrap = rootProject.name == 'shoostr-build-logic'
+def checkerClasspath = bootstrap ? sourceSets.main.output :
+		configurations.detachedConfiguration(dependencies.create('io.github.suppierk:shoostr-build-logic'))
+
+sourceSets.configureEach { sourceSet ->
+	def verification = registerConstructorVerification(sourceSet, checkerClasspath)
+
+	tasks.named('check') { dependsOn verification }
+	if (bootstrap) {
+		// The checker first compiles normally, then verifies its own build sources.
+		tasks.named('jar') { finalizedBy verification }
+	}
+}
+
+private def registerConstructorVerification(sourceSet, checkerClasspath) {
+	def authoredJava = sourceSet.allSource.matching { include '**/*.java' }
+
+	return tasks.register("verifyConstructorFields${sourceSet.name.capitalize()}", JavaExec) {
+		group = 'verification'
+		description = "Requires explicit this receivers for ${sourceSet.name} constructor field assignments."
+		classpath = checkerClasspath
+		mainClass = 'io.github.suppierk.build.ConstructorFieldCheck'
+		javaLauncher = project.javaToolchains.launcherFor(project.java.toolchain)
+		maxHeapSize = '512m'
+		inputs.files(authoredJava).withPathSensitivity(PathSensitivity.RELATIVE).skipWhenEmpty()
+		inputs.files(sourceSet.compileClasspath).withNormalizer(ClasspathNormalizer)
+		def report = layout.buildDirectory.file("reports/constructor-fields/${sourceSet.name}.txt")
+		outputs.file(report)
+		doFirst {
+			def sources = new File(temporaryDir, 'sources.txt')
+			def dependencies = new File(temporaryDir, 'classpath.txt')
+
+			sources.setText(authoredJava.files*.absolutePath.sort().join('\n'), 'UTF-8')
+			dependencies.setText(sourceSet.compileClasspath.files*.absolutePath.join('\n'), 'UTF-8')
+
+			setArgs([
+				sources.absolutePath,
+				dependencies.absolutePath,
+				report.get().asFile.absolutePath
+			])
+		}
+	}
+}

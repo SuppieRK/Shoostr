@@ -15,11 +15,13 @@ public final class RouteFootprint {
    */
   public static void main(String[] args) {
     System.out.println(VM.current().details());
+
     for (String shape : new String[] {"shared", "divergent", "prefix"}) {
       for (int count : new int[] {5, 50, 500, 5000}) {
         var map = RouteLookupBenchmark.registrations(count, shape);
         System.out.println("shape=" + shape + ", routes=" + count + ", index=map");
         System.out.println(GraphLayout.parseInstance(map).toFootprint());
+
         // Build from independent registrations so lazy map views cannot inflate the baseline.
         var radix =
             RadixRoutes.from(

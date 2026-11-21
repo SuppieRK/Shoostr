@@ -7,8 +7,8 @@ import org.junit.jupiter.api.Test;
 class EndpointBehaviorEqualityTest {
   @Test
   void satisfiesEqualsAndHashCodeContract() {
-    var firstCsrf = new Csrf(Set.of("https://first.example"));
-    var secondCsrf = new Csrf(Set.of("https://second.example"));
+    var firstCsrf = Csrf.builder().trustedOrigins(Set.of("https://first.example")).build();
+    var secondCsrf = Csrf.builder().trustedOrigins(Set.of("https://second.example")).build();
 
     EqualsVerifier.forClass(EndpointBehavior.class)
         .withPrefabValues(Csrf.class, firstCsrf, secondCsrf)

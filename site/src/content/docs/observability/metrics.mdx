@@ -12,11 +12,11 @@ import test from '../../../../../examples/15-observability/micrometer/src/test/j
 
 ## Description
 
-Request metrics summarize activity across many exchanges. Micrometer stores those measurements in a `MeterRegistry`, which remains owned and configured by your application. Shoostr's `MicrometerMetrics` adapter connects request processing to that registry. It is an installed provider, an integration object registered with the application, and it also creates per-request observations.
+Request metrics summarize activity across many exchanges. Micrometer stores those measurements in a `MeterRegistry`, which remains owned and configured by your application. Shoostr's `MicrometerMetrics` extension connects request processing to that registry through per-request observations.
 
-An observation follows one request until it terminates. The built-in `Extensions` scope-configuration object exposes `lifecycle().observe(...)` to attach observations to a route or group. This task measures a selected API group while leaving a health endpoint outside that selection.
+An observation follows one request until it terminates. Route and group callbacks receive `Lifecycle`, which supports extension selection and local request callbacks. This task measures a selected API group while leaving a health endpoint outside that selection.
 
-Supply an application-owned `MeterRegistry` to `MicrometerMetrics` from `shoostr-micrometer` and register the adapter. Select observation on the intended routes or groups with `extensions.lifecycle().observe(metrics)`. The metrics adapter creates observations rather than typed route settings, so select it through `observe(...)`, not `extensions.with(metrics)`.
+Supply an application-owned `MeterRegistry` to `MicrometerMetrics` from `shoostr-micrometer`. Select it on the intended routes or groups with `lifecycle.withExtension(metrics)`; shared setup is automatic. The extension registers its observation on each selected endpoint.
 
 The `http.server.requests` timer records completed count and duration with `method`, `route`, `status` and `error` tags.
 It uses composed route templates instead of raw identifier paths, normalizes unknown methods to `OTHER`, and distinguishes `transport`, `application`, `server` and `none` error categories without recording exception text.
@@ -26,8 +26,8 @@ Micrometer's [timer](https://docs.micrometer.io/micrometer/reference/concepts/ti
 ## Example
 
 The `/api` group measures its item requests, while `/health` remains unselected.
-For application-wide observation, including unmatched requests and early failures, configure `allRequests()` on the adapter before installing it instead of adding the local observation shown here.
-App-wide unmatched requests use `UNMATCHED` as the route tag, and a terminal status of zero indicates that no final response was committed.
+To measure all registered endpoints by default, use `app.withExtension(metrics)` before route registration and `lifecycle.withoutExtension(metrics)` for local exclusions. Extension selection does not measure unmatched requests.
+A terminal status of zero indicates that no final response was committed.
 
 The application controls registry filters, exporters and export destinations; Shoostr borrows the registry and does not close it.
 Keep metric tags free of user identifiers or credentials, and retain the registry until any outstanding caller-owned tasks have finished.

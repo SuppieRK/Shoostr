@@ -17,7 +17,8 @@ public final class BufferedBodyExample {
    * @return application owned by its caller
    */
   public static Shoostr application() {
-    var options = new Options(64, 4096, 512, 4, MultipartOptions.defaults());
+    var options = options();
+
     return new Shoostr(options)
         .routes(
             routes ->
@@ -38,6 +39,7 @@ public final class BufferedBodyExample {
                           // Buffered text and form decoding reuse the body without consuming it
                           // twice.
                           var raw = request.bodyText();
+
                           response.text(
                               String.join(
                                   "\n",
@@ -45,5 +47,21 @@ public final class BufferedBodyExample {
                                   "query=" + request.queryParam("tag").orElse("(missing)"),
                                   "raw=" + raw));
                         }));
+  }
+
+  /**
+   * Configures the listener and resource policy used by this application.
+   *
+   * @return detached serving options
+   */
+  private static Options options() {
+    var options = new Options();
+    options.setMaxRequestBytes(64);
+    options.setMaxResponseBytes(4096);
+    options.setStreamBufferBytes(512);
+    options.setMaxParameters(4);
+    options.setMultipart(new MultipartOptions());
+
+    return options;
   }
 }

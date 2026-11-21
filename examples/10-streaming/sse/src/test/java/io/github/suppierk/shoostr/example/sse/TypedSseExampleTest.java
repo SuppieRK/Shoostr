@@ -12,11 +12,13 @@ class TypedSseExampleTest {
   @Test
   @Timeout(15)
   void sendsJsonObjectsAsCompleteSseDataEvents() throws Exception {
+
     try (var server = TestServer.start(TypedSseExample.application())) {
       var result =
           server.send(
               request -> request.path("/progress"),
               HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+
       assertEquals(200, result.statusCode());
       assertEquals(
           "text/event-stream; charset=utf-8",

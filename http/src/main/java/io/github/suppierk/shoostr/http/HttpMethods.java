@@ -257,12 +257,12 @@ public enum HttpMethods {
   private final String value;
 
   /**
-   * Returns this method's exact wire token.
+   * Stores the case-sensitive wire token for this registered method.
    *
-   * @return the case-sensitive HTTP method token
+   * @param value registered HTTP method token
    */
-  public String value() {
-    return value;
+  HttpMethods(String value) {
+    this.value = value;
   }
 
   /**
@@ -276,24 +276,26 @@ public enum HttpMethods {
   }
 
   /**
-   * Stores the case-sensitive wire token for this registered method.
-   *
-   * @param value registered HTTP method token
-   */
-  HttpMethods(String value) {
-    this.value = value;
-  }
-
-  /**
    * Builds the immutable exact-token index once without normalizing method case.
    *
    * @return methods indexed by wire token
    */
   private static Map<String, HttpMethods> lookup() {
-    var methods = new HashMap<String, HttpMethods>();
-    for (var method : values()) {
+    final var methods = new HashMap<String, HttpMethods>();
+
+    for (final var method : values()) {
       methods.put(method.value, method);
     }
+
     return Map.copyOf(methods);
+  }
+
+  /**
+   * Returns this method's exact wire token.
+   *
+   * @return the case-sensitive HTTP method token
+   */
+  public String value() {
+    return value;
   }
 }

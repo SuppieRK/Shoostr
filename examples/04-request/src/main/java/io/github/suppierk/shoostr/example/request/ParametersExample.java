@@ -25,6 +25,7 @@ public final class ParametersExample {
                         (request, response) -> {
                           // Read repeated query values without merging them with path parameters.
                           var parameters = request.queryParamMap();
+
                           response.text(
                               String.join(
                                   "\n",
@@ -43,6 +44,7 @@ public final class ParametersExample {
                           // Form fields and the same-named query parameters remain separate
                           // sources.
                           var fields = request.formParamMap();
+
                           response.text(
                               String.join(
                                   "\n",

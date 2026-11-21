@@ -15,6 +15,7 @@ import io.github.suppierk.shoostr.http.exceptions.NotFoundException;
 import io.github.suppierk.shoostr.testing.TestServer;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.Closeable;
 import java.io.IOException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
@@ -82,74 +83,153 @@ class TransportTest {
   private static final char[] PASSWORD = "changeit".toCharArray();
   @TempDir private Path temporary;
 
+  private static HttpClient secureClient(HttpClient.Version version) throws Exception {
+    var store = testKeyStore();
+    var context = trustedClientContext(store);
+
+    return secureClientProperties(version, context).build();
+  }
+
+  private static SSLContext trustedClientContext(KeyStore store) throws Exception {
+    var trust = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+    trust.init(store);
+
+    var context = SSLContext.getInstance("TLS");
+    context.init(null, trust.getTrustManagers(), null);
+
+    return context;
+  }
+
+  private static HttpClient.Builder secureClientProperties(
+      HttpClient.Version version, SSLContext context) {
+    return HttpClient.newBuilder()
+        .sslContext(context)
+        .version(version)
+        .connectTimeout(Duration.ofSeconds(3));
+  }
+
+  private static void enableMutualTls(Shoostr app) throws Exception {
+    var store = testKeyStore();
+    app.tls(tls -> {
+      tls.setKeyStore(store);
+      tls.setKeyStorePassword(String.valueOf(PASSWORD));
+      tls.setTrustStore(store);
+      tls.setNeedClientAuth(true);
+      tls.setIncludeProtocols("TLSv1.2");
+    });
+  }
+
+  private static SSLContext mutualTlsContext(KeyStore identity) throws Exception {
+    var keys = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
+    keys.init(identity, PASSWORD);
+    var trust = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+    trust.init(testKeyStore());
+    var context = SSLContext.getInstance("TLS");
+    context.init(keys.getKeyManagers(), trust.getTrustManagers(), null);
+
+    return context;
+  }
+
+  private static KeyStore testKeyStore() throws Exception {
+    var store = KeyStore.getInstance("PKCS12");
+
+    try (var input =
+        Objects.requireNonNull(TransportTest.class.getResourceAsStream(KEYSTORE_RESOURCE))) {
+      store.load(input, PASSWORD);
+    }
+
+    return store;
+  }
+
   @Test
   void tlsServesAnHttpsClientAndReportsDirectSecureMetadata() throws Exception {
-    try (var app =
-            new Shoostr()
-                .modifyServer(
-                    nativeServerConfiguration ->
-                        ((ServerConnector) nativeServerConfiguration.getConnectors()[0])
-                            .setPort(0));
-        var client = secureClient(HttpClient.Version.HTTP_1_1)) {
-      enableTls(app);
-      app.routes()
-          .get(
-              "/secure",
-              (request, response) -> {
-                assertTrue(request.isSecure());
-                assertEquals("https", request.scheme().orElseThrow());
-                response.text("secure");
-              });
-      app.start();
+    {
+      var app =
+          new Shoostr()
+              .modifyServer(nativeServerConfiguration ->
+                  ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
 
-      var result =
-          client.send(
-              HttpRequest.newBuilder(URI.create("https://localhost:" + app.port() + "/secure"))
-                  .build(),
-              HttpResponse.BodyHandlers.ofString());
-      assertEquals(200, result.statusCode());
-      assertEquals("secure", result.body());
-      assertEquals(HttpClient.Version.HTTP_1_1, result.version());
+      try (Closeable appCleanup = app::close;
+          var client = secureClient(HttpClient.Version.HTTP_1_1)) {
+        enableTls(app);
+        app.routes()
+            .get(
+                "/secure",
+                (request, response) -> {
+                  assertTrue(request.isSecure());
+                  assertEquals("https", request.scheme().orElseThrow());
+
+                  response.text("secure");
+                });
+        app.start();
+
+        var result =
+            client.send(
+                HttpRequest.newBuilder(URI.create("https://localhost:" + app.port() + "/secure"))
+                    .build(),
+                HttpResponse.BodyHandlers.ofString());
+
+        assertEquals(200, result.statusCode());
+        assertEquals("secure", result.body());
+        assertEquals(HttpClient.Version.HTTP_1_1, result.version());
+      }
     }
   }
 
   @Test
-  void admitsATrustedClientCertificateWhenMutualTlsIsRequired() throws Exception {
+  void admitsTrustedClientCertificateWhenMutualTlsIsRequired() throws Exception {
     var identity = testKeyStore();
     var context = mutualTlsContext(identity);
 
-    try (var app =
-            new Shoostr()
-                .modifyServer(
-                    nativeServerConfiguration ->
-                        ((ServerConnector) nativeServerConfiguration.getConnectors()[0])
-                            .setPort(0));
-        var client =
-            HttpClient.newBuilder()
-                .sslContext(context)
-                .version(HttpClient.Version.HTTP_1_1)
-                .connectTimeout(Duration.ofSeconds(3))
-                .build()) {
-      enableMutualTls(app);
-      app.routes().get("/secure", (ignored, response) -> response.text("trusted client"));
-      app.start();
+    {
+      var app =
+          new Shoostr()
+              .modifyServer(nativeServerConfiguration ->
+                  ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
 
-      var result =
-          client.send(
-              HttpRequest.newBuilder(URI.create("https://localhost:" + app.port() + "/secure"))
-                  .timeout(Duration.ofSeconds(3))
-                  .GET()
-                  .build(),
-              HttpResponse.BodyHandlers.ofString());
+      try (Closeable appCleanup1 = app::close;
+          var client =
+              openClientForAdmitsTrustedClientCertificateWhenMutualTlsIsRequired(context)) {
+        enableMutualTls(app);
+        app.routes().get("/secure", (ignored, response) -> response.text("trusted client"));
+        app.start();
 
-      assertEquals(200, result.statusCode());
-      assertEquals("trusted client", result.body());
-      assertEquals(HttpClient.Version.HTTP_1_1, result.version());
-      assertEquals("TLSv1.2", result.sslSession().orElseThrow().getProtocol());
-      assertArrayEquals(
-          identity.getCertificateChain("localhost"),
-          result.sslSession().orElseThrow().getLocalCertificates());
+        var result =
+            sendResultForAdmitsTrustedClientCertificateWhenMutualTlsIsRequired(client, app);
+
+        assertEquals(200, result.statusCode());
+        assertEquals("trusted client", result.body());
+        assertEquals(HttpClient.Version.HTTP_1_1, result.version());
+        assertEquals("TLSv1.2", result.sslSession().orElseThrow().getProtocol());
+        assertArrayEquals(
+            identity.getCertificateChain("localhost"),
+            result.sslSession().orElseThrow().getLocalCertificates());
+      }
     }
+  }
+
+  private HttpClient openClientForAdmitsTrustedClientCertificateWhenMutualTlsIsRequired(
+      SSLContext context) {
+    return clientPropertiesForAdmitsTrustedClientCertificateWhenMutualTlsIsRequired(context)
+        .build();
+  }
+
+  private HttpClient.Builder
+      clientPropertiesForAdmitsTrustedClientCertificateWhenMutualTlsIsRequired(SSLContext context) {
+    return HttpClient.newBuilder()
+        .sslContext(context)
+        .version(HttpClient.Version.HTTP_1_1)
+        .connectTimeout(Duration.ofSeconds(3));
+  }
+
+  private HttpResponse<String> sendResultForAdmitsTrustedClientCertificateWhenMutualTlsIsRequired(
+      HttpClient client, Shoostr app) throws IOException, InterruptedException {
+    return client.send(
+        HttpRequest.newBuilder(URI.create("https://localhost:" + app.port() + "/secure"))
+            .timeout(Duration.ofSeconds(3))
+            .GET()
+            .build(),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @Test
@@ -158,53 +238,77 @@ class TransportTest {
     identity.load(null, PASSWORD);
     var context = mutualTlsContext(identity);
 
-    try (var app =
-            new Shoostr()
-                .modifyServer(
-                    nativeServerConfiguration ->
-                        ((ServerConnector) nativeServerConfiguration.getConnectors()[0])
-                            .setPort(0));
-        var trustedClient =
-            HttpClient.newBuilder()
-                .sslContext(mutualTlsContext(testKeyStore()))
-                .version(HttpClient.Version.HTTP_1_1)
-                .connectTimeout(Duration.ofSeconds(3))
-                .build()) {
-      enableMutualTls(app);
-      app.routes().get("/control", (ignored2, response) -> response.text("trusted client"));
-      app.start();
+    {
+      var app =
+          new Shoostr()
+              .modifyServer(nativeServerConfiguration ->
+                  ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
 
-      var control =
-          trustedClient.send(
-              HttpRequest.newBuilder(URI.create("https://localhost:" + app.port() + "/control"))
-                  .timeout(Duration.ofSeconds(3))
-                  .GET()
-                  .build(),
-              HttpResponse.BodyHandlers.ofString());
-      assertEquals(200, control.statusCode());
-      assertEquals("trusted client", control.body());
+      try (Closeable appCleanup2 = app::close;
+          var trustedClient =
+              openTrustedClientForRejectsAnAbsentClientCertificateDuringMutualTlsHandshake()) {
+        enableMutualTls(app);
+        app.routes().get("/control", (ignoredRequest, response) -> response.text("trusted client"));
+        app.start();
 
-      try (var socket = (SSLSocket) context.getSocketFactory().createSocket()) {
-        socket.connect(new InetSocketAddress("localhost", app.port()), 3000);
-        socket.setSoTimeout(3000);
-        socket.setEnabledProtocols(new String[] {"TLSv1.2"});
-        var parameters = socket.getSSLParameters();
-        parameters.setEndpointIdentificationAlgorithm("HTTPS");
-        socket.setSSLParameters(parameters);
+        var control =
+            sendControlRequestForRejectsAnAbsentClientCertificateDuringMutualTlsHandshake(
+                trustedClient, app);
 
-        var rejection = assertThrows(IOException.class, socket::startHandshake);
-        assertFalse(rejection instanceof SocketTimeoutException);
+        assertEquals(200, control.statusCode());
+        assertEquals("trusted client", control.body());
+
+        try (var socket = (SSLSocket) context.getSocketFactory().createSocket()) {
+          socket.connect(new InetSocketAddress("localhost", app.port()), 3000);
+          socket.setSoTimeout(3000);
+          socket.setEnabledProtocols(new String[] {"TLSv1.2"});
+          var parameters = socket.getSSLParameters();
+          parameters.setEndpointIdentificationAlgorithm("HTTPS");
+          socket.setSSLParameters(parameters);
+
+          var rejection = assertThrows(IOException.class, socket::startHandshake);
+          assertFalse(rejection instanceof SocketTimeoutException);
+        }
       }
     }
+  }
+
+  private HttpClient openTrustedClientForRejectsAnAbsentClientCertificateDuringMutualTlsHandshake()
+      throws Exception {
+    return trustedClientPropertiesForRejectsAnAbsentClientCertificateDuringMutualTlsHandshake()
+        .build();
+  }
+
+  private HttpClient.Builder
+      trustedClientPropertiesForRejectsAnAbsentClientCertificateDuringMutualTlsHandshake()
+          throws Exception {
+    return HttpClient.newBuilder()
+        .sslContext(mutualTlsContext(testKeyStore()))
+        .version(HttpClient.Version.HTTP_1_1)
+        .connectTimeout(Duration.ofSeconds(3));
+  }
+
+  private HttpResponse<String>
+      sendControlRequestForRejectsAnAbsentClientCertificateDuringMutualTlsHandshake(
+          HttpClient trustedClient, Shoostr app) throws IOException, InterruptedException {
+    return trustedClient.send(
+        HttpRequest.newBuilder(URI.create("https://localhost:" + app.port() + "/control"))
+            .timeout(Duration.ofSeconds(3))
+            .GET()
+            .build(),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @Test
   void rejectsAnUntrustedClientCertificateDuringMutualTlsHandshake() throws Exception {
     var identity = untrustedClientKeyStore();
     var trustedCertificate = (X509Certificate) testKeyStore().getCertificate("localhost");
+
     assertNotEquals(trustedCertificate, identity.getCertificate("untrusted"));
+
     var keys = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
     keys.init(identity, PASSWORD);
+
     var manager = assertInstanceOf(X509KeyManager.class, keys.getKeyManagers()[0]);
     assertEquals(
         "untrusted",
@@ -212,46 +316,69 @@ class TransportTest {
             new String[] {"RSA"},
             new Principal[] {trustedCertificate.getSubjectX500Principal()},
             null));
+
     var context = mutualTlsContext(identity);
 
-    try (var app =
-            new Shoostr()
-                .modifyServer(
-                    nativeServerConfiguration ->
-                        ((ServerConnector) nativeServerConfiguration.getConnectors()[0])
-                            .setPort(0));
-        var trustedClient =
-            HttpClient.newBuilder()
-                .sslContext(mutualTlsContext(testKeyStore()))
-                .version(HttpClient.Version.HTTP_1_1)
-                .connectTimeout(Duration.ofSeconds(3))
-                .build()) {
-      enableMutualTls(app);
-      app.routes().get("/control", (ignored3, response) -> response.text("trusted client"));
-      app.start();
+    {
+      var app =
+          new Shoostr()
+              .modifyServer(nativeServerConfiguration ->
+                  ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
 
-      var control =
-          trustedClient.send(
-              HttpRequest.newBuilder(URI.create("https://localhost:" + app.port() + "/control"))
-                  .timeout(Duration.ofSeconds(3))
-                  .GET()
-                  .build(),
-              HttpResponse.BodyHandlers.ofString());
-      assertEquals(200, control.statusCode());
-      assertEquals("trusted client", control.body());
+      try (Closeable appCleanup3 = app::close;
+          var trustedClient =
+              openTrustedClientForRejectsAnUntrustedClientCertificateDuringMutualTlsHandshake()) {
+        enableMutualTls(app);
+        app.routes().get("/control", (ignoredRequest, response) -> response.text("trusted client"));
+        app.start();
 
-      try (var socket = (SSLSocket) context.getSocketFactory().createSocket()) {
-        socket.connect(new InetSocketAddress("localhost", app.port()), 3000);
-        socket.setSoTimeout(3000);
-        socket.setEnabledProtocols(new String[] {"TLSv1.2"});
-        var parameters = socket.getSSLParameters();
-        parameters.setEndpointIdentificationAlgorithm("HTTPS");
-        socket.setSSLParameters(parameters);
+        var control =
+            sendControlRequestForRejectsAnUntrustedClientCertificateDuringMutualTlsHandshake(
+                trustedClient, app);
 
-        var rejection = assertThrows(IOException.class, socket::startHandshake);
-        assertFalse(rejection instanceof SocketTimeoutException);
+        assertEquals(200, control.statusCode());
+        assertEquals("trusted client", control.body());
+
+        try (var socket = (SSLSocket) context.getSocketFactory().createSocket()) {
+          socket.connect(new InetSocketAddress("localhost", app.port()), 3000);
+          socket.setSoTimeout(3000);
+          socket.setEnabledProtocols(new String[] {"TLSv1.2"});
+          var parameters = socket.getSSLParameters();
+          parameters.setEndpointIdentificationAlgorithm("HTTPS");
+          socket.setSSLParameters(parameters);
+
+          var rejection = assertThrows(IOException.class, socket::startHandshake);
+          assertFalse(rejection instanceof SocketTimeoutException);
+        }
       }
     }
+  }
+
+  private HttpClient
+      openTrustedClientForRejectsAnUntrustedClientCertificateDuringMutualTlsHandshake()
+          throws Exception {
+    return trustedClientPropertiesForRejectsAnUntrustedClientCertificateDuringMutualTlsHandshake()
+        .build();
+  }
+
+  private HttpClient.Builder
+      trustedClientPropertiesForRejectsAnUntrustedClientCertificateDuringMutualTlsHandshake()
+          throws Exception {
+    return HttpClient.newBuilder()
+        .sslContext(mutualTlsContext(testKeyStore()))
+        .version(HttpClient.Version.HTTP_1_1)
+        .connectTimeout(Duration.ofSeconds(3));
+  }
+
+  private HttpResponse<String>
+      sendControlRequestForRejectsAnUntrustedClientCertificateDuringMutualTlsHandshake(
+          HttpClient trustedClient, Shoostr app) throws IOException, InterruptedException {
+    return trustedClient.send(
+        HttpRequest.newBuilder(URI.create("https://localhost:" + app.port() + "/control"))
+            .timeout(Duration.ofSeconds(3))
+            .GET()
+            .build(),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @Test
@@ -259,62 +386,73 @@ class TransportTest {
     var entered = new CountDownLatch(2);
     var release = new CountDownLatch(1);
 
-    try (var app =
-            new Shoostr()
-                .modifyServer(
-                    nativeServerConfiguration ->
-                        ((ServerConnector) nativeServerConfiguration.getConnectors()[0])
-                            .setPort(0));
-        var client = secureClient(HttpClient.Version.HTTP_2)) {
-      enableTls(app);
-      app.http2();
-      app.routes()
-          .get(
-              "/parallel/{id}",
-              (request, response) -> {
-                if ("warmup".equals(request.pathParam("id").orElseThrow())) {
-                  response.text("warm");
-                  return;
-                }
+    var configuredOptions = new Options();
+    configuredOptions.setHttp2(true);
 
-                entered.countDown();
-                assertTrue(release.await(3, TimeUnit.SECONDS));
-                response.text(
-                    request.pathParam("id").orElseThrow()
-                        + ":"
-                        + ((InetSocketAddress) request.remoteAddress().orElseThrow()).getPort());
-              });
-      app.start();
-      var base = "https://localhost:" + app.port() + "/parallel/";
-      assertEquals(
-          HttpClient.Version.HTTP_2,
-          client
-              .send(
-                  HttpRequest.newBuilder(URI.create(base + "warmup")).build(),
-                  HttpResponse.BodyHandlers.ofString())
-              .version());
+    {
+      var app =
+          new Shoostr(configuredOptions)
+              .modifyServer(nativeServerConfiguration ->
+                  ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
 
-      try {
-        var first =
-            client.sendAsync(
-                HttpRequest.newBuilder(URI.create(base + "first")).build(),
-                HttpResponse.BodyHandlers.ofString());
-        var second =
-            client.sendAsync(
-                HttpRequest.newBuilder(URI.create(base + "second")).build(),
-                HttpResponse.BodyHandlers.ofString());
-        assertTrue(entered.await(3, TimeUnit.SECONDS));
-        release.countDown();
+      try (Closeable appCleanup4 = app::close;
+          var client = secureClient(HttpClient.Version.HTTP_2)) {
+        enableTls(app);
 
-        var firstResult = first.get(5, TimeUnit.SECONDS);
-        var secondResult = second.get(5, TimeUnit.SECONDS);
-        assertEquals(HttpClient.Version.HTTP_2, firstResult.version());
-        assertEquals(HttpClient.Version.HTTP_2, secondResult.version());
-        assertEquals(200, firstResult.statusCode());
-        assertEquals(200, secondResult.statusCode());
-        assertEquals(firstResult.body().split(":", -1)[1], secondResult.body().split(":", -1)[1]);
-      } finally {
-        release.countDown();
+        app.routes()
+            .get(
+                "/parallel/{id}",
+                (request, response) -> {
+                  if ("warmup".equals(request.pathParam("id").orElseThrow())) {
+                    response.text("warm");
+                    return;
+                  }
+
+                  entered.countDown();
+
+                  assertTrue(release.await(3, TimeUnit.SECONDS));
+
+                  response.text(
+                      request.pathParam("id").orElseThrow()
+                          + ":"
+                          + ((InetSocketAddress) request.remoteAddress().orElseThrow()).getPort());
+                });
+        app.start();
+        var base = "https://localhost:" + app.port() + "/parallel/";
+
+        assertEquals(
+            HttpClient.Version.HTTP_2,
+            client
+                .send(
+                    HttpRequest.newBuilder(URI.create(base + "warmup")).build(),
+                    HttpResponse.BodyHandlers.ofString())
+                .version());
+
+        try {
+          var first =
+              client.sendAsync(
+                  HttpRequest.newBuilder(URI.create(base + "first")).build(),
+                  HttpResponse.BodyHandlers.ofString());
+          var second =
+              client.sendAsync(
+                  HttpRequest.newBuilder(URI.create(base + "second")).build(),
+                  HttpResponse.BodyHandlers.ofString());
+
+          assertTrue(entered.await(3, TimeUnit.SECONDS));
+
+          release.countDown();
+
+          var firstResult = first.get(5, TimeUnit.SECONDS);
+          var secondResult = second.get(5, TimeUnit.SECONDS);
+
+          assertEquals(HttpClient.Version.HTTP_2, firstResult.version());
+          assertEquals(HttpClient.Version.HTTP_2, secondResult.version());
+          assertEquals(200, firstResult.statusCode());
+          assertEquals(200, secondResult.statusCode());
+          assertEquals(firstResult.body().split(":", -1)[1], secondResult.body().split(":", -1)[1]);
+        } finally {
+          release.countDown();
+        }
       }
     }
   }
@@ -323,70 +461,99 @@ class TransportTest {
   void mappedErrorsAndNotFoundResponsesKeepTheTlsHttp2ConnectionUsable() throws Exception {
     var peers = new CopyOnWriteArrayList<SocketAddress>();
 
-    try (var app =
-            new Shoostr()
-                .modifyServer(
-                    nativeServerConfiguration ->
-                        ((ServerConnector) nativeServerConfiguration.getConnectors()[0])
-                            .setPort(0));
-        var client = secureClient(HttpClient.Version.HTTP_2)) {
-      enableTls(app);
-      app.http2();
-      app.onRequestHeaders((request, ignored4) -> peers.add(request.remoteAddress().orElseThrow()));
-      app.exception(
-          IllegalArgumentException.class,
-          (ignored5, ignored6, response) -> response.status(400).text("mapped error"));
-      app.routes()
-          .get(
-              "/error",
-              (ignored7, ignored8) -> {
-                throw new IllegalArgumentException("recoverable diagnostic");
-              });
-      app.routes().get("/healthy", (ignored9, response) -> response.text("healthy"));
-      app.start();
-      var base = "https://localhost:" + app.port();
+    var configuredOptions = new Options();
+    configuredOptions.setHttp2(true);
 
-      var mapped =
-          client.send(
-              HttpRequest.newBuilder(URI.create(base + "/error"))
-                  .timeout(Duration.ofSeconds(3))
-                  .build(),
-              HttpResponse.BodyHandlers.ofString());
-      assertEquals(400, mapped.statusCode());
-      assertEquals("mapped error", mapped.body());
-      assertEquals(HttpClient.Version.HTTP_2, mapped.version());
-      assertTrue(mapped.sslSession().isPresent());
+    {
+      var app =
+          new Shoostr(configuredOptions)
+              .modifyServer(nativeServerConfiguration ->
+                  ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
 
-      var missing =
-          client.send(
-              HttpRequest.newBuilder(URI.create(base + "/missing"))
-                  .timeout(Duration.ofSeconds(3))
-                  .build(),
-              HttpResponse.BodyHandlers.ofString());
-      assertEquals(404, missing.statusCode());
-      assertEquals("Not found", missing.body());
-      assertEquals(HttpClient.Version.HTTP_2, missing.version());
-      assertTrue(missing.sslSession().isPresent());
+      try (Closeable appCleanup5 = app::close;
+          var client = secureClient(HttpClient.Version.HTTP_2)) {
+        enableTls(app);
 
-      var healthy =
-          client.send(
-              HttpRequest.newBuilder(URI.create(base + "/healthy"))
-                  .timeout(Duration.ofSeconds(3))
-                  .build(),
-              HttpResponse.BodyHandlers.ofString());
-      assertEquals(200, healthy.statusCode());
-      assertEquals("healthy", healthy.body());
-      assertEquals(HttpClient.Version.HTTP_2, healthy.version());
-      assertTrue(healthy.sslSession().isPresent());
+        app.onRequestHeaders(
+            (request, ignoredResponse) -> peers.add(request.remoteAddress().orElseThrow()));
+        app.exception(
+            IllegalArgumentException.class,
+            (ignoredFailure, ignoredRequest, response) ->
+                response.status(400).text("mapped error"));
+        app.routes()
+            .get(
+                "/error",
+                (ignoredRequest, ignoredResponse) -> {
+                  throw new IllegalArgumentException("recoverable diagnostic");
+                });
+        app.routes().get("/healthy", (ignoredRequest, response) -> response.text("healthy"));
+        app.start();
+        var base = "https://localhost:" + app.port();
 
-      assertEquals(3, peers.size());
-      assertEquals(peers.getFirst(), peers.get(1));
-      assertEquals(peers.getFirst(), peers.get(2));
+        var mapped =
+            sendMappedRequestForMappedErrorsAndNotFoundResponsesKeepTheTlsHttp2ConnectionUsable(
+                client, base);
+
+        assertEquals(400, mapped.statusCode());
+        assertEquals("mapped error", mapped.body());
+        assertEquals(HttpClient.Version.HTTP_2, mapped.version());
+        assertTrue(mapped.sslSession().isPresent());
+
+        var missing =
+            sendMissingRequestForMappedErrorsAndNotFoundResponsesKeepTheTlsHttp2ConnectionUsable(
+                client, base);
+
+        assertEquals(404, missing.statusCode());
+        assertEquals("Not found", missing.body());
+        assertEquals(HttpClient.Version.HTTP_2, missing.version());
+        assertTrue(missing.sslSession().isPresent());
+
+        var healthy =
+            sendHealthyRequestForMappedErrorsAndNotFoundResponsesKeepTheTlsHttp2ConnectionUsable(
+                client, base);
+
+        assertEquals(200, healthy.statusCode());
+        assertEquals("healthy", healthy.body());
+        assertEquals(HttpClient.Version.HTTP_2, healthy.version());
+        assertTrue(healthy.sslSession().isPresent());
+
+        assertEquals(3, peers.size());
+        assertEquals(peers.getFirst(), peers.get(1));
+        assertEquals(peers.getFirst(), peers.get(2));
+      }
     }
   }
 
+  private HttpResponse<String>
+      sendMappedRequestForMappedErrorsAndNotFoundResponsesKeepTheTlsHttp2ConnectionUsable(
+          HttpClient client, String base) throws IOException, InterruptedException {
+    return client.send(
+        HttpRequest.newBuilder(URI.create(base + "/error")).timeout(Duration.ofSeconds(3)).build(),
+        HttpResponse.BodyHandlers.ofString());
+  }
+
+  private HttpResponse<String>
+      sendMissingRequestForMappedErrorsAndNotFoundResponsesKeepTheTlsHttp2ConnectionUsable(
+          HttpClient client, String base) throws IOException, InterruptedException {
+    return client.send(
+        HttpRequest.newBuilder(URI.create(base + "/missing"))
+            .timeout(Duration.ofSeconds(3))
+            .build(),
+        HttpResponse.BodyHandlers.ofString());
+  }
+
+  private HttpResponse<String>
+      sendHealthyRequestForMappedErrorsAndNotFoundResponsesKeepTheTlsHttp2ConnectionUsable(
+          HttpClient client, String base) throws IOException, InterruptedException {
+    return client.send(
+        HttpRequest.newBuilder(URI.create(base + "/healthy"))
+            .timeout(Duration.ofSeconds(3))
+            .build(),
+        HttpResponse.BodyHandlers.ofString());
+  }
+
   @Test
-  void roundTripsANamedBinaryMultipartUploadOverTlsHttp2() throws Exception {
+  void roundTripsNamedBinaryMultipartUploadOverTlsHttp2() throws Exception {
     var content = new byte[19_456];
     Arrays.fill(content, (byte) 0xA5);
     content[0] = 0;
@@ -403,53 +570,101 @@ class TransportTest {
     body.write(content);
     body.write("\r\n--http2-upload-boundary--\r\n".getBytes(StandardCharsets.US_ASCII));
 
-    try (var app =
-            new Shoostr()
-                .modifyServer(
-                    nativeServerConfiguration ->
-                        ((ServerConnector) nativeServerConfiguration.getConnectors()[0])
-                            .setPort(0));
-        var client = secureClient(HttpClient.Version.HTTP_2)) {
-      enableTls(app);
-      app.http2();
-      app.routes()
-          .post(
-              "/upload",
-              (request, response) -> {
-                var upload = request.file("document").orElseThrow();
-                assertEquals("document", upload.name());
-                assertEquals(19_456, upload.size());
-                response.setHeader(
-                    "Content-Disposition", "attachment; filename=\"" + upload.fileName() + "\"");
+    var configuredOptions = new Options();
+    configuredOptions.setHttp2(true);
 
-                try (var input = upload.content()) {
-                  response.body("application/octet-stream", input.readAllBytes());
-                }
-              });
-      app.start();
+    {
+      var app =
+          new Shoostr(configuredOptions)
+              .modifyServer(nativeServerConfiguration ->
+                  ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
 
-      var result =
-          client.send(
-              HttpRequest.newBuilder(URI.create("https://localhost:" + app.port() + "/upload"))
-                  .timeout(Duration.ofSeconds(3))
-                  .header("Content-Type", "multipart/form-data; boundary=http2-upload-boundary")
-                  .POST(HttpRequest.BodyPublishers.ofByteArray(body.toByteArray()))
-                  .build(),
-              HttpResponse.BodyHandlers.ofByteArray());
+      try (Closeable appCleanup6 = app::close;
+          var client = secureClient(HttpClient.Version.HTTP_2)) {
+        enableTls(app);
 
-      assertEquals(200, result.statusCode());
-      assertEquals(HttpClient.Version.HTTP_2, result.version());
-      assertTrue(result.sslSession().isPresent());
-      assertEquals(
-          "attachment; filename=\"report.bin\"",
-          result.headers().firstValue("Content-Disposition").orElseThrow());
-      assertArrayEquals(content, result.body());
+        app.routes()
+            .post(
+                "/upload",
+                (request, response) -> {
+                  var upload = request.file("document").orElseThrow();
+
+                  assertEquals("document", upload.name());
+                  assertEquals(19_456, upload.size());
+
+                  response.setHeader(
+                      "Content-Disposition", "attachment; filename=\"" + upload.fileName() + "\"");
+
+                  try (var input = upload.content()) {
+                    response.body("application/octet-stream", input.readAllBytes());
+                  }
+                });
+        app.start();
+
+        var result =
+            sendResultForRoundTripsNamedBinaryMultipartUploadOverTlsHttp2(client, app, body);
+
+        assertEquals(200, result.statusCode());
+        assertEquals(HttpClient.Version.HTTP_2, result.version());
+        assertTrue(result.sslSession().isPresent());
+        assertEquals(
+            "attachment; filename=\"report.bin\"",
+            result.headers().firstValue("Content-Disposition").orElseThrow());
+        assertArrayEquals(content, result.body());
+      }
     }
+  }
+
+  private HttpResponse<byte[]> sendResultForRoundTripsNamedBinaryMultipartUploadOverTlsHttp2(
+      HttpClient client, Shoostr app, ByteArrayOutputStream body)
+      throws IOException, InterruptedException {
+    return client.send(
+        HttpRequest.newBuilder(URI.create("https://localhost:" + app.port() + "/upload"))
+            .timeout(Duration.ofSeconds(3))
+            .header("Content-Type", "multipart/form-data; boundary=http2-upload-boundary")
+            .POST(HttpRequest.BodyPublishers.ofByteArray(body.toByteArray()))
+            .build(),
+        HttpResponse.BodyHandlers.ofByteArray());
   }
 
   @Test
   void roundTripsRawJsonBytesOverTlsHttp2WithoutObjectConversion() throws Exception {
-    var content =
+    var content = createContentForRoundTripsRawJsonBytesOverTlsHttp2WithoutObjectConversion();
+
+    var configuredOptions = new Options();
+    configuredOptions.setHttp2(true);
+
+    {
+      var app =
+          new Shoostr(configuredOptions)
+              .modifyServer(nativeServerConfiguration ->
+                  ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
+
+      try (Closeable appCleanup7 = app::close;
+          var client = secureClient(HttpClient.Version.HTTP_2)) {
+        enableTls(app);
+
+        app.routes()
+            .post(
+                "/json",
+                (request, response) -> response.body("application/json", request.bodyBytes()));
+        app.start();
+
+        var result =
+            sendResultForRoundTripsRawJsonBytesOverTlsHttp2WithoutObjectConversion(
+                client, app, content);
+
+        assertEquals(200, result.statusCode());
+        assertEquals(HttpClient.Version.HTTP_2, result.version());
+        assertTrue(result.sslSession().isPresent());
+        assertEquals("application/json", result.headers().firstValue("Content-Type").orElseThrow());
+        assertArrayEquals(content, result.body());
+      }
+    }
+  }
+
+  private byte[] createContentForRoundTripsRawJsonBytesOverTlsHttp2WithoutObjectConversion() {
+    return
         """
         {
           "name": "café",
@@ -457,38 +672,19 @@ class TransportTest {
           "values": [1, true, null]
         }
         """
-            .getBytes(StandardCharsets.UTF_8);
+        .getBytes(StandardCharsets.UTF_8);
+  }
 
-    try (var app =
-            new Shoostr()
-                .modifyServer(
-                    nativeServerConfiguration ->
-                        ((ServerConnector) nativeServerConfiguration.getConnectors()[0])
-                            .setPort(0));
-        var client = secureClient(HttpClient.Version.HTTP_2)) {
-      enableTls(app);
-      app.http2();
-      app.routes()
-          .post(
-              "/json",
-              (request, response) -> response.body("application/json", request.bodyBytes()));
-      app.start();
-
-      var result =
-          client.send(
-              HttpRequest.newBuilder(URI.create("https://localhost:" + app.port() + "/json"))
-                  .timeout(Duration.ofSeconds(3))
-                  .header("Content-Type", "application/json")
-                  .POST(HttpRequest.BodyPublishers.ofByteArray(content))
-                  .build(),
-              HttpResponse.BodyHandlers.ofByteArray());
-
-      assertEquals(200, result.statusCode());
-      assertEquals(HttpClient.Version.HTTP_2, result.version());
-      assertTrue(result.sslSession().isPresent());
-      assertEquals("application/json", result.headers().firstValue("Content-Type").orElseThrow());
-      assertArrayEquals(content, result.body());
-    }
+  private HttpResponse<byte[]>
+      sendResultForRoundTripsRawJsonBytesOverTlsHttp2WithoutObjectConversion(
+          HttpClient client, Shoostr app, byte[] content) throws IOException, InterruptedException {
+    return client.send(
+        HttpRequest.newBuilder(URI.create("https://localhost:" + app.port() + "/json"))
+            .timeout(Duration.ofSeconds(3))
+            .header("Content-Type", "application/json")
+            .POST(HttpRequest.BodyPublishers.ofByteArray(content))
+            .build(),
+        HttpResponse.BodyHandlers.ofByteArray());
   }
 
   @ParameterizedTest
@@ -501,106 +697,116 @@ class TransportTest {
     var ownedExecutor = new AtomicReference<ExecutorService>();
     var tlsContext = new AtomicReference<SslContextFactory.Server>();
 
-    try (var app =
-            new Shoostr()
-                .virtualThreads()
-                .modifyServer(
-                    nativeServerConfiguration ->
-                        ((ServerConnector) nativeServerConfiguration.getConnectors()[0])
-                            .setPort(0));
-        var client = secureClient(HttpClient.Version.HTTP_2)) {
-      enableTls(app, tlsContext);
-      app.http2()
-          .modifyServer(
-              server -> {
-                nativeServer.set(server);
-                ownedExecutor.set(
-                    (ExecutorService)
-                        VirtualThreads.getVirtualThreadsExecutor(server.getThreadPool()));
-              });
-      app.routes().get("/warmup", (ignored10, response) -> response.text("ready"));
-      app.routes()
-          .get(
-              "/hold/{id}",
-              (request, response) -> {
-                admissions.incrementAndGet();
-                var stream = streaming ? response.startStream("text/plain") : null;
-                if (stream != null) {
-                  stream.write("first-");
-                  stream.flush();
-                }
+    var configuredOptions = new Options();
+    configuredOptions.setVirtualThreads(true);
+    configuredOptions.setHttp2(true);
 
-                entered.countDown();
-                release.await();
-                if (stream != null) {
-                  stream.write(request.pathParam("id").orElseThrow());
-                } else {
-                  response.text("complete-" + request.pathParam("id").orElseThrow());
-                }
-              });
-      app.start();
-      var base = "https://localhost:" + app.port();
-      assertEquals(
-          HttpClient.Version.HTTP_2,
-          client
-              .send(
-                  HttpRequest.newBuilder(URI.create(base + "/warmup")).build(),
-                  HttpResponse.BodyHandlers.ofString())
-              .version());
-      var first =
-          client.sendAsync(
-              HttpRequest.newBuilder(URI.create(base + "/hold/one")).build(),
-              HttpResponse.BodyHandlers.ofString());
-      var second =
-          client.sendAsync(
-              HttpRequest.newBuilder(URI.create(base + "/hold/two")).build(),
-              HttpResponse.BodyHandlers.ofString());
-      CompletableFuture<Void> closing = null;
+    {
+      var app =
+          new Shoostr(configuredOptions)
+              .modifyServer(nativeServerConfiguration ->
+                  ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
 
-      try {
-        assertTrue(entered.await(3, TimeUnit.SECONDS));
-        var graceful = nativeServer.get().getDescendant(GracefulHandler.class);
-        closing =
-            CompletableFuture.runAsync(
-                () -> {
-                  try {
-                    app.close();
-                  } catch (IOException failure) {
-                    throw new CompletionException(failure);
+      try (Closeable appCleanup8 = app::close;
+          var client = secureClient(HttpClient.Version.HTTP_2)) {
+        enableTls(app, tlsContext);
+        app.modifyServer(server -> {
+          nativeServer.set(server);
+          ownedExecutor.set(
+              (ExecutorService) VirtualThreads.getVirtualThreadsExecutor(server.getThreadPool()));
+        });
+        app.routes().get("/warmup", (ignoredRequest, response) -> response.text("ready"));
+        app.routes()
+            .get(
+                "/hold/{id}",
+                (request, response) -> {
+                  admissions.incrementAndGet();
+                  var stream = streaming ? response.startStream("text/plain") : null;
+                  if (stream != null) {
+                    stream.write("first-");
+                    stream.flush();
+                  }
+
+                  entered.countDown();
+                  release.await();
+                  if (stream != null) {
+                    stream.write(request.pathParam("id").orElseThrow());
+                  } else {
+                    response.text("complete-" + request.pathParam("id").orElseThrow());
                   }
                 });
-        await()
-            .pollInterval(Duration.ofMillis(10))
-            .atMost(Duration.ofSeconds(3))
-            .until(graceful::isShutdown);
-        assertFalse(closing.isDone());
-        var late =
+        app.start();
+        var base = "https://localhost:" + app.port();
+
+        assertEquals(
+            HttpClient.Version.HTTP_2,
+            client
+                .send(
+                    HttpRequest.newBuilder(URI.create(base + "/warmup")).build(),
+                    HttpResponse.BodyHandlers.ofString())
+                .version());
+
+        var first =
             client.sendAsync(
-                HttpRequest.newBuilder(URI.create(base + "/hold/late")).build(),
-                HttpResponse.BodyHandlers.discarding());
+                HttpRequest.newBuilder(URI.create(base + "/hold/one")).build(),
+                HttpResponse.BodyHandlers.ofString());
+        var second =
+            client.sendAsync(
+                HttpRequest.newBuilder(URI.create(base + "/hold/two")).build(),
+                HttpResponse.BodyHandlers.ofString());
+        CompletableFuture<Void> closing = null;
 
         try {
-          assertEquals(503, late.get(3, TimeUnit.SECONDS).statusCode());
-        } catch (ExecutionException failure) {
-          assertInstanceOf(IOException.class, failure.getCause());
-        }
+          assertTrue(entered.await(3, TimeUnit.SECONDS));
 
-        assertEquals(2, admissions.get());
-        release.countDown();
-        assertEquals(
-            streaming ? "first-one" : "complete-one", first.get(3, TimeUnit.SECONDS).body());
-        assertEquals(
-            streaming ? "first-two" : "complete-two", second.get(3, TimeUnit.SECONDS).body());
-        closing.get(3, TimeUnit.SECONDS);
-        assertTrue(nativeServer.get().isStopped());
-        assertTrue(nativeServer.get().getConnectors()[0].isStopped());
-        assertTrue(tlsContext.get().isStopped());
-        assertTrue(ownedExecutor.get().isShutdown());
-        assertNull(VirtualThreads.getVirtualThreadsExecutor(nativeServer.get().getThreadPool()));
-      } finally {
-        release.countDown();
-        if (closing != null) {
-          closing.get(6, TimeUnit.SECONDS);
+          var graceful = nativeServer.get().getDescendant(GracefulHandler.class);
+          closing =
+              CompletableFuture.runAsync(() -> {
+                try {
+                  app.close();
+                } catch (IOException failure) {
+                  throw new CompletionException(failure);
+                }
+              });
+          await()
+              .pollInterval(Duration.ofMillis(10))
+              .atMost(Duration.ofSeconds(3))
+              .until(graceful::isShutdown);
+
+          assertFalse(closing.isDone());
+
+          var late =
+              client.sendAsync(
+                  HttpRequest.newBuilder(URI.create(base + "/hold/late")).build(),
+                  HttpResponse.BodyHandlers.discarding());
+
+          try {
+            assertEquals(503, late.get(3, TimeUnit.SECONDS).statusCode());
+          } catch (ExecutionException failure) {
+            assertInstanceOf(IOException.class, failure.getCause());
+          }
+
+          assertEquals(2, admissions.get());
+
+          release.countDown();
+
+          assertEquals(
+              streaming ? "first-one" : "complete-one", first.get(3, TimeUnit.SECONDS).body());
+          assertEquals(
+              streaming ? "first-two" : "complete-two", second.get(3, TimeUnit.SECONDS).body());
+
+          closing.get(3, TimeUnit.SECONDS);
+
+          assertTrue(nativeServer.get().isStopped());
+          assertTrue(nativeServer.get().getConnectors()[0].isStopped());
+          assertTrue(tlsContext.get().isStopped());
+          assertTrue(ownedExecutor.get().isShutdown());
+          assertNull(VirtualThreads.getVirtualThreadsExecutor(nativeServer.get().getThreadPool()));
+        } finally {
+          release.countDown();
+          if (closing != null) {
+            closing.get(6, TimeUnit.SECONDS);
+          }
         }
       }
     }
@@ -620,109 +826,123 @@ class TransportTest {
     var sessionHandler = new AtomicReference<SessionHandler>();
     var tlsContext = new AtomicReference<SslContextFactory.Server>();
 
-    try (var app =
-            new Shoostr()
-                .virtualThreads()
-                .modifyServer(
-                    nativeServerConfiguration ->
-                        ((ServerConnector) nativeServerConfiguration.getConnectors()[0])
-                            .setPort(0));
-        var client = secureClient(HttpClient.Version.HTTP_2)) {
-      enableTls(app, tlsContext);
-      app.afterRequest(
-          result -> {
-            if ("/blocked".equals(result.routePattern())) {
-              outcome.set(result);
-              observed.countDown();
-            }
-          });
-      app.sessions(sessionHandler::set);
-      app.http2()
-          .modifyServer(
-              server -> {
-                nativeServer.set(server);
-                ownedExecutor.set(
-                    (ExecutorService)
-                        VirtualThreads.getVirtualThreadsExecutor(server.getThreadPool()));
-                server.setStopTimeout(100);
-                ((ServerConnector) server.getConnectors()[0]).setShutdownIdleTimeout(0);
-              });
-      app.routes()
-          .path(
-              "/",
-              scoped ->
-                  scoped.get(
-                      "/session",
-                      (request, response) -> response.text(request.getOrCreateSession().getId())));
-      app.routes()
-          .get(
-              "/blocked",
-              (ignored11, response) -> {
-                if (streaming) {
-                  var stream = response.startStream("text/plain");
-                  stream.write("prefix");
-                  stream.flush();
-                }
+    var configuredOptions = new Options();
+    configuredOptions.setVirtualThreads(true);
+    configuredOptions.setHttp2(true);
 
-                entered.countDown();
-                while (release.getCount() != 0) {
-                  try {
-                    release.await();
-                  } catch (InterruptedException ignored12) {
-                    interrupted.countDown();
+    {
+      var app =
+          new Shoostr(configuredOptions)
+              .modifyServer(nativeServerConfiguration ->
+                  ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
+
+      try (Closeable appCleanup9 = app::close;
+          var client = secureClient(HttpClient.Version.HTTP_2)) {
+        enableTls(app, tlsContext);
+        app.afterRequest(result -> {
+          if ("/blocked".equals(result.routePattern())) {
+            outcome.set(result);
+            observed.countDown();
+          }
+        });
+        app.sessions(sessionHandler::set);
+        app.modifyServer(server -> {
+          nativeServer.set(server);
+          ownedExecutor.set(
+              (ExecutorService) VirtualThreads.getVirtualThreadsExecutor(server.getThreadPool()));
+          server.setStopTimeout(100);
+          ((ServerConnector) server.getConnectors()[0]).setShutdownIdleTimeout(0);
+        });
+        app.routes()
+            .path(
+                "/",
+                scoped ->
+                    scoped.get(
+                        "/session",
+                        (request, response) ->
+                            response.text(request.getOrCreateSession().getId())));
+        app.routes()
+            .get(
+                "/blocked",
+                (ignoredRequest, response) -> {
+                  if (streaming) {
+                    var stream = response.startStream("text/plain");
+                    stream.write("prefix");
+                    stream.flush();
                   }
-                }
 
-                if (!streaming) {
-                  response.text("late");
-                }
-              });
-      app.start();
-      var base = "https://localhost:" + app.port();
-      assertEquals(
-          HttpClient.Version.HTTP_2,
-          client
-              .send(
-                  HttpRequest.newBuilder(URI.create(base + "/session")).build(),
-                  HttpResponse.BodyHandlers.ofString())
-              .version());
-      assertEquals(
-          1, ((DefaultSessionCache) sessionHandler.get().getSessionCache()).getSessionsCurrent());
-      var pending =
-          client.sendAsync(
-              HttpRequest.newBuilder(URI.create(base + "/blocked")).build(),
-              HttpResponse.BodyHandlers.ofString());
+                  entered.countDown();
+                  while (release.getCount() != 0) {
+                    try {
+                      release.await();
+                    } catch (InterruptedException ignoredFailure) {
+                      interrupted.countDown();
+                    }
+                  }
 
-      try {
-        assertTrue(entered.await(3, TimeUnit.SECONDS));
-        var closing =
-            CompletableFuture.runAsync(
-                () -> {
-                  try {
-                    app.close();
-                  } catch (IOException failure) {
-                    throw new CompletionException(failure);
+                  if (!streaming) {
+                    response.text("late");
                   }
                 });
-        var stopFailure = closing.handle((ignored13, failure) -> failure).get(3, TimeUnit.SECONDS);
-        assertInstanceOf(IOException.class, stopFailure.getCause());
-        assertTrue(interrupted.await(2, TimeUnit.SECONDS));
-        assertThrows(ExecutionException.class, () -> pending.get(3, TimeUnit.SECONDS));
-        assertTrue(nativeServer.get().getConnectors()[0].isStopped());
-        assertTrue(tlsContext.get().isStopped());
-        assertTrue(sessionHandler.get().isStopped());
-        assertEquals(
-            0, ((DefaultSessionCache) sessionHandler.get().getSessionCache()).getSessionsCurrent());
-        assertTrue(ownedExecutor.get().isShutdown());
-        assertNull(VirtualThreads.getVirtualThreadsExecutor(nativeServer.get().getThreadPool()));
-      } finally {
-        release.countDown();
-      }
+        app.start();
+        var base = "https://localhost:" + app.port();
 
-      assertTrue(observed.await(3, TimeUnit.SECONDS));
-      assertEquals("/blocked", outcome.get().routePattern());
-      assertNotNull(outcome.get().transportFailure());
+        assertEquals(
+            HttpClient.Version.HTTP_2,
+            client
+                .send(
+                    HttpRequest.newBuilder(URI.create(base + "/session")).build(),
+                    HttpResponse.BodyHandlers.ofString())
+                .version());
+        assertEquals(
+            1, ((DefaultSessionCache) sessionHandler.get().getSessionCache()).getSessionsCurrent());
+
+        var pending =
+            client.sendAsync(
+                HttpRequest.newBuilder(URI.create(base + "/blocked")).build(),
+                HttpResponse.BodyHandlers.ofString());
+
+        try {
+          assertTrue(entered.await(3, TimeUnit.SECONDS));
+
+          var closing =
+              createClosingForForcedHttpsHttp2StopInterruptsBlockedWorkAndReleasesTheOwnedExecutor(
+                  app);
+          var stopFailure =
+              closing.handle((ignoredVoid, failure) -> failure).get(3, TimeUnit.SECONDS);
+
+          assertInstanceOf(IOException.class, stopFailure.getCause());
+          assertTrue(interrupted.await(2, TimeUnit.SECONDS));
+          assertThrows(ExecutionException.class, () -> pending.get(3, TimeUnit.SECONDS));
+          assertTrue(nativeServer.get().getConnectors()[0].isStopped());
+          assertTrue(tlsContext.get().isStopped());
+          assertTrue(sessionHandler.get().isStopped());
+          assertEquals(
+              0,
+              ((DefaultSessionCache) sessionHandler.get().getSessionCache()).getSessionsCurrent());
+          assertTrue(ownedExecutor.get().isShutdown());
+          assertNull(VirtualThreads.getVirtualThreadsExecutor(nativeServer.get().getThreadPool()));
+        } finally {
+          release.countDown();
+        }
+
+        assertTrue(observed.await(3, TimeUnit.SECONDS));
+        assertEquals("/blocked", outcome.get().routePattern());
+        assertNotNull(outcome.get().transportFailure());
+      }
     }
+  }
+
+  private CompletableFuture<Void>
+      createClosingForForcedHttpsHttp2StopInterruptsBlockedWorkAndReleasesTheOwnedExecutor(
+          Shoostr app) {
+    return CompletableFuture.runAsync(() -> {
+      try {
+        app.close();
+      } catch (IOException failure) {
+        throw new CompletionException(failure);
+      }
+    });
   }
 
   @ParameterizedTest
@@ -742,142 +962,166 @@ class TransportTest {
     var cleanupConnector = new AtomicReference<ServerConnector>();
     var cleanupPool = new AtomicReference<QueuedThreadPool>();
 
-    try (var app =
-            new Shoostr()
-                .modifyServer(
-                    nativeServerConfiguration ->
-                        ((ServerConnector) nativeServerConfiguration.getConnectors()[0])
-                            .setPort(0));
-        var client = secureClient(HttpClient.Version.HTTP_2)) {
-      if (virtual) {
-        app.virtualThreads();
-      }
+    var configuredOptions = new Options();
+    configuredOptions.setVirtualThreads(virtual);
+    configuredOptions.setHttp2(true);
 
-      enableTls(app);
-      app.http2()
-          .observe(
-              request ->
-                  new RequestObservation() {
-                    @Override
-                    public void complete(RequestOutcome result) {
-                      // Only close() participates in this cleanup-order assertion.
-                    }
+    {
+      var app =
+          new Shoostr(configuredOptions)
+              .modifyServer(nativeServerConfiguration ->
+                  ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
 
-                    @Override
-                    public void close() {
-                      invocationCleaned.set(true);
-                    }
-                  })
-          .afterRequest(
-              result -> {
-                observedAfterCleanup.set(invocationCleaned.get());
-                observations.incrementAndGet();
-                outcome.set(result);
-                observed.countDown();
-              })
-          .modifyServer(
-              server -> {
-                server.setStopTimeout(100);
-                ((ServerConnector) server.getConnectors()[0]).setShutdownIdleTimeout(0);
-                var pool = (QueuedThreadPool) server.getThreadPool();
-                cleanupPool.set(pool);
-                pool.setStopTimeout(100);
-                if (virtual) {
-                  ownedExecutor.set((ExecutorService) pool.getVirtualThreadsExecutor());
-                } else {
-                  assertNull(pool.getVirtualThreadsExecutor());
-                }
+      try (Closeable appCleanup10 = app::close;
+          var client = secureClient(HttpClient.Version.HTTP_2)) {
 
-                var connectionFactories =
-                    server
-                        .getConnectors()[0]
-                        .getConnectionFactories()
-                        .toArray(ConnectionFactory[]::new);
-                var delayed =
-                    new ServerConnector(server, connectionFactories) {
-                      @Override
-                      protected SelectorManager newSelectorManager(
-                          Executor executor, Scheduler scheduler, int selectors) {
-                        return new ServerConnectorManager(executor, scheduler, selectors) {
-                          @Override
-                          public void connectionClosed(Connection connection, Throwable cause) {
-                            cleanupHeld.countDown();
-                            releaseCleanup.join();
-                            super.connectionClosed(connection, cause);
-                          }
-                        };
-                      }
-                    };
-                delayed.setHost("127.0.0.1");
-                delayed.setPort(0);
-                delayed.setShutdownIdleTimeout(0);
-                server.addConnector(delayed);
-                cleanupConnector.set(delayed);
-              });
-      app.routes()
-          .get(
-              "/blocked",
-              (ignored14, response) -> {
-                entered.countDown();
-                releaseHandler.join();
-                response.text("late");
-              });
-      app.start();
-      var pending =
-          client.sendAsync(
-              HttpRequest.newBuilder(
-                      URI.create(
-                          "https://localhost:"
-                              + cleanupConnector.get().getLocalPort()
-                              + "/blocked"))
-                  .build(),
-              HttpResponse.BodyHandlers.ofString());
-
-      try {
-        assertTrue(entered.await(3, TimeUnit.SECONDS));
-        var closing =
-            CompletableFuture.runAsync(
-                () -> {
-                  try {
-                    app.close();
-                  } catch (IOException failure) {
-                    throw new CompletionException(failure);
+        enableTls(app);
+        app.observe(request ->
+                new RequestObservation() {
+                  @Override
+                  public void complete(RequestOutcome result) {
+                    // Only close() participates in this cleanup-order assertion.
                   }
+
+                  @Override
+                  public void close() {
+                    invocationCleaned.set(true);
+                  }
+                })
+            .afterRequest(result -> {
+              observedAfterCleanup.set(invocationCleaned.get());
+              observations.incrementAndGet();
+              outcome.set(result);
+              observed.countDown();
+            })
+            .modifyServer(server -> {
+              server.setStopTimeout(100);
+              ((ServerConnector) server.getConnectors()[0]).setShutdownIdleTimeout(0);
+              var pool = (QueuedThreadPool) server.getThreadPool();
+              cleanupPool.set(pool);
+              pool.setStopTimeout(100);
+              if (virtual) {
+                ownedExecutor.set((ExecutorService) pool.getVirtualThreadsExecutor());
+              } else {
+                assertNull(pool.getVirtualThreadsExecutor());
+              }
+
+              var connectionFactories =
+                  server
+                      .getConnectors()[0]
+                      .getConnectionFactories()
+                      .toArray(ConnectionFactory[]::new);
+              var delayed =
+                  createDelayedForForcedHttp2StopStillObservesCleanupDispatchedAfterExecutorShutdown(
+                      server, connectionFactories, cleanupHeld, releaseCleanup);
+              delayed.setHost("127.0.0.1");
+              delayed.setPort(0);
+              delayed.setShutdownIdleTimeout(0);
+              server.addConnector(delayed);
+              cleanupConnector.set(delayed);
+            });
+        app.routes()
+            .get(
+                "/blocked",
+                (ignoredRequest, response) -> {
+                  entered.countDown();
+                  releaseHandler.join();
+                  response.text("late");
                 });
-        var stopFailure =
-            assertInstanceOf(
-                CompletionException.class,
-                closing.handle((ignored15, failure) -> failure).get(3, TimeUnit.SECONDS));
-        assertInstanceOf(IOException.class, stopFailure.getCause());
-        assertTrue(cleanupHeld.await(3, TimeUnit.SECONDS));
-        if (virtual) {
-          assertTrue(ownedExecutor.get().isShutdown());
+        app.start();
+        var pending =
+            sendPendingRequestAsyncForForcedHttp2StopStillObservesCleanupDispatchedAfterExecutorShutdown(
+                client, cleanupConnector);
+
+        try {
+          assertTrue(entered.await(3, TimeUnit.SECONDS));
+
+          var closing =
+              createClosingForForcedHttp2StopStillObservesCleanupDispatchedAfterExecutorShutdown(
+                  app);
+
+          var stopFailure =
+              assertInstanceOf(
+                  CompletionException.class,
+                  closing.handle((ignoredVoid, failure) -> failure).get(3, TimeUnit.SECONDS));
+          assertInstanceOf(IOException.class, stopFailure.getCause());
+          assertTrue(cleanupHeld.await(3, TimeUnit.SECONDS));
+
+          if (virtual) {
+            assertTrue(ownedExecutor.get().isShutdown());
+          }
+
+          assertNull(cleanupPool.get().getVirtualThreadsExecutor());
+
+          releaseCleanup.complete(null);
+          releaseHandler.complete(null);
+
+          assertTrue(observed.await(3, TimeUnit.SECONDS));
+          assertTrue(observedAfterCleanup.get());
+          assertEquals(1, observations.get());
+          assertEquals("/blocked", outcome.get().routePattern());
+          assertNotNull(
+              outcome.get().transportFailure(),
+              () ->
+                  "Outcome: "
+                      + outcome.get()
+                      + "; client done: "
+                      + pending.isDone()
+                      + "; client exceptional: "
+                      + pending.isCompletedExceptionally());
+          assertThrows(ExecutionException.class, () -> pending.get(3, TimeUnit.SECONDS));
+        } finally {
+          releaseCleanup.complete(null);
+          releaseHandler.complete(null);
+          pending.cancel(true);
         }
-
-        assertNull(cleanupPool.get().getVirtualThreadsExecutor());
-        releaseCleanup.complete(null);
-        releaseHandler.complete(null);
-
-        assertTrue(observed.await(3, TimeUnit.SECONDS));
-        assertTrue(observedAfterCleanup.get());
-        assertEquals(1, observations.get());
-        assertEquals("/blocked", outcome.get().routePattern());
-        assertNotNull(
-            outcome.get().transportFailure(),
-            () ->
-                "Outcome: "
-                    + outcome.get()
-                    + "; client done: "
-                    + pending.isDone()
-                    + "; client exceptional: "
-                    + pending.isCompletedExceptionally());
-        assertThrows(ExecutionException.class, () -> pending.get(3, TimeUnit.SECONDS));
-      } finally {
-        releaseCleanup.complete(null);
-        releaseHandler.complete(null);
-        pending.cancel(true);
       }
     }
+  }
+
+  private ServerConnector
+      createDelayedForForcedHttp2StopStillObservesCleanupDispatchedAfterExecutorShutdown(
+          Server server,
+          ConnectionFactory[] connectionFactories,
+          CountDownLatch cleanupHeld,
+          CompletableFuture<Void> releaseCleanup) {
+    return new ServerConnector(server, connectionFactories) {
+      @Override
+      protected SelectorManager newSelectorManager(
+          Executor executor, Scheduler scheduler, int selectors) {
+        return new ServerConnectorManager(executor, scheduler, selectors) {
+          @Override
+          public void connectionClosed(Connection connection, Throwable cause) {
+            cleanupHeld.countDown();
+            releaseCleanup.join();
+            super.connectionClosed(connection, cause);
+          }
+        };
+      }
+    };
+  }
+
+  private CompletableFuture<HttpResponse<String>>
+      sendPendingRequestAsyncForForcedHttp2StopStillObservesCleanupDispatchedAfterExecutorShutdown(
+          HttpClient client, AtomicReference<ServerConnector> cleanupConnector) {
+    return client.sendAsync(
+        HttpRequest.newBuilder(
+                URI.create(
+                    "https://localhost:" + cleanupConnector.get().getLocalPort() + "/blocked"))
+            .build(),
+        HttpResponse.BodyHandlers.ofString());
+  }
+
+  private CompletableFuture<Void>
+      createClosingForForcedHttp2StopStillObservesCleanupDispatchedAfterExecutorShutdown(
+          Shoostr app) {
+    return CompletableFuture.runAsync(() -> {
+      try {
+        app.close();
+      } catch (IOException failure) {
+        throw new CompletionException(failure);
+      }
+    });
   }
 
   @Test
@@ -887,72 +1131,86 @@ class TransportTest {
     var sessionHandler = new AtomicReference<SessionHandler>();
     var nativeServer = new AtomicReference<Server>();
 
-    try (var app =
-            new Shoostr()
-                .modifyServer(
-                    nativeServerConfiguration ->
-                        ((ServerConnector) nativeServerConfiguration.getConnectors()[0])
-                            .setPort(0));
-        var client = HttpClient.newBuilder().version(HttpClient.Version.HTTP_2).build()) {
-      app.sessions(sessionHandler::set).http2().modifyServer(nativeServer::set);
-      app.routes()
-          .path(
-              "/",
-              scoped ->
-                  scoped.get(
-                      "/session",
-                      (request, response) -> response.text(request.getOrCreateSession().getId())));
-      app.routes()
-          .get(
-              "/hold",
-              (ignored16, response) -> {
-                entered.countDown();
-                release.await();
-                response.text("complete");
-              });
-      app.start();
-      var base = "http://127.0.0.1:" + app.port();
-      var created =
-          client.send(
-              HttpRequest.newBuilder(URI.create(base + "/session")).build(),
-              HttpResponse.BodyHandlers.ofString());
-      assertEquals(HttpClient.Version.HTTP_2, created.version());
-      assertEquals(
-          1, ((DefaultSessionCache) sessionHandler.get().getSessionCache()).getSessionsCurrent());
-      var pending =
-          client.sendAsync(
-              HttpRequest.newBuilder(URI.create(base + "/hold")).build(),
-              HttpResponse.BodyHandlers.ofString());
-      CompletableFuture<Void> closing = null;
+    var configuredOptions = new Options();
+    configuredOptions.setHttp2(true);
 
-      try {
-        assertTrue(entered.await(3, TimeUnit.SECONDS));
-        closing =
-            CompletableFuture.runAsync(
-                () -> {
-                  try {
-                    app.close();
-                  } catch (IOException failure) {
-                    throw new CompletionException(failure);
-                  }
+    {
+      var app =
+          new Shoostr(configuredOptions)
+              .modifyServer(nativeServerConfiguration ->
+                  ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
+
+      try (Closeable appCleanup11 = app::close;
+          var client = HttpClient.newBuilder().version(HttpClient.Version.HTTP_2).build()) {
+        app.sessions(sessionHandler::set).modifyServer(nativeServer::set);
+        app.routes()
+            .path(
+                "/",
+                scoped ->
+                    scoped.get(
+                        "/session",
+                        (request, response) ->
+                            response.text(request.getOrCreateSession().getId())));
+        app.routes()
+            .get(
+                "/hold",
+                (ignoredRequest, response) -> {
+                  entered.countDown();
+                  release.await();
+                  response.text("complete");
                 });
-        var graceful = nativeServer.get().getDescendant(GracefulHandler.class);
-        await()
-            .pollInterval(Duration.ofMillis(10))
-            .atMost(Duration.ofSeconds(3))
-            .until(graceful::isShutdown);
-        assertFalse(closing.isDone());
-        release.countDown();
-        assertEquals("complete", pending.get(3, TimeUnit.SECONDS).body());
-        closing.get(3, TimeUnit.SECONDS);
-        assertTrue(nativeServer.get().isStopped());
-        assertTrue(sessionHandler.get().isStopped());
+        app.start();
+        var base = "http://127.0.0.1:" + app.port();
+        var created =
+            client.send(
+                HttpRequest.newBuilder(URI.create(base + "/session")).build(),
+                HttpResponse.BodyHandlers.ofString());
+
+        assertEquals(HttpClient.Version.HTTP_2, created.version());
         assertEquals(
-            0, ((DefaultSessionCache) sessionHandler.get().getSessionCache()).getSessionsCurrent());
-      } finally {
-        release.countDown();
-        if (closing != null) {
-          closing.get(6, TimeUnit.SECONDS);
+            1, ((DefaultSessionCache) sessionHandler.get().getSessionCache()).getSessionsCurrent());
+
+        var pending =
+            client.sendAsync(
+                HttpRequest.newBuilder(URI.create(base + "/hold")).build(),
+                HttpResponse.BodyHandlers.ofString());
+        CompletableFuture<Void> closing = null;
+
+        try {
+          assertTrue(entered.await(3, TimeUnit.SECONDS));
+
+          closing =
+              CompletableFuture.runAsync(() -> {
+                try {
+                  app.close();
+                } catch (IOException failure) {
+                  throw new CompletionException(failure);
+                }
+              });
+          var graceful = nativeServer.get().getDescendant(GracefulHandler.class);
+          await()
+              .pollInterval(Duration.ofMillis(10))
+              .atMost(Duration.ofSeconds(3))
+              .until(graceful::isShutdown);
+
+          assertFalse(closing.isDone());
+
+          release.countDown();
+
+          assertEquals("complete", pending.get(3, TimeUnit.SECONDS).body());
+
+          closing.get(3, TimeUnit.SECONDS);
+
+          assertTrue(nativeServer.get().isStopped());
+          assertTrue(sessionHandler.get().isStopped());
+          assertEquals(
+              0,
+              ((DefaultSessionCache) sessionHandler.get().getSessionCache()).getSessionsCurrent());
+        } finally {
+          release.countDown();
+          if (closing != null) {
+            closing.get(6, TimeUnit.SECONDS);
+          }
         }
       }
     }
@@ -962,230 +1220,328 @@ class TransportTest {
   void responseCompressionIsOptInAndVariesOnAcceptEncoding() throws Exception {
     var payload = "compressible-body-".repeat(100);
 
-    try (var app =
-        new Shoostr()
-            .modifyServer(
-                nativeServerConfiguration ->
-                    ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0))) {
-      app.compression();
-      app.routes().get("/data", (ignored17, response) -> response.text(payload));
+    var configuredOptions = new Options();
+    configuredOptions.setCompression(true);
+
+    {
+      var app =
+          new Shoostr(configuredOptions)
+              .modifyServer(nativeServerConfiguration ->
+                  ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
+
+      try (Closeable appCleanup12 = app::close) {
+
+        app.routes().get("/data", (ignoredRequest, response) -> response.text(payload));
+
+        try (var test = TestServer.start(app)) {
+
+          var encoded =
+              test.send(request -> request.path("/data").header("Accept-Encoding", "gzip"));
+
+          assertEquals(200, encoded.statusCode());
+          assertEquals("gzip", encoded.headers().firstValue("Content-Encoding").orElseThrow());
+          assertTrue(encoded.headers().allValues("Vary").contains("Accept-Encoding"));
+
+          try (var gzip = new GZIPInputStream(new ByteArrayInputStream(encoded.body()))) {
+            assertEquals(payload, new String(gzip.readAllBytes(), StandardCharsets.UTF_8));
+          }
+
+          var gzipOnly =
+              test.send(request ->
+                  request.path("/data").header("Accept-Encoding", "gzip;q=1, identity;q=0"));
+
+          assertEquals(200, gzipOnly.statusCode());
+          assertEquals("gzip", gzipOnly.headers().firstValue("Content-Encoding").orElseThrow());
+
+          var plain =
+              test.send(request -> request.path("/data"), HttpResponse.BodyHandlers.ofString());
+
+          assertEquals(payload, plain.body());
+          assertTrue(plain.headers().firstValue("Content-Encoding").isEmpty());
+          assertTrue(plain.headers().allValues("Vary").contains("Accept-Encoding"));
+
+          var excluded =
+              test.send(
+                  request -> request.path("/data").header("Accept-Encoding", "gzip;q=0"),
+                  HttpResponse.BodyHandlers.ofString());
+
+          assertEquals(payload, excluded.body());
+          assertTrue(excluded.headers().firstValue("Content-Encoding").isEmpty());
+
+          var rejectedWithWildcard =
+              test.send(
+                  request -> request.path("/data").header("Accept-Encoding", "gzip;q=0, *;q=1"),
+                  HttpResponse.BodyHandlers.ofString());
+
+          assertEquals(payload, rejectedWithWildcard.body());
+          assertEquals(
+              "identity",
+              rejectedWithWildcard.headers().firstValue("Content-Encoding").orElseThrow());
+        }
+      }
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"gzip", "identity"})
+  void explicitContentCodingOverridesRejectedWildcard(String coding) throws Exception {
+    var payload = "compressible-body-".repeat(100);
+    var options = new Options();
+    options.setCompression(true);
+    var app = new Shoostr(options);
+
+    try (Closeable appCleanup = app::close) {
+      app.routes().get("/data", (request, response) -> response.text(payload));
 
       try (var test = TestServer.start(app)) {
+        var result =
+            test.send(request ->
+                request.path("/data").header("Accept-Encoding", "*;q=0, " + coding + ";q=1"));
 
-        var encoded = test.send(request -> request.path("/data").header("Accept-Encoding", "gzip"));
-        assertEquals(200, encoded.statusCode());
-        assertEquals("gzip", encoded.headers().firstValue("Content-Encoding").orElseThrow());
-        assertTrue(encoded.headers().allValues("Vary").contains("Accept-Encoding"));
-
-        try (var gzip = new GZIPInputStream(new ByteArrayInputStream(encoded.body()))) {
-          assertEquals(payload, new String(gzip.readAllBytes(), StandardCharsets.UTF_8));
+        assertEquals(200, result.statusCode());
+        assertEquals(coding, result.headers().firstValue("Content-Encoding").orElse("identity"));
+        if ("gzip".equals(coding)) {
+          try (var gzip = new GZIPInputStream(new ByteArrayInputStream(result.body()))) {
+            assertEquals(payload, new String(gzip.readAllBytes(), StandardCharsets.UTF_8));
+          }
+        } else {
+          assertEquals(payload, new String(result.body(), StandardCharsets.UTF_8));
         }
-
-        var gzipOnly =
-            test.send(
-                request ->
-                    request.path("/data").header("Accept-Encoding", "gzip;q=1, identity;q=0"));
-        assertEquals(200, gzipOnly.statusCode());
-        assertEquals("gzip", gzipOnly.headers().firstValue("Content-Encoding").orElseThrow());
-
-        var plain =
-            test.send(request -> request.path("/data"), HttpResponse.BodyHandlers.ofString());
-        assertEquals(payload, plain.body());
-        assertTrue(plain.headers().firstValue("Content-Encoding").isEmpty());
-        assertTrue(plain.headers().allValues("Vary").contains("Accept-Encoding"));
-
-        var excluded =
-            test.send(
-                request -> request.path("/data").header("Accept-Encoding", "gzip;q=0"),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(payload, excluded.body());
-        assertTrue(excluded.headers().firstValue("Content-Encoding").isEmpty());
-
-        var rejectedWithWildcard =
-            test.send(
-                request -> request.path("/data").header("Accept-Encoding", "gzip;q=0, *;q=1"),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(payload, rejectedWithWildcard.body());
-        assertEquals(
-            "identity",
-            rejectedWithWildcard.headers().firstValue("Content-Encoding").orElseThrow());
       }
     }
   }
 
   @Test
   void compressionReturnsEmptyNotAcceptableWhenGzipAndIdentityAreRejected() throws Exception {
-    try (var app =
-        new Shoostr()
-            .modifyServer(
-                nativeServerConfiguration ->
-                    ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0))) {
-      app.compression();
-      app.routes().get("/finite", (ignored18, response) -> response.text("body"));
-      app.routes().head("/finite", (ignored19, response) -> response.text("body"));
-      app.routes()
-          .get(
-              "/stream",
-              (ignored20, response) -> {
-                var stream = response.startStream("text/plain");
-                stream.write("body");
-                stream.flush();
-              });
-      app.routes().get("/empty", (ignored21, response) -> response.status(204));
-      app.routes()
-          .get("/opt-out", (ignored22, response) -> response.disableCompression().text("body"));
-      app.routes()
-          .get(
-              "/custom",
-              (ignored23, response) ->
-                  response
-                      .setHeader("Content-Encoding", "br")
-                      .body("application/octet-stream", new byte[] {1}));
+    var configuredOptions = new Options();
+    configuredOptions.setCompression(true);
 
-      try (var test = TestServer.start(app)) {
+    {
+      var app =
+          new Shoostr(configuredOptions)
+              .modifyServer(nativeServerConfiguration ->
+                  ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
 
-        for (var path : List.of("/finite", "/stream")) {
-          var result =
-              test.send(
-                  request ->
-                      request
-                          .path(path)
-                          .header("Accept-Encoding", "gzip;q=0, *;q=1, identity;q=0"));
-          assertEquals(406, result.statusCode());
-          assertEquals(0, result.body().length);
-          assertTrue(result.headers().allValues("Vary").contains("Accept-Encoding"));
+      try (Closeable appCleanup13 = app::close) {
+
+        app.routes().get("/finite", (ignoredRequest, response) -> response.text("body"));
+        app.routes().head("/finite", (ignoredRequest, response) -> response.text("body"));
+        app.routes()
+            .get(
+                "/stream",
+                (ignoredRequest, response) -> {
+                  var stream = response.startStream("text/plain");
+                  stream.write("body");
+                  stream.flush();
+                });
+        app.routes().get("/empty", (ignoredRequest, response) -> response.status(204));
+        app.routes()
+            .get(
+                "/opt-out",
+                (ignoredRequest, response) -> response.disableCompression().text("body"));
+        app.routes()
+            .get(
+                "/custom",
+                (ignoredRequest, response) ->
+                    response
+                        .setHeader("Content-Encoding", "br")
+                        .body("application/octet-stream", new byte[] {1}));
+
+        try (var test = TestServer.start(app)) {
+
+          for (var path : List.of("/finite", "/stream")) {
+            var result =
+                sendResultForCompressionReturnsEmptyNotAcceptableWhenGzipAndIdentityAreRejected(
+                    test, path);
+
+            assertEquals(406, result.statusCode());
+            assertEquals(0, result.body().length);
+            assertTrue(result.headers().allValues("Vary").contains("Accept-Encoding"));
+          }
+
+          var empty =
+              sendEmptyRequestForCompressionReturnsEmptyNotAcceptableWhenGzipAndIdentityAreRejected(
+                  test);
+
+          assertEquals(204, empty.statusCode());
+
+          var head =
+              sendHeadRequestForCompressionReturnsEmptyNotAcceptableWhenGzipAndIdentityAreRejected(
+                  test);
+
+          assertEquals(406, head.statusCode());
+          assertEquals(0, head.body().length);
+          assertTrue(head.headers().allValues("Vary").contains("Accept-Encoding"));
+
+          var custom =
+              sendCustomRequestForCompressionReturnsEmptyNotAcceptableWhenGzipAndIdentityAreRejected(
+                  test);
+
+          assertEquals(200, custom.statusCode());
+          assertEquals("br", custom.headers().firstValue("Content-Encoding").orElseThrow());
+
+          var optOut =
+              test.send(request ->
+                  request.path("/opt-out").header("Accept-Encoding", "gzip;q=1, identity;q=0"));
+
+          assertEquals(406, optOut.statusCode());
+          assertEquals(0, optOut.body().length);
+          assertTrue(optOut.headers().allValues("Vary").contains("Accept-Encoding"));
         }
-
-        var empty =
-            test.send(
-                request ->
-                    request
-                        .path("/empty")
-                        .header("Accept-Encoding", "gzip;q=0, *;q=1, identity;q=0"));
-        assertEquals(204, empty.statusCode());
-
-        var head =
-            test.send(
-                request ->
-                    request
-                        .path("/finite")
-                        .header("Accept-Encoding", "gzip;q=0, *;q=1, identity;q=0")
-                        .method("HEAD"));
-        assertEquals(406, head.statusCode());
-        assertEquals(0, head.body().length);
-        assertTrue(head.headers().allValues("Vary").contains("Accept-Encoding"));
-
-        var custom =
-            test.send(
-                request ->
-                    request
-                        .path("/custom")
-                        .header("Accept-Encoding", "gzip;q=0, *;q=1, identity;q=0"));
-        assertEquals(200, custom.statusCode());
-        assertEquals("br", custom.headers().firstValue("Content-Encoding").orElseThrow());
-
-        var optOut =
-            test.send(
-                request ->
-                    request.path("/opt-out").header("Accept-Encoding", "gzip;q=1, identity;q=0"));
-        assertEquals(406, optOut.statusCode());
-        assertEquals(0, optOut.body().length);
-        assertTrue(optOut.headers().allValues("Vary").contains("Accept-Encoding"));
       }
     }
+  }
+
+  private HttpResponse<byte[]>
+      sendResultForCompressionReturnsEmptyNotAcceptableWhenGzipAndIdentityAreRejected(
+          TestServer test, String path) throws IOException, InterruptedException {
+    return test.send(
+        request -> request.path(path).header("Accept-Encoding", "gzip;q=0, *;q=1, identity;q=0"));
+  }
+
+  private HttpResponse<byte[]>
+      sendEmptyRequestForCompressionReturnsEmptyNotAcceptableWhenGzipAndIdentityAreRejected(
+          TestServer test) throws IOException, InterruptedException {
+    return test.send(request ->
+        request.path("/empty").header("Accept-Encoding", "gzip;q=0, *;q=1, identity;q=0"));
+  }
+
+  private HttpResponse<byte[]>
+      sendHeadRequestForCompressionReturnsEmptyNotAcceptableWhenGzipAndIdentityAreRejected(
+          TestServer test) throws IOException, InterruptedException {
+    return test.send(request ->
+        request
+            .path("/finite")
+            .header("Accept-Encoding", "gzip;q=0, *;q=1, identity;q=0")
+            .method("HEAD"));
+  }
+
+  private HttpResponse<byte[]>
+      sendCustomRequestForCompressionReturnsEmptyNotAcceptableWhenGzipAndIdentityAreRejected(
+          TestServer test) throws IOException, InterruptedException {
+    return test.send(request ->
+        request.path("/custom").header("Accept-Encoding", "gzip;q=0, *;q=1, identity;q=0"));
   }
 
   @Test
   void compressionRejectsRangedFileWhenIdentityIsForbidden() throws Exception {
     var file = Files.writeString(temporary.resolve("range-rejected.txt"), "0123456789".repeat(300));
 
-    try (var app =
-        new Shoostr()
-            .modifyServer(
-                nativeServerConfiguration ->
-                    ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0))) {
-      app.compression();
-      app.routes().get("/file", (ignored24, response) -> response.file(file, "text/plain"));
+    var configuredOptions = new Options();
+    configuredOptions.setCompression(true);
 
-      try (var test = TestServer.start(app)) {
+    {
+      var app =
+          new Shoostr(configuredOptions)
+              .modifyServer(nativeServerConfiguration ->
+                  ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
 
-        var result =
-            test.send(
-                request ->
-                    request
-                        .path("/file")
-                        .header("Accept-Encoding", "gzip;q=1, identity;q=0")
-                        .header("Range", "bytes=0-1999"));
-        assertEquals(406, result.statusCode());
-        assertEquals(0, result.body().length);
-        assertTrue(result.headers().allValues("Vary").contains("Accept-Encoding"));
-        assertTrue(result.headers().firstValue("Content-Range").isEmpty());
+      try (Closeable appCleanup14 = app::close) {
+
+        app.routes().get("/file", (ignoredRequest, response) -> response.file(file, "text/plain"));
+
+        try (var test = TestServer.start(app)) {
+
+          var result = sendResultForCompressionRejectsRangedFileWhenIdentityIsForbidden(test);
+
+          assertEquals(406, result.statusCode());
+          assertEquals(0, result.body().length);
+          assertTrue(result.headers().allValues("Vary").contains("Accept-Encoding"));
+          assertTrue(result.headers().firstValue("Content-Range").isEmpty());
+        }
       }
     }
   }
 
+  private HttpResponse<byte[]> sendResultForCompressionRejectsRangedFileWhenIdentityIsForbidden(
+      TestServer test) throws IOException, InterruptedException {
+    return test.send(request ->
+        request
+            .path("/file")
+            .header("Accept-Encoding", "gzip;q=1, identity;q=0")
+            .header("Range", "bytes=0-1999"));
+  }
+
   @Test
   void compressionRejectsUnacceptableExceptionHandlerRecovery() throws Exception {
-    try (var app =
-        new Shoostr()
-            .modifyServer(
-                nativeServerConfiguration ->
-                    ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0))) {
-      app.compression();
-      app.exception(
-          NotFoundException.class,
-          (ignored25, ignored26, response) -> response.status(200).text("recovered"));
-      app.routes()
-          .get(
-              "/failure",
-              (ignored27, ignored28) -> {
-                throw new NotFoundException();
-              });
+    var configuredOptions = new Options();
+    configuredOptions.setCompression(true);
 
-      try (var test = TestServer.start(app)) {
+    {
+      var app =
+          new Shoostr(configuredOptions)
+              .modifyServer(nativeServerConfiguration ->
+                  ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
 
-        var result =
-            test.send(
-                request ->
-                    request
-                        .path("/failure")
-                        .header("Accept-Encoding", "gzip;q=0, *;q=1, identity;q=0"));
-        assertEquals(406, result.statusCode());
-        assertEquals(0, result.body().length);
-        assertTrue(result.headers().allValues("Vary").contains("Accept-Encoding"));
+      try (Closeable appCleanup15 = app::close) {
+
+        app.exception(
+            NotFoundException.class,
+            (ignoredFailure, ignoredRequest, response) -> response.status(200).text("recovered"));
+        app.routes()
+            .get(
+                "/failure",
+                (ignoredRequest, ignoredResponse) -> {
+                  throw new NotFoundException();
+                });
+
+        try (var test = TestServer.start(app)) {
+
+          var result = sendResultForCompressionRejectsUnacceptableExceptionHandlerRecovery(test);
+
+          assertEquals(406, result.statusCode());
+          assertEquals(0, result.body().length);
+          assertTrue(result.headers().allValues("Vary").contains("Accept-Encoding"));
+        }
       }
     }
+  }
+
+  private HttpResponse<byte[]> sendResultForCompressionRejectsUnacceptableExceptionHandlerRecovery(
+      TestServer test) throws IOException, InterruptedException {
+    return test.send(request ->
+        request.path("/failure").header("Accept-Encoding", "gzip;q=0, *;q=1, identity;q=0"));
   }
 
   @Test
   void compressionCanBeDisabledPerResponseAndHonorsAnExcludedEncoding() throws Exception {
     var payload = "uncompressed-".repeat(100);
 
-    try (var app =
-        new Shoostr()
-            .modifyServer(
-                nativeServerConfiguration ->
-                    ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0))) {
-      app.compression();
-      app.routes()
-          .get("/opt-out", (ignored29, response) -> response.disableCompression().text(payload));
+    var configuredOptions = new Options();
+    configuredOptions.setCompression(true);
 
-      try (var test = TestServer.start(app)) {
+    {
+      var app =
+          new Shoostr(configuredOptions)
+              .modifyServer(nativeServerConfiguration ->
+                  ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
 
-        var result =
-            test.send(
-                request -> request.path("/opt-out").header("Accept-Encoding", "gzip"),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(payload, result.body());
-        assertEquals("identity", result.headers().firstValue("Content-Encoding").orElseThrow());
-        assertTrue(result.headers().allValues("Vary").contains("Accept-Encoding"));
+      try (Closeable appCleanup16 = app::close) {
 
-        var denied =
-            test.send(
-                request -> request.path("/opt-out").header("Accept-Encoding", "gzip;q=0"),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(payload, denied.body());
-        assertEquals("identity", denied.headers().firstValue("Content-Encoding").orElseThrow());
+        app.routes()
+            .get(
+                "/opt-out",
+                (ignoredRequest, response) -> response.disableCompression().text(payload));
+
+        try (var test = TestServer.start(app)) {
+
+          var result =
+              test.send(
+                  request -> request.path("/opt-out").header("Accept-Encoding", "gzip"),
+                  HttpResponse.BodyHandlers.ofString());
+
+          assertEquals(payload, result.body());
+          assertEquals("identity", result.headers().firstValue("Content-Encoding").orElseThrow());
+          assertTrue(result.headers().allValues("Vary").contains("Accept-Encoding"));
+
+          var denied =
+              test.send(
+                  request -> request.path("/opt-out").header("Accept-Encoding", "gzip;q=0"),
+                  HttpResponse.BodyHandlers.ofString());
+
+          assertEquals(payload, denied.body());
+          assertEquals("identity", denied.headers().firstValue("Content-Encoding").orElseThrow());
+        }
       }
     }
   }
@@ -1195,58 +1551,72 @@ class TransportTest {
     var content = "0123456789".repeat(300);
     var file = Files.writeString(temporary.resolve("range.txt"), content);
 
-    try (var app =
-        new Shoostr()
-            .modifyServer(
-                nativeServerConfiguration ->
-                    ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0))) {
-      app.compression();
-      app.routes().get("/file", (ignored30, response) -> response.file(file, "text/plain"));
-      app.routes().head("/file", (ignored31, response) -> response.file(file, "text/plain"));
-      app.routes().get("/empty", (ignored32, response) -> response.status(204));
-      app.routes().head("/empty", (ignored33, response) -> response.status(204));
+    var configuredOptions = new Options();
+    configuredOptions.setCompression(true);
 
-      try (var test = TestServer.start(app)) {
+    {
+      var app =
+          new Shoostr(configuredOptions)
+              .modifyServer(nativeServerConfiguration ->
+                  ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
 
-        var partial =
-            test.send(
-                request ->
-                    request
-                        .path("/file")
-                        .header("Accept-Encoding", "gzip")
-                        .header("Range", "bytes=0-1999"));
-        assertEquals(206, partial.statusCode());
-        assertEquals(
-            "bytes 0-1999/3000", partial.headers().firstValue("Content-Range").orElseThrow());
-        assertEquals(
-            content.substring(0, 2000), new String(partial.body(), StandardCharsets.UTF_8));
-        assertFalse(
-            partial.headers().firstValue("Content-Encoding").filter("gzip"::equals).isPresent());
+      try (Closeable appCleanup17 = app::close) {
 
-        var head =
-            test.send(
-                request -> request.path("/file").header("Accept-Encoding", "gzip").method("HEAD"));
-        assertEquals(200, head.statusCode());
-        assertEquals(0, head.body().length);
-        assertTrue(
-            head.headers().firstValue("Content-Length").isEmpty(), head.headers().map().toString());
-        assertTrue(head.headers().firstValue("Content-Encoding").isEmpty());
-        assertTrue(head.headers().allValues("Vary").contains("Accept-Encoding"));
+        app.routes().get("/file", (ignoredRequest, response) -> response.file(file, "text/plain"));
+        app.routes().head("/file", (ignoredRequest, response) -> response.file(file, "text/plain"));
+        app.routes().get("/empty", (ignoredRequest, response) -> response.status(204));
+        app.routes().head("/empty", (ignoredRequest, response) -> response.status(204));
 
-        var empty = test.send(request -> request.path("/empty").header("Accept-Encoding", "gzip"));
-        assertEquals(204, empty.statusCode());
-        assertEquals(0, empty.body().length);
-        assertTrue(empty.headers().firstValue("Content-Encoding").isEmpty());
+        try (var test = TestServer.start(app)) {
 
-        var emptyHead =
-            test.send(
-                request -> request.path("/empty").header("Accept-Encoding", "gzip").method("HEAD"));
-        assertEquals(204, emptyHead.statusCode());
-        assertEquals(0, emptyHead.body().length);
-        assertTrue(emptyHead.headers().firstValue("Transfer-Encoding").isEmpty());
-        assertTrue(emptyHead.headers().firstValue("Content-Length").isEmpty());
+          var partial =
+              sendPartialRequestForCompressionPreservesHeadBodylessAndPartialFileResponses(test);
+
+          assertEquals(206, partial.statusCode());
+          assertEquals(
+              "bytes 0-1999/3000", partial.headers().firstValue("Content-Range").orElseThrow());
+          assertEquals(
+              content.substring(0, 2000), new String(partial.body(), StandardCharsets.UTF_8));
+          assertFalse(
+              partial.headers().firstValue("Content-Encoding").filter("gzip"::equals).isPresent());
+
+          var head =
+              test.send(request ->
+                  request.path("/file").header("Accept-Encoding", "gzip").method("HEAD"));
+
+          assertEquals(200, head.statusCode());
+          assertEquals(0, head.body().length);
+          assertTrue(
+              head.headers().firstValue("Content-Length").isEmpty(),
+              head.headers().map().toString());
+          assertTrue(head.headers().firstValue("Content-Encoding").isEmpty());
+          assertTrue(head.headers().allValues("Vary").contains("Accept-Encoding"));
+
+          var empty =
+              test.send(request -> request.path("/empty").header("Accept-Encoding", "gzip"));
+
+          assertEquals(204, empty.statusCode());
+          assertEquals(0, empty.body().length);
+          assertTrue(empty.headers().firstValue("Content-Encoding").isEmpty());
+
+          var emptyHead =
+              test.send(request ->
+                  request.path("/empty").header("Accept-Encoding", "gzip").method("HEAD"));
+
+          assertEquals(204, emptyHead.statusCode());
+          assertEquals(0, emptyHead.body().length);
+          assertTrue(emptyHead.headers().firstValue("Transfer-Encoding").isEmpty());
+          assertTrue(emptyHead.headers().firstValue("Content-Length").isEmpty());
+        }
       }
     }
+  }
+
+  private HttpResponse<byte[]>
+      sendPartialRequestForCompressionPreservesHeadBodylessAndPartialFileResponses(TestServer test)
+          throws IOException, InterruptedException {
+    return test.send(request ->
+        request.path("/file").header("Accept-Encoding", "gzip").header("Range", "bytes=0-1999"));
   }
 
   @Test
@@ -1254,41 +1624,63 @@ class TransportTest {
     var content = "compressible-file-".repeat(300);
     var file = Files.writeString(temporary.resolve("head-gzip.txt"), content);
 
-    try (var app =
-        new Shoostr()
-            .modifyServer(
-                nativeServerConfiguration ->
-                    ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0))) {
-      app.compression();
-      app.routes().get("/head-gzip", (ignored34, response) -> response.file(file, "text/plain"));
-      app.routes().head("/head-gzip", (ignored35, response) -> response.file(file, "text/plain"));
+    var configuredOptions = new Options();
+    configuredOptions.setCompression(true);
 
-      try (var test = TestServer.start(app)) {
+    {
+      var app =
+          new Shoostr(configuredOptions)
+              .modifyServer(nativeServerConfiguration ->
+                  ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
 
-        var get =
-            test.send(
-                request ->
-                    request.path("/head-gzip").header("Accept-Encoding", "gzip;q=1, identity;q=0"));
-        assertEquals(200, get.statusCode());
-        assertEquals("gzip", get.headers().firstValue("Content-Encoding").orElseThrow());
+      try (Closeable appCleanup18 = app::close) {
 
-        try (var gzip = new GZIPInputStream(new ByteArrayInputStream(get.body()))) {
-          assertEquals(content, new String(gzip.readAllBytes(), StandardCharsets.UTF_8));
+        app.routes()
+            .get("/head-gzip", (ignoredRequest, response) -> response.file(file, "text/plain"));
+        app.routes()
+            .head("/head-gzip", (ignoredRequest, response) -> response.file(file, "text/plain"));
+
+        try (var test = TestServer.start(app)) {
+
+          var get =
+              sendGetRequestForAcceptsHeadWhenTheMatchingGetFileCanBeCompressedAndIdentityIsForbidden(
+                  test);
+
+          assertEquals(200, get.statusCode());
+          assertEquals("gzip", get.headers().firstValue("Content-Encoding").orElseThrow());
+
+          try (var gzip = new GZIPInputStream(new ByteArrayInputStream(get.body()))) {
+            assertEquals(content, new String(gzip.readAllBytes(), StandardCharsets.UTF_8));
+          }
+
+          var head =
+              sendHeadRequestForAcceptsHeadWhenTheMatchingGetFileCanBeCompressedAndIdentityIsForbidden(
+                  test);
+
+          assertEquals(200, head.statusCode());
+          assertEquals(0, head.body().length);
+          assertTrue(head.headers().allValues("Vary").contains("Accept-Encoding"));
+          assertTrue(head.headers().firstValue("Content-Length").isEmpty());
         }
-
-        var head =
-            test.send(
-                request ->
-                    request
-                        .path("/head-gzip")
-                        .header("Accept-Encoding", "gzip;q=1, identity;q=0")
-                        .method("HEAD"));
-        assertEquals(200, head.statusCode());
-        assertEquals(0, head.body().length);
-        assertTrue(head.headers().allValues("Vary").contains("Accept-Encoding"));
-        assertTrue(head.headers().firstValue("Content-Length").isEmpty());
       }
     }
+  }
+
+  private HttpResponse<byte[]>
+      sendGetRequestForAcceptsHeadWhenTheMatchingGetFileCanBeCompressedAndIdentityIsForbidden(
+          TestServer test) throws IOException, InterruptedException {
+    return test.send(
+        request -> request.path("/head-gzip").header("Accept-Encoding", "gzip;q=1, identity;q=0"));
+  }
+
+  private HttpResponse<byte[]>
+      sendHeadRequestForAcceptsHeadWhenTheMatchingGetFileCanBeCompressedAndIdentityIsForbidden(
+          TestServer test) throws IOException, InterruptedException {
+    return test.send(request ->
+        request
+            .path("/head-gzip")
+            .header("Accept-Encoding", "gzip;q=1, identity;q=0")
+            .method("HEAD"));
   }
 
   @Test
@@ -1298,155 +1690,195 @@ class TransportTest {
     var sessionHandler = new AtomicReference<SessionHandler>();
     var tlsContext = new AtomicReference<SslContextFactory.Server>();
 
-    try (var app =
-        new Shoostr()
-            .virtualThreads()
-            .modifyServer(
-                nativeServerConfiguration ->
-                    ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0))) {
-      app.modifyServer(
-          server -> {
-            nativeServer.set(server);
-            ownedExecutor.set(
-                (ExecutorService) VirtualThreads.getVirtualThreadsExecutor(server.getThreadPool()));
-          });
-      app.sessions(sessionHandler::set);
-      var keyStore = keyStoreFile();
-      app.tls(
-          tls -> {
-            tlsContext.set(tls);
-            tls.setKeyStorePath(keyStore.toString());
-            tls.setKeyStorePassword("wrong-password");
-          });
-      app.routes().get("/", (ignored36, response) -> response.text("never"));
+    var configuredOptions = new Options();
+    configuredOptions.setVirtualThreads(true);
 
-      assertThrows(Exception.class, app::start);
-      assertThrows(IllegalStateException.class, app::start);
-      assertThrows(IllegalStateException.class, app::port);
-      assertTrue(nativeServer.get().isStopped());
-      assertTrue(sessionHandler.get().isStopped());
-      assertTrue(tlsContext.get().isStopped());
-      assertTrue(nativeServer.get().getConnectors()[0].isStopped());
-      assertTrue(ownedExecutor.get().isShutdown());
-      assertNull(VirtualThreads.getVirtualThreadsExecutor(nativeServer.get().getThreadPool()));
+    {
+      var app =
+          new Shoostr(configuredOptions)
+              .modifyServer(nativeServerConfiguration ->
+                  ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
+
+      try (Closeable appCleanup19 = app::close) {
+        app.modifyServer(server -> {
+          nativeServer.set(server);
+          ownedExecutor.set(
+              (ExecutorService) VirtualThreads.getVirtualThreadsExecutor(server.getThreadPool()));
+        });
+        app.sessions(sessionHandler::set);
+        var keyStore = keyStoreFile();
+        app.tls(tls -> {
+          tlsContext.set(tls);
+          tls.setKeyStorePath(keyStore.toString());
+          tls.setKeyStorePassword("wrong-password");
+        });
+        app.routes().get("/", (ignoredRequest, response) -> response.text("never"));
+
+        assertThrows(Exception.class, app::start);
+        assertThrows(IllegalStateException.class, app::start);
+        assertThrows(IllegalStateException.class, app::port);
+        assertTrue(nativeServer.get().isStopped());
+        assertTrue(sessionHandler.get().isStopped());
+        assertTrue(tlsContext.get().isStopped());
+        assertTrue(nativeServer.get().getConnectors()[0].isStopped());
+        assertTrue(ownedExecutor.get().isShutdown());
+        assertNull(VirtualThreads.getVirtualThreadsExecutor(nativeServer.get().getThreadPool()));
+      }
     }
   }
 
   @Test
   void encryptedHttp2PreservesDirectAndTrustedProxyMetadata() throws Exception {
-    try (var app =
-            new Shoostr()
-                .modifyServer(
-                    nativeServerConfiguration ->
-                        ((ServerConnector) nativeServerConfiguration.getConnectors()[0])
-                            .setPort(0));
-        var client = secureClient(HttpClient.Version.HTTP_2)) {
-      enableTls(app);
-      app.http2().trustedProxies(InetAddress::isLoopbackAddress);
-      app.routes()
-          .get(
-              "/metadata",
-              (request, response) -> {
-                assertTrue(request.isSecure());
-                assertEquals("https", request.scheme().orElseThrow());
-                assertEquals("HTTP/2.0", request.protocol());
-                assertTrue(request.isForwarded());
-                assertEquals("https://public.example/metadata?raw=%2B", request.effectiveUrl());
-                assertEquals("raw=%2B", request.queryString().orElseThrow());
-                response.text("metadata");
-              });
-      app.start();
+    var configuredOptions = new Options();
+    configuredOptions.setHttp2(true);
 
-      var result =
-          client.send(
-              HttpRequest.newBuilder(
-                      URI.create("https://localhost:" + app.port() + "/metadata?raw=%2B"))
-                  .header("Forwarded", "for=203.0.113.7;host=public.example;proto=https")
-                  .build(),
-              HttpResponse.BodyHandlers.ofString());
-      assertEquals(200, result.statusCode());
-      assertEquals(HttpClient.Version.HTTP_2, result.version());
-      assertEquals("metadata", result.body());
+    {
+      var app =
+          new Shoostr(configuredOptions)
+              .modifyServer(nativeServerConfiguration ->
+                  ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
+
+      try (Closeable appCleanup20 = app::close;
+          var client = secureClient(HttpClient.Version.HTTP_2)) {
+        enableTls(app);
+        app.trustedProxies(InetAddress::isLoopbackAddress);
+        app.routes()
+            .get(
+                "/metadata",
+                (request, response) -> {
+                  assertTrue(request.isSecure());
+                  assertEquals("https", request.scheme().orElseThrow());
+                  assertEquals("HTTP/2.0", request.protocol());
+                  assertTrue(request.isForwarded());
+                  assertEquals("https://public.example/metadata?raw=%2B", request.effectiveUrl());
+                  assertEquals("raw=%2B", request.queryString().orElseThrow());
+
+                  response.text("metadata");
+                });
+        app.start();
+
+        var result = sendResultForEncryptedHttp2PreservesDirectAndTrustedProxyMetadata(client, app);
+
+        assertEquals(200, result.statusCode());
+        assertEquals(HttpClient.Version.HTTP_2, result.version());
+        assertEquals("metadata", result.body());
+      }
     }
+  }
+
+  private HttpResponse<String> sendResultForEncryptedHttp2PreservesDirectAndTrustedProxyMetadata(
+      HttpClient client, Shoostr app) throws IOException, InterruptedException {
+    return client.send(
+        HttpRequest.newBuilder(URI.create("https://localhost:" + app.port() + "/metadata?raw=%2B"))
+            .header("Forwarded", "for=203.0.113.7;host=public.example;proto=https")
+            .build(),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @Test
   void clearTextHttp2KeepsPhysicalSecuritySeparateFromForwardedHttps() throws Exception {
-    try (var app =
-            new Shoostr()
-                .modifyServer(
-                    nativeServerConfiguration ->
-                        ((ServerConnector) nativeServerConfiguration.getConnectors()[0])
-                            .setPort(0));
-        var client = HttpClient.newBuilder().version(HttpClient.Version.HTTP_2).build()) {
-      app.http2().trustedProxies(InetAddress::isLoopbackAddress);
-      app.routes()
-          .get(
-              "/metadata",
-              (request, response) -> {
-                assertFalse(request.isSecure());
-                assertEquals("http", request.scheme().orElseThrow());
-                assertEquals("HTTP/2.0", request.protocol());
-                assertTrue(request.isForwarded());
-                assertEquals("https://public.example/metadata?raw=%2B", request.effectiveUrl());
-                response.text("h2c");
-              });
-      app.start();
+    var configuredOptions = new Options();
+    configuredOptions.setHttp2(true);
 
-      var result =
-          client.send(
-              HttpRequest.newBuilder(
-                      URI.create("http://127.0.0.1:" + app.port() + "/metadata?raw=%2B"))
-                  .header("Forwarded", "for=203.0.113.7;host=public.example;proto=https")
-                  .build(),
-              HttpResponse.BodyHandlers.ofString());
-      assertEquals(200, result.statusCode());
-      assertEquals(HttpClient.Version.HTTP_2, result.version());
-      assertEquals("h2c", result.body());
+    {
+      var app =
+          new Shoostr(configuredOptions)
+              .modifyServer(nativeServerConfiguration ->
+                  ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
+
+      try (Closeable appCleanup21 = app::close;
+          var client = HttpClient.newBuilder().version(HttpClient.Version.HTTP_2).build()) {
+        app.trustedProxies(InetAddress::isLoopbackAddress);
+        app.routes()
+            .get(
+                "/metadata",
+                (request, response) -> {
+                  assertFalse(request.isSecure());
+                  assertEquals("http", request.scheme().orElseThrow());
+                  assertEquals("HTTP/2.0", request.protocol());
+                  assertTrue(request.isForwarded());
+                  assertEquals("https://public.example/metadata?raw=%2B", request.effectiveUrl());
+
+                  response.text("h2c");
+                });
+        app.start();
+
+        var result =
+            sendResultForClearTextHttp2KeepsPhysicalSecuritySeparateFromForwardedHttps(client, app);
+
+        assertEquals(200, result.statusCode());
+        assertEquals(HttpClient.Version.HTTP_2, result.version());
+        assertEquals("h2c", result.body());
+      }
     }
+  }
+
+  private HttpResponse<String>
+      sendResultForClearTextHttp2KeepsPhysicalSecuritySeparateFromForwardedHttps(
+          HttpClient client, Shoostr app) throws IOException, InterruptedException {
+    return client.send(
+        HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/metadata?raw=%2B"))
+            .header("Forwarded", "for=203.0.113.7;host=public.example;proto=https")
+            .build(),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @Test
   void gzipCompressionWorksOnEncryptedHttp2AndLeavesHeadBodyless() throws Exception {
     var payload = "over-http2-".repeat(100);
 
-    try (var app =
-            new Shoostr()
-                .modifyServer(
-                    nativeServerConfiguration ->
-                        ((ServerConnector) nativeServerConfiguration.getConnectors()[0])
-                            .setPort(0));
-        var client = secureClient(HttpClient.Version.HTTP_2)) {
-      enableTls(app);
-      app.http2().compression();
-      app.routes().get("/data", (ignored37, response) -> response.text(payload));
-      app.routes().head("/data", (ignored38, response) -> response.text(payload));
-      app.start();
-      var uri = URI.create("https://localhost:" + app.port() + "/data");
+    var configuredOptions = new Options();
+    configuredOptions.setHttp2(true);
+    configuredOptions.setCompression(true);
 
-      var encoded =
-          client.send(
-              HttpRequest.newBuilder(uri).header("Accept-Encoding", "gzip").build(),
-              HttpResponse.BodyHandlers.ofByteArray());
-      assertEquals(HttpClient.Version.HTTP_2, encoded.version());
-      assertEquals("gzip", encoded.headers().firstValue("Content-Encoding").orElseThrow());
+    {
+      var app =
+          new Shoostr(configuredOptions)
+              .modifyServer(nativeServerConfiguration ->
+                  ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
 
-      try (var gzip = new GZIPInputStream(new ByteArrayInputStream(encoded.body()))) {
-        assertEquals(payload, new String(gzip.readAllBytes(), StandardCharsets.UTF_8));
+      try (Closeable appCleanup22 = app::close;
+          var client = secureClient(HttpClient.Version.HTTP_2)) {
+        enableTls(app);
+
+        app.routes().get("/data", (ignoredRequest, response) -> response.text(payload));
+        app.routes().head("/data", (ignoredRequest, response) -> response.text(payload));
+        app.start();
+        var uri = URI.create("https://localhost:" + app.port() + "/data");
+
+        var encoded =
+            client.send(
+                HttpRequest.newBuilder(uri).header("Accept-Encoding", "gzip").build(),
+                HttpResponse.BodyHandlers.ofByteArray());
+
+        assertEquals(HttpClient.Version.HTTP_2, encoded.version());
+        assertEquals("gzip", encoded.headers().firstValue("Content-Encoding").orElseThrow());
+
+        try (var gzip = new GZIPInputStream(new ByteArrayInputStream(encoded.body()))) {
+          assertEquals(payload, new String(gzip.readAllBytes(), StandardCharsets.UTF_8));
+        }
+
+        var head =
+            sendHeadRequestForGzipCompressionWorksOnEncryptedHttp2AndLeavesHeadBodyless(
+                client, uri);
+
+        assertEquals(HttpClient.Version.HTTP_2, head.version());
+        assertEquals(0, head.body().length);
+        assertTrue(head.headers().firstValue("Content-Length").isEmpty());
+        assertTrue(head.headers().allValues("Vary").contains("Accept-Encoding"));
       }
-
-      var head =
-          client.send(
-              HttpRequest.newBuilder(uri)
-                  .header("Accept-Encoding", "gzip")
-                  .method("HEAD", HttpRequest.BodyPublishers.noBody())
-                  .build(),
-              HttpResponse.BodyHandlers.ofByteArray());
-      assertEquals(HttpClient.Version.HTTP_2, head.version());
-      assertEquals(0, head.body().length);
-      assertTrue(head.headers().firstValue("Content-Length").isEmpty());
-      assertTrue(head.headers().allValues("Vary").contains("Accept-Encoding"));
     }
+  }
+
+  private HttpResponse<byte[]>
+      sendHeadRequestForGzipCompressionWorksOnEncryptedHttp2AndLeavesHeadBodyless(
+          HttpClient client, URI uri) throws IOException, InterruptedException {
+    return client.send(
+        HttpRequest.newBuilder(uri)
+            .header("Accept-Encoding", "gzip")
+            .method("HEAD", HttpRequest.BodyPublishers.noBody())
+            .build(),
+        HttpResponse.BodyHandlers.ofByteArray());
   }
 
   @Test
@@ -1458,54 +1890,75 @@ class TransportTest {
       gzip.write(payload);
     }
 
-    try (var app =
-        new Shoostr()
-            .modifyServer(
-                nativeServerConfiguration ->
-                    ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0))) {
-      app.compression();
-      app.routes()
-          .post(
-              "/bytes",
-              (request, response) -> response.text(Integer.toString(request.bodyBytes().length)));
+    var configuredOptions = new Options();
+    configuredOptions.setCompression(true);
 
-      try (var test = TestServer.start(app)) {
-        var result =
-            test.send(
-                request ->
-                    request
-                        .path("/bytes")
-                        .header("Content-Encoding", "gzip")
-                        .method("POST")
-                        .body(encoded.toByteArray()),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(200, result.statusCode());
-        assertEquals(Integer.toString(encoded.size()), result.body());
+    {
+      var app =
+          new Shoostr(configuredOptions)
+              .modifyServer(nativeServerConfiguration ->
+                  ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
+
+      try (Closeable appCleanup23 = app::close) {
+
+        app.routes()
+            .post(
+                "/bytes",
+                (request, response) -> response.text(Integer.toString(request.bodyBytes().length)));
+
+        try (var test = TestServer.start(app)) {
+          var result = sendResultForResponseCompressionDoesNotDecodeRequestBodies(test, encoded);
+
+          assertEquals(200, result.statusCode());
+          assertEquals(Integer.toString(encoded.size()), result.body());
+        }
       }
     }
+  }
+
+  private HttpResponse<String> sendResultForResponseCompressionDoesNotDecodeRequestBodies(
+      TestServer test, ByteArrayOutputStream encoded) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/bytes")
+                .header("Content-Encoding", "gzip")
+                .method("POST")
+                .body(encoded.toByteArray()),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @Test
   void compressionSkipsAlreadyCompressedMediaAndEventStreams() throws Exception {
     var content = new byte[2048];
 
-    try (var app =
-        new Shoostr()
-            .modifyServer(
-                nativeServerConfiguration ->
-                    ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0))) {
-      app.compression();
-      app.routes().get("/image", (ignored39, response) -> response.body("image/png", content));
-      app.routes()
-          .get("/events", (ignored40, response) -> response.body("text/event-stream", content));
+    var configuredOptions = new Options();
+    configuredOptions.setCompression(true);
 
-      try (var test = TestServer.start(app)) {
+    {
+      var app =
+          new Shoostr(configuredOptions)
+              .modifyServer(nativeServerConfiguration ->
+                  ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
 
-        for (var path : new String[] {"/image", "/events"}) {
-          var result = test.send(request -> request.path(path).header("Accept-Encoding", "gzip"));
-          assertEquals(200, result.statusCode());
-          assertEquals(content.length, result.body().length);
-          assertTrue(result.headers().firstValue("Content-Encoding").isEmpty());
+      try (Closeable appCleanup24 = app::close) {
+
+        app.routes()
+            .get("/image", (ignoredRequest, response) -> response.body("image/png", content));
+        app.routes()
+            .get(
+                "/events",
+                (ignoredRequest, response) -> response.body("text/event-stream", content));
+
+        try (var test = TestServer.start(app)) {
+
+          for (var path : new String[] {"/image", "/events"}) {
+            var result = test.send(request -> request.path(path).header("Accept-Encoding", "gzip"));
+
+            assertEquals(200, result.statusCode());
+            assertEquals(content.length, result.body().length);
+            assertTrue(result.headers().firstValue("Content-Encoding").isEmpty());
+          }
         }
       }
     }
@@ -1513,49 +1966,60 @@ class TransportTest {
 
   @Test
   void rejectsForbiddenIdentityWhenNativeCompressionExcludesMedia() throws Exception {
-    try (var app =
-        new Shoostr()
-            .modifyServer(
-                nativeServerConfiguration ->
-                    ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0))) {
-      app.compression();
-      app.routes()
-          .get("/image", (ignored41, response) -> response.body("image/png", new byte[2048]));
+    var configuredOptions = new Options();
+    configuredOptions.setCompression(true);
 
-      try (var test = TestServer.start(app)) {
+    {
+      var app =
+          new Shoostr(configuredOptions)
+              .modifyServer(nativeServerConfiguration ->
+                  ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
 
-        var result =
-            test.send(
-                request ->
-                    request.path("/image").header("Accept-Encoding", "gzip;q=1, identity;q=0"));
+      try (Closeable appCleanup25 = app::close) {
 
-        assertEquals(406, result.statusCode());
-        assertEquals(0, result.body().length);
-        assertTrue(result.headers().allValues("Vary").contains("Accept-Encoding"));
+        app.routes()
+            .get(
+                "/image", (ignoredRequest, response) -> response.body("image/png", new byte[2048]));
+
+        try (var test = TestServer.start(app)) {
+
+          var result =
+              test.send(request ->
+                  request.path("/image").header("Accept-Encoding", "gzip;q=1, identity;q=0"));
+
+          assertEquals(406, result.statusCode());
+          assertEquals(0, result.body().length);
+          assertTrue(result.headers().allValues("Vary").contains("Accept-Encoding"));
+        }
       }
     }
   }
 
   @Test
   void rejectsForbiddenIdentityBelowTheNativeCompressionThreshold() throws Exception {
-    try (var app =
-        new Shoostr()
-            .modifyServer(
-                nativeServerConfiguration ->
-                    ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0))) {
-      app.compression();
-      app.routes().get("/small", (ignored42, response) -> response.text("tiny"));
+    var configuredOptions = new Options();
+    configuredOptions.setCompression(true);
 
-      try (var test = TestServer.start(app)) {
+    {
+      var app =
+          new Shoostr(configuredOptions)
+              .modifyServer(nativeServerConfiguration ->
+                  ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
 
-        var result =
-            test.send(
-                request ->
-                    request.path("/small").header("Accept-Encoding", "gzip;q=1, identity;q=0"));
+      try (Closeable appCleanup26 = app::close) {
 
-        assertEquals(406, result.statusCode());
-        assertEquals(0, result.body().length);
-        assertTrue(result.headers().allValues("Vary").contains("Accept-Encoding"));
+        app.routes().get("/small", (ignoredRequest, response) -> response.text("tiny"));
+
+        try (var test = TestServer.start(app)) {
+
+          var result =
+              test.send(request ->
+                  request.path("/small").header("Accept-Encoding", "gzip;q=1, identity;q=0"));
+
+          assertEquals(406, result.statusCode());
+          assertEquals(0, result.body().length);
+          assertTrue(result.headers().allValues("Vary").contains("Accept-Encoding"));
+        }
       }
     }
   }
@@ -1564,36 +2028,41 @@ class TransportTest {
   void honorsNativeCompressionExclusionsWhenIdentityIsForbidden() throws Exception {
     var payload = "otherwise-compressible-".repeat(100);
 
-    try (var app =
-        new Shoostr()
-            .modifyServer(
-                nativeServerConfiguration ->
-                    ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0))) {
-      app.compression();
-      app.modifyServer(
-          server -> {
-            var graceful = assertInstanceOf(GracefulHandler.class, server.getHandler());
-            var compressor = assertInstanceOf(CompressionHandler.class, graceful.getHandler());
-            compressor.putConfiguration(
-                "/*",
-                CompressionConfig.builder()
-                    .defaults()
-                    .decompressExcludePath("/*")
-                    .compressExcludeMimeType("text/plain")
-                    .build());
-          });
-      app.routes().get("/text", (ignored43, response) -> response.text(payload));
+    var configuredOptions = new Options();
+    configuredOptions.setCompression(true);
 
-      try (var test = TestServer.start(app)) {
+    {
+      var app =
+          new Shoostr(configuredOptions)
+              .modifyServer(nativeServerConfiguration ->
+                  ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
 
-        var result =
-            test.send(
-                request ->
-                    request.path("/text").header("Accept-Encoding", "gzip;q=1, identity;q=0"));
+      try (Closeable appCleanup27 = app::close) {
 
-        assertEquals(406, result.statusCode());
-        assertEquals(0, result.body().length);
-        assertTrue(result.headers().allValues("Vary").contains("Accept-Encoding"));
+        app.modifyServer(server -> {
+          var graceful = assertInstanceOf(GracefulHandler.class, server.getHandler());
+          var compressor = assertInstanceOf(CompressionHandler.class, graceful.getHandler());
+
+          compressor.putConfiguration(
+              "/*",
+              CompressionConfig.builder()
+                  .defaults()
+                  .decompressExcludePath("/*")
+                  .compressExcludeMimeType("text/plain")
+                  .build());
+        });
+        app.routes().get("/text", (ignoredRequest, response) -> response.text(payload));
+
+        try (var test = TestServer.start(app)) {
+
+          var result =
+              test.send(request ->
+                  request.path("/text").header("Accept-Encoding", "gzip;q=1, identity;q=0"));
+
+          assertEquals(406, result.statusCode());
+          assertEquals(0, result.body().length);
+          assertTrue(result.headers().allValues("Vary").contains("Accept-Encoding"));
+        }
       }
     }
   }
@@ -1602,158 +2071,203 @@ class TransportTest {
   void honorsCompressionConfigurationMatchedOutsideTheApplicationContext() throws Exception {
     var payload = "context-path-content-".repeat(100);
 
-    try (var app =
-        new Shoostr()
-            .modifyServer(
-                nativeServerConfiguration ->
-                    ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0))) {
-      app.compression();
-      app.modifyServer(
-          server -> {
-            var graceful = assertInstanceOf(GracefulHandler.class, server.getHandler());
-            var compressor = assertInstanceOf(CompressionHandler.class, graceful.getHandler());
-            compressor.putConfiguration(
-                "/app/*",
-                CompressionConfig.builder()
-                    .defaults()
-                    .decompressExcludePath("/*")
-                    .compressExcludeMimeType("text/plain")
-                    .build());
-            var context = new ContextHandler("/app");
-            context.setHandler(compressor.getHandler());
-            compressor.setHandler(context);
-          });
-      app.routes().get("/text", (ignored44, response) -> response.text(payload));
+    var configuredOptions = new Options();
+    configuredOptions.setCompression(true);
 
-      try (var test = TestServer.start(app)) {
+    {
+      var app =
+          new Shoostr(configuredOptions)
+              .modifyServer(nativeServerConfiguration ->
+                  ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
 
-        var result =
-            test.send(
-                request ->
-                    request.path("/app/text").header("Accept-Encoding", "gzip;q=1, identity;q=0"));
+      try (Closeable appCleanup28 = app::close) {
 
-        assertEquals(406, result.statusCode());
-        assertEquals(0, result.body().length);
-        assertTrue(result.headers().allValues("Vary").contains("Accept-Encoding"));
+        app.modifyServer(server -> {
+          var graceful = assertInstanceOf(GracefulHandler.class, server.getHandler());
+          var compressor = assertInstanceOf(CompressionHandler.class, graceful.getHandler());
+
+          compressor.putConfiguration(
+              "/app/*",
+              CompressionConfig.builder()
+                  .defaults()
+                  .decompressExcludePath("/*")
+                  .compressExcludeMimeType("text/plain")
+                  .build());
+          var context = new ContextHandler("/app");
+          context.setHandler(compressor.getHandler());
+          compressor.setHandler(context);
+        });
+        app.routes().get("/text", (ignoredRequest, response) -> response.text(payload));
+
+        try (var test = TestServer.start(app)) {
+
+          var result =
+              sendResultForHonorsCompressionConfigurationMatchedOutsideTheApplicationContext(test);
+
+          assertEquals(406, result.statusCode());
+          assertEquals(0, result.body().length);
+          assertTrue(result.headers().allValues("Vary").contains("Accept-Encoding"));
+        }
       }
     }
+  }
+
+  private HttpResponse<byte[]>
+      sendResultForHonorsCompressionConfigurationMatchedOutsideTheApplicationContext(
+          TestServer test) throws IOException, InterruptedException {
+    return test.send(
+        request -> request.path("/app/text").header("Accept-Encoding", "gzip;q=1, identity;q=0"));
   }
 
   @Test
   void usesOnlyTheSelectedCompressorThresholdWhenIdentityIsForbidden() throws Exception {
     var payload = "selected-gzip-content-".repeat(100);
 
-    try (var app =
-        new Shoostr()
-            .modifyServer(
-                nativeServerConfiguration ->
-                    ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0))) {
-      app.compression();
-      app.modifyServer(
-          server -> {
-            var graceful = assertInstanceOf(GracefulHandler.class, server.getHandler());
-            var compressor = assertInstanceOf(CompressionHandler.class, graceful.getHandler());
-            compressor.putCompression(new GzipCompression());
-            var unselected =
-                new GzipCompression() {
-                  @Override
-                  public String getEncodingName() {
-                    return UNSELECTED_ENCODING;
-                  }
-                };
-            unselected.setMinCompressSize(10000);
-            compressor.putCompression(unselected);
-          });
-      app.routes().get("/selected", (ignored45, response) -> response.text(payload));
+    var configuredOptions = new Options();
+    configuredOptions.setCompression(true);
 
-      try (var test = TestServer.start(app)) {
+    {
+      var app =
+          new Shoostr(configuredOptions)
+              .modifyServer(nativeServerConfiguration ->
+                  ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
 
-        var result =
-            test.send(
-                request ->
-                    request.path("/selected").header("Accept-Encoding", "gzip;q=1, identity;q=0"));
+      try (Closeable appCleanup29 = app::close) {
 
-        assertEquals(200, result.statusCode());
-        assertEquals("gzip", result.headers().firstValue("Content-Encoding").orElseThrow());
+        app.modifyServer(server -> {
+          var graceful = assertInstanceOf(GracefulHandler.class, server.getHandler());
+          var compressor = assertInstanceOf(CompressionHandler.class, graceful.getHandler());
 
-        try (var gzip = new GZIPInputStream(new ByteArrayInputStream(result.body()))) {
-          assertEquals(payload, new String(gzip.readAllBytes(), StandardCharsets.UTF_8));
+          compressor.putCompression(new GzipCompression());
+          var unselected =
+              createUnselectedForUsesOnlyTheSelectedCompressorThresholdWhenIdentityIsForbidden();
+          unselected.setMinCompressSize(10000);
+          compressor.putCompression(unselected);
+        });
+        app.routes().get("/selected", (ignoredRequest, response) -> response.text(payload));
+
+        try (var test = TestServer.start(app)) {
+
+          var result =
+              sendResultForUsesOnlyTheSelectedCompressorThresholdWhenIdentityIsForbidden(test);
+
+          assertEquals(200, result.statusCode());
+          assertEquals("gzip", result.headers().firstValue("Content-Encoding").orElseThrow());
+
+          try (var gzip = new GZIPInputStream(new ByteArrayInputStream(result.body()))) {
+            assertEquals(payload, new String(gzip.readAllBytes(), StandardCharsets.UTF_8));
+          }
         }
       }
     }
   }
 
+  private GzipCompression
+      createUnselectedForUsesOnlyTheSelectedCompressorThresholdWhenIdentityIsForbidden() {
+    return new GzipCompression() {
+      @Override
+      public String getEncodingName() {
+        return UNSELECTED_ENCODING;
+      }
+    };
+  }
+
+  private HttpResponse<byte[]>
+      sendResultForUsesOnlyTheSelectedCompressorThresholdWhenIdentityIsForbidden(TestServer test)
+          throws IOException, InterruptedException {
+    return test.send(
+        request -> request.path("/selected").header("Accept-Encoding", "gzip;q=1, identity;q=0"));
+  }
+
   @Test
   void rejectsForbiddenIdentityWhenNativeMethodExcludesCompression() throws Exception {
-    try (var app =
-        new Shoostr()
-            .modifyServer(
-                nativeServerConfiguration ->
-                    ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0))) {
-      app.compression();
-      app.routes().put("/data", (ignored46, response) -> response.text("method response"));
+    var configuredOptions = new Options();
+    configuredOptions.setCompression(true);
 
-      try (var test = TestServer.start(app)) {
+    {
+      var app =
+          new Shoostr(configuredOptions)
+              .modifyServer(nativeServerConfiguration ->
+                  ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
 
-        var result =
-            test.send(
-                request ->
-                    request
-                        .path("/data")
-                        .header("Accept-Encoding", "gzip;q=1, identity;q=0")
-                        .method("PUT"));
+      try (Closeable appCleanup30 = app::close) {
 
-        assertEquals(406, result.statusCode());
-        assertEquals(0, result.body().length);
+        app.routes().put("/data", (ignoredRequest, response) -> response.text("method response"));
+
+        try (var test = TestServer.start(app)) {
+
+          var result =
+              sendResultForRejectsForbiddenIdentityWhenNativeMethodExcludesCompression(test);
+
+          assertEquals(406, result.statusCode());
+          assertEquals(0, result.body().length);
+          assertTrue(result.headers().allValues("Vary").contains("Accept-Encoding"));
+        }
       }
     }
+  }
+
+  private HttpResponse<byte[]>
+      sendResultForRejectsForbiddenIdentityWhenNativeMethodExcludesCompression(TestServer test)
+          throws IOException, InterruptedException {
+    return test.send(request ->
+        request.path("/data").header("Accept-Encoding", "gzip;q=1, identity;q=0").method("PUT"));
   }
 
   @Test
   void streamingResponsesCompressAndCanOptOutBeforeTheFirstWrite() throws Exception {
     var payload = "streamed-text-".repeat(150);
 
-    try (var app =
-        new Shoostr()
-            .modifyServer(
-                nativeServerConfiguration ->
-                    ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0))) {
-      app.compression();
-      app.routes()
-          .get(
-              "/stream",
-              (ignored47, response) -> {
-                var stream = response.startStream("text/plain");
-                stream.write(payload);
-                stream.flush();
-                stream.write(payload);
-              });
-      app.routes()
-          .get(
-              "/plain",
-              (ignored48, response) -> {
-                var stream = response.disableCompression().startStream("text/plain");
-                stream.write(payload);
-                stream.flush();
-                stream.write(payload);
-              });
+    var configuredOptions = new Options();
+    configuredOptions.setCompression(true);
 
-      try (var test = TestServer.start(app)) {
+    {
+      var app =
+          new Shoostr(configuredOptions)
+              .modifyServer(nativeServerConfiguration ->
+                  ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
 
-        var compressed =
-            test.send(request -> request.path("/stream").header("Accept-Encoding", "gzip"));
-        assertEquals("gzip", compressed.headers().firstValue("Content-Encoding").orElseThrow());
+      try (Closeable appCleanup31 = app::close) {
 
-        try (var gzip = new GZIPInputStream(new ByteArrayInputStream(compressed.body()))) {
-          assertEquals(payload + payload, new String(gzip.readAllBytes(), StandardCharsets.UTF_8));
+        app.routes()
+            .get(
+                "/stream",
+                (ignoredRequest, response) -> {
+                  var stream = response.startStream("text/plain");
+                  stream.write(payload);
+                  stream.flush();
+                  stream.write(payload);
+                });
+        app.routes()
+            .get(
+                "/plain",
+                (ignoredRequest, response) -> {
+                  var stream = response.disableCompression().startStream("text/plain");
+                  stream.write(payload);
+                  stream.flush();
+                  stream.write(payload);
+                });
+
+        try (var test = TestServer.start(app)) {
+
+          var compressed =
+              test.send(request -> request.path("/stream").header("Accept-Encoding", "gzip"));
+
+          assertEquals("gzip", compressed.headers().firstValue("Content-Encoding").orElseThrow());
+
+          try (var gzip = new GZIPInputStream(new ByteArrayInputStream(compressed.body()))) {
+            assertEquals(
+                payload + payload, new String(gzip.readAllBytes(), StandardCharsets.UTF_8));
+          }
+
+          var plain =
+              test.send(
+                  request -> request.path("/plain").header("Accept-Encoding", "gzip"),
+                  HttpResponse.BodyHandlers.ofString());
+
+          assertEquals(payload + payload, plain.body());
+          assertEquals("identity", plain.headers().firstValue("Content-Encoding").orElseThrow());
         }
-
-        var plain =
-            test.send(
-                request -> request.path("/plain").header("Accept-Encoding", "gzip"),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(payload + payload, plain.body());
-        assertEquals("identity", plain.headers().firstValue("Content-Encoding").orElseThrow());
       }
     }
   }
@@ -1762,40 +2276,48 @@ class TransportTest {
   void recoveredResponsesRetainCompressionCacheVariation() throws Exception {
     var payload = "recovered-response-".repeat(100);
 
-    try (var app =
-        new Shoostr()
-            .modifyServer(
-                nativeServerConfiguration ->
-                    ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0))) {
-      app.compression();
-      app.exception(
-          IllegalStateException.class,
-          (ignored49, ignored50, response) -> response.status(200).text(payload));
-      app.routes()
-          .get(
-              "/recover",
-              (ignored51, ignored52) -> {
-                throw new IllegalStateException("recoverable");
-              });
+    var configuredOptions = new Options();
+    configuredOptions.setCompression(true);
 
-      try (var test = TestServer.start(app)) {
+    {
+      var app =
+          new Shoostr(configuredOptions)
+              .modifyServer(nativeServerConfiguration ->
+                  ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
 
-        var encoded =
-            test.send(request -> request.path("/recover").header("Accept-Encoding", "gzip"));
-        assertEquals(200, encoded.statusCode());
-        assertEquals("gzip", encoded.headers().firstValue("Content-Encoding").orElseThrow());
-        assertTrue(encoded.headers().allValues("Vary").contains("Accept-Encoding"));
+      try (Closeable appCleanup32 = app::close) {
 
-        try (var gzip = new GZIPInputStream(new ByteArrayInputStream(encoded.body()))) {
-          assertEquals(payload, new String(gzip.readAllBytes(), StandardCharsets.UTF_8));
+        app.exception(
+            IllegalStateException.class,
+            (ignoredFailure, ignoredRequest, response) -> response.status(200).text(payload));
+        app.routes()
+            .get(
+                "/recover",
+                (ignoredRequest, ignoredResponse) -> {
+                  throw new IllegalStateException("recoverable");
+                });
+
+        try (var test = TestServer.start(app)) {
+
+          var encoded =
+              test.send(request -> request.path("/recover").header("Accept-Encoding", "gzip"));
+
+          assertEquals(200, encoded.statusCode());
+          assertEquals("gzip", encoded.headers().firstValue("Content-Encoding").orElseThrow());
+          assertTrue(encoded.headers().allValues("Vary").contains("Accept-Encoding"));
+
+          try (var gzip = new GZIPInputStream(new ByteArrayInputStream(encoded.body()))) {
+            assertEquals(payload, new String(gzip.readAllBytes(), StandardCharsets.UTF_8));
+          }
+
+          var plain =
+              test.send(request -> request.path("/recover"), HttpResponse.BodyHandlers.ofString());
+
+          assertEquals(200, plain.statusCode());
+          assertEquals(payload, plain.body());
+          assertTrue(plain.headers().firstValue("Content-Encoding").isEmpty());
+          assertTrue(plain.headers().allValues("Vary").contains("Accept-Encoding"));
         }
-
-        var plain =
-            test.send(request -> request.path("/recover"), HttpResponse.BodyHandlers.ofString());
-        assertEquals(200, plain.statusCode());
-        assertEquals(payload, plain.body());
-        assertTrue(plain.headers().firstValue("Content-Encoding").isEmpty());
-        assertTrue(plain.headers().allValues("Vary").contains("Accept-Encoding"));
       }
     }
   }
@@ -1806,75 +2328,89 @@ class TransportTest {
     var entered = new CountDownLatch(1);
     var release = new CountDownLatch(1);
 
-    try (var app =
-            new Shoostr()
-                .modifyServer(
-                    nativeServerConfiguration ->
-                        ((ServerConnector) nativeServerConfiguration.getConnectors()[0])
-                            .setPort(0));
-        var client = secureClient(HttpClient.Version.HTTP_2)) {
-      enableTls(app);
-      app.http2();
-      app.exception(
-          NotFoundException.class,
-          (ignored53, ignored54, ignored55) -> {
-            throw new Error("secret mapper diagnostic");
-          });
-      app.routes()
-          .get(
-              "/warmup",
-              (request, response) ->
+    var configuredOptions = new Options();
+    configuredOptions.setHttp2(true);
+
+    {
+      var app =
+          new Shoostr(configuredOptions)
+              .modifyServer(nativeServerConfiguration ->
+                  ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
+
+      try (Closeable appCleanup33 = app::close;
+          var client = secureClient(HttpClient.Version.HTTP_2)) {
+        enableTls(app);
+
+        app.exception(
+            NotFoundException.class,
+            (ignoredFailure, ignoredRequest, ignoredResponse) -> {
+              throw new Error("secret mapper diagnostic");
+            });
+        app.routes()
+            .get(
+                "/warmup",
+                (request, response) ->
+                    response.text(
+                        Integer.toString(
+                            ((InetSocketAddress) request.remoteAddress().orElseThrow())
+                                .getPort())));
+        app.routes()
+            .get(
+                "/good",
+                (request, response) -> {
+                  entered.countDown();
+
+                  assertTrue(release.await(3, TimeUnit.SECONDS));
+
                   response.text(
                       Integer.toString(
-                          ((InetSocketAddress) request.remoteAddress().orElseThrow()).getPort())));
-      app.routes()
-          .get(
-              "/good",
-              (request, response) -> {
-                entered.countDown();
-                assertTrue(release.await(3, TimeUnit.SECONDS));
-                response.text(
-                    Integer.toString(
-                        ((InetSocketAddress) request.remoteAddress().orElseThrow()).getPort()));
-              });
-      app.routes()
-          .get(
-              "/fatal",
-              (ignored56, ignored57) -> {
-                if (mapper) {
-                  throw new NotFoundException();
-                }
+                          ((InetSocketAddress) request.remoteAddress().orElseThrow()).getPort()));
+                });
+        app.routes()
+            .get(
+                "/fatal",
+                (ignoredRequest, ignoredResponse) -> {
+                  if (mapper) {
+                    throw new NotFoundException();
+                  }
 
-                throw new Error("secret route diagnostic");
-              });
-      app.start();
-      var base = "https://localhost:" + app.port();
-      var warmup =
-          client.send(
-              HttpRequest.newBuilder(URI.create(base + "/warmup")).build(),
-              HttpResponse.BodyHandlers.ofString());
-      assertEquals(HttpClient.Version.HTTP_2, warmup.version());
-      var sibling =
-          client.sendAsync(
-              HttpRequest.newBuilder(URI.create(base + "/good")).build(),
-              HttpResponse.BodyHandlers.ofString());
-
-      try {
-        assertTrue(entered.await(3, TimeUnit.SECONDS));
-        var failed =
-            client.sendAsync(
-                HttpRequest.newBuilder(URI.create(base + "/fatal")).build(),
+                  throw new Error("secret route diagnostic");
+                });
+        app.start();
+        var base = "https://localhost:" + app.port();
+        var warmup =
+            client.send(
+                HttpRequest.newBuilder(URI.create(base + "/warmup")).build(),
                 HttpResponse.BodyHandlers.ofString());
-        assertInstanceOf(
-            IOException.class,
-            assertThrows(ExecutionException.class, () -> failed.get(5, TimeUnit.SECONDS))
-                .getCause());
-        release.countDown();
-        var result = sibling.get(5, TimeUnit.SECONDS);
-        assertEquals(200, result.statusCode());
-        assertEquals(warmup.body(), result.body());
-      } finally {
-        release.countDown();
+
+        assertEquals(HttpClient.Version.HTTP_2, warmup.version());
+
+        var sibling =
+            client.sendAsync(
+                HttpRequest.newBuilder(URI.create(base + "/good")).build(),
+                HttpResponse.BodyHandlers.ofString());
+
+        try {
+          assertTrue(entered.await(3, TimeUnit.SECONDS));
+
+          var failed =
+              client.sendAsync(
+                  HttpRequest.newBuilder(URI.create(base + "/fatal")).build(),
+                  HttpResponse.BodyHandlers.ofString());
+
+          assertInstanceOf(
+              IOException.class,
+              assertThrows(ExecutionException.class, () -> failed.get(5, TimeUnit.SECONDS))
+                  .getCause());
+
+          release.countDown();
+          var result = sibling.get(5, TimeUnit.SECONDS);
+
+          assertEquals(200, result.statusCode());
+          assertEquals(warmup.body(), result.body());
+        } finally {
+          release.countDown();
+        }
       }
     }
   }
@@ -1884,61 +2420,74 @@ class TransportTest {
     var entered = new CountDownLatch(1);
     var release = new CountDownLatch(1);
 
-    try (var app =
-            new Shoostr()
-                .modifyServer(
-                    nativeServerConfiguration ->
-                        ((ServerConnector) nativeServerConfiguration.getConnectors()[0])
-                            .setPort(0));
-        var client = secureClient(HttpClient.Version.HTTP_2)) {
-      enableTls(app);
-      app.http2();
-      app.routes().get("/warmup", (ignored58, response) -> response.text("ready"));
-      app.routes()
-          .get(
-              "/good",
-              (ignored59, response) -> {
-                entered.countDown();
-                assertTrue(release.await(3, TimeUnit.SECONDS));
-                response.text("survived");
-              });
-      app.routes()
-          .get(
-              "/fatal",
-              (ignored60, response) -> {
-                var stream = response.startStream("text/plain");
-                stream.write("prefix");
-                stream.flush();
-                throw new Error("secret committed diagnostic");
-              });
-      app.start();
-      var base = "https://localhost:" + app.port();
-      assertEquals(
-          HttpClient.Version.HTTP_2,
-          client
-              .send(
-                  HttpRequest.newBuilder(URI.create(base + "/warmup")).build(),
-                  HttpResponse.BodyHandlers.ofString())
-              .version());
-      var sibling =
-          client.sendAsync(
-              HttpRequest.newBuilder(URI.create(base + "/good")).build(),
-              HttpResponse.BodyHandlers.ofString());
+    var configuredOptions = new Options();
+    configuredOptions.setHttp2(true);
 
-      try {
-        assertTrue(entered.await(3, TimeUnit.SECONDS));
-        var failed =
+    {
+      var app =
+          new Shoostr(configuredOptions)
+              .modifyServer(nativeServerConfiguration ->
+                  ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
+
+      try (Closeable appCleanup34 = app::close;
+          var client = secureClient(HttpClient.Version.HTTP_2)) {
+        enableTls(app);
+
+        app.routes().get("/warmup", (ignoredRequest, response) -> response.text("ready"));
+        app.routes()
+            .get(
+                "/good",
+                (ignoredRequest, response) -> {
+                  entered.countDown();
+
+                  assertTrue(release.await(3, TimeUnit.SECONDS));
+
+                  response.text("survived");
+                });
+        app.routes()
+            .get(
+                "/fatal",
+                (ignoredRequest, response) -> {
+                  var stream = response.startStream("text/plain");
+                  stream.write("prefix");
+                  stream.flush();
+                  throw new Error("secret committed diagnostic");
+                });
+        app.start();
+        var base = "https://localhost:" + app.port();
+
+        assertEquals(
+            HttpClient.Version.HTTP_2,
+            client
+                .send(
+                    HttpRequest.newBuilder(URI.create(base + "/warmup")).build(),
+                    HttpResponse.BodyHandlers.ofString())
+                .version());
+
+        var sibling =
             client.sendAsync(
-                HttpRequest.newBuilder(URI.create(base + "/fatal")).build(),
-                HttpResponse.BodyHandlers.ofByteArray());
-        assertInstanceOf(
-            IOException.class,
-            assertThrows(ExecutionException.class, () -> failed.get(5, TimeUnit.SECONDS))
-                .getCause());
-        release.countDown();
-        assertEquals("survived", sibling.get(5, TimeUnit.SECONDS).body());
-      } finally {
-        release.countDown();
+                HttpRequest.newBuilder(URI.create(base + "/good")).build(),
+                HttpResponse.BodyHandlers.ofString());
+
+        try {
+          assertTrue(entered.await(3, TimeUnit.SECONDS));
+
+          var failed =
+              client.sendAsync(
+                  HttpRequest.newBuilder(URI.create(base + "/fatal")).build(),
+                  HttpResponse.BodyHandlers.ofByteArray());
+
+          assertInstanceOf(
+              IOException.class,
+              assertThrows(ExecutionException.class, () -> failed.get(5, TimeUnit.SECONDS))
+                  .getCause());
+
+          release.countDown();
+
+          assertEquals("survived", sibling.get(5, TimeUnit.SECONDS).body());
+        } finally {
+          release.countDown();
+        }
       }
     }
   }
@@ -1950,12 +2499,11 @@ class TransportTest {
   private void enableTls(Shoostr app, AtomicReference<SslContextFactory.Server> context)
       throws Exception {
     var keyStore = keyStoreFile();
-    app.tls(
-        tls -> {
-          context.set(tls);
-          tls.setKeyStorePath(keyStore.toString());
-          tls.setKeyStorePassword(String.valueOf(PASSWORD));
-        });
+    app.tls(tls -> {
+      context.set(tls);
+      tls.setKeyStorePath(keyStore.toString());
+      tls.setKeyStorePassword(String.valueOf(PASSWORD));
+    });
   }
 
   private Path keyStoreFile() throws Exception {
@@ -1968,52 +2516,6 @@ class TransportTest {
     return path;
   }
 
-  private static HttpClient secureClient(HttpClient.Version version) throws Exception {
-    var store = testKeyStore();
-    var trust = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
-    trust.init(store);
-    var context = SSLContext.getInstance("TLS");
-    context.init(null, trust.getTrustManagers(), null);
-    return HttpClient.newBuilder()
-        .sslContext(context)
-        .version(version)
-        .connectTimeout(Duration.ofSeconds(3))
-        .build();
-  }
-
-  private static void enableMutualTls(Shoostr app) throws Exception {
-    var store = testKeyStore();
-    app.tls(
-        tls -> {
-          tls.setKeyStore(store);
-          tls.setKeyStorePassword(String.valueOf(PASSWORD));
-          tls.setTrustStore(store);
-          tls.setNeedClientAuth(true);
-          tls.setIncludeProtocols("TLSv1.2");
-        });
-  }
-
-  private static SSLContext mutualTlsContext(KeyStore identity) throws Exception {
-    var keys = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
-    keys.init(identity, PASSWORD);
-    var trust = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
-    trust.init(testKeyStore());
-    var context = SSLContext.getInstance("TLS");
-    context.init(keys.getKeyManagers(), trust.getTrustManagers(), null);
-    return context;
-  }
-
-  private static KeyStore testKeyStore() throws Exception {
-    var store = KeyStore.getInstance("PKCS12");
-
-    try (var input =
-        Objects.requireNonNull(TransportTest.class.getResourceAsStream(KEYSTORE_RESOURCE))) {
-      store.load(input, PASSWORD);
-    }
-
-    return store;
-  }
-
   private KeyStore untrustedClientKeyStore() throws Exception {
     var path = temporary.resolve("untrusted-client.p12");
     var tool = Path.of(System.getProperty("java.home"), "bin", "keytool");
@@ -2022,34 +2524,7 @@ class TransportTest {
     }
 
     var output = temporary.resolve("keytool.log");
-    var process =
-        new ProcessBuilder(
-                tool.toString(),
-                "-genkeypair",
-                "-alias",
-                "untrusted",
-                "-keyalg",
-                "RSA",
-                "-keysize",
-                "2048",
-                "-dname",
-                "CN=localhost",
-                "-ext",
-                "EKU=clientAuth",
-                "-validity",
-                "1",
-                "-storetype",
-                "PKCS12",
-                "-keystore",
-                path.toString(),
-                "-storepass",
-                String.valueOf(PASSWORD),
-                "-keypass",
-                String.valueOf(PASSWORD),
-                "-noprompt")
-            .redirectErrorStream(true)
-            .redirectOutput(output.toFile())
-            .start();
+    var process = createProcessForUntrustedClientKeyStore(tool, path, output);
 
     try {
       assertTrue(process.waitFor(8, TimeUnit.SECONDS));
@@ -2068,5 +2543,36 @@ class TransportTest {
     }
 
     return store;
+  }
+
+  private Process createProcessForUntrustedClientKeyStore(Path tool, Path path, Path output)
+      throws IOException {
+    return new ProcessBuilder(
+            tool.toString(),
+            "-genkeypair",
+            "-alias",
+            "untrusted",
+            "-keyalg",
+            "RSA",
+            "-keysize",
+            "2048",
+            "-dname",
+            "CN=localhost",
+            "-ext",
+            "EKU=clientAuth",
+            "-validity",
+            "1",
+            "-storetype",
+            "PKCS12",
+            "-keystore",
+            path.toString(),
+            "-storepass",
+            String.valueOf(PASSWORD),
+            "-keypass",
+            String.valueOf(PASSWORD),
+            "-noprompt")
+        .redirectErrorStream(true)
+        .redirectOutput(output.toFile())
+        .start();
   }
 }

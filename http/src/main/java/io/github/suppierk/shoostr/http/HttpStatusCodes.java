@@ -416,6 +416,30 @@ public enum HttpStatusCodes {
   }
 
   /**
+   * Looks up a numeric status without throwing for an unrecognized code.
+   *
+   * @param value the numeric status code
+   * @return the recognized status, or empty for unused, unassigned or out-of-range input
+   */
+  public static Optional<HttpStatusCodes> httpStatusCode(int value) {
+    return Optional.ofNullable(LOOKUP.get(value));
+  }
+
+  /**
+   * Builds the numeric index once; unassigned entries remain null to avoid hashing or boxing on
+   * lookup.
+   *
+   * @return status codes indexed by their numeric value
+   */
+  private static Map<Integer, HttpStatusCodes> lookup() {
+    final var lookup = new HashMap<Integer, HttpStatusCodes>();
+    for (final var value : HttpStatusCodes.values()) {
+      lookup.put(value.value(), value);
+    }
+    return lookup;
+  }
+
+  /**
    * Returns the numeric HTTP status code.
    *
    * @return the three-digit status code
@@ -431,16 +455,6 @@ public enum HttpStatusCodes {
    */
   public String reasonPhrase() {
     return reasonPhrase;
-  }
-
-  /**
-   * Looks up a numeric status without throwing for an unrecognized code.
-   *
-   * @param value the numeric status code
-   * @return the recognized status, or empty for unused, unassigned or out-of-range input
-   */
-  public static Optional<HttpStatusCodes> httpStatusCode(int value) {
-    return Optional.ofNullable(LOOKUP.get(value));
   }
 
   /**
@@ -471,6 +485,15 @@ public enum HttpStatusCodes {
   }
 
   /**
+   * Identifies client or server errors.
+   *
+   * @return true for a 4xx or 5xx status
+   */
+  public boolean isError() {
+    return isClientError() || isServerError();
+  }
+
+  /**
    * Identifies client errors.
    *
    * @return true for a 4xx status
@@ -486,28 +509,5 @@ public enum HttpStatusCodes {
    */
   public boolean isServerError() {
     return value >= 500 && value < 600;
-  }
-
-  /**
-   * Identifies client or server errors.
-   *
-   * @return true for a 4xx or 5xx status
-   */
-  public boolean isError() {
-    return isClientError() || isServerError();
-  }
-
-  /**
-   * Builds the numeric index once; unassigned entries remain null to avoid hashing or boxing on
-   * lookup.
-   *
-   * @return status codes indexed by their numeric value
-   */
-  private static Map<Integer, HttpStatusCodes> lookup() {
-    final var lookup = new HashMap<Integer, HttpStatusCodes>();
-    for (var value : HttpStatusCodes.values()) {
-      lookup.put(value.value(), value);
-    }
-    return lookup;
   }
 }

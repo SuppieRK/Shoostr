@@ -34,15 +34,6 @@ public abstract class HttpException extends RuntimeException {
   }
 
   /**
-   * Returns the HTTP error represented by this exception.
-   *
-   * @return the fixed client or server error status
-   */
-  public final HttpStatusCodes statusCode() {
-    return statusCode;
-  }
-
-  /**
    * Validates the status before constructing the superclass and selects its diagnostic message.
    *
    * @param statusCode client or server error status
@@ -58,5 +49,14 @@ public abstract class HttpException extends RuntimeException {
     }
 
     return message == null ? statusCode.reasonPhrase() : message;
+  }
+
+  /**
+   * Returns the HTTP error represented by this exception.
+   *
+   * @return the fixed client or server error status
+   */
+  public final HttpStatusCodes statusCode() {
+    return statusCode;
   }
 }

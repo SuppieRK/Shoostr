@@ -9,9 +9,11 @@ Java and Gradle are provided by the build image. Start one example at a time:
 docker compose -f examples/07-json/legacy-json-errors/compose.yaml up --build -d
 ```
 
-Startup is asynchronous. Check diagnostics with `docker compose -f examples/07-json/legacy-json-errors/compose.yaml logs -f app`.
+Startup is asynchronous. Check diagnostics with
+`docker compose -f examples/07-json/legacy-json-errors/compose.yaml logs -f app`.
 Open `http://127.0.0.1:8080/users/help`. Expect the JSON submission instructions.
-Retry the request if the listener is not ready yet. Set `APP_PORT=8081` before the command if port 8080 is occupied, and use that port in requests.
+Retry the request if the listener is not ready yet. Set `APP_PORT=8081` before the command if port 8080 is occupied, and
+use that port in requests.
 Compose exposes the app on host loopback. These credentials and unauthenticated fixtures
 are for trusted local development. Direct Java runs use the default wildcard listener.
 
@@ -33,7 +35,8 @@ container validation is described in [CONTRIBUTING](../../../CONTRIBUTING.md#exa
 
 ## Recipe and direct-run notes
 
-Maintainer launcher fixture. Consumer recipes belong in the [JSON section](../../../site/src/content/docs/json/codec.mdx).
+Maintainer launcher fixture. Consumer recipes belong in
+the [JSON section](../../../site/src/content/docs/json/codec.mdx).
 
 Run `./gradlew :json-errors-example:run`, then:
 
@@ -62,7 +65,7 @@ No application-model scanning, serialization annotations or schema inference occ
 The optional codec makes typed methods available while retaining ordinary byte/text
 methods. It does not infer Content-Type or perform HTTP negotiation. Only malformed
 JSON/input becomes400; unexpected encoding/I/O failures remain server errors.
-`Routes.exception`/`TypedRoutes.exception` are core request handling, not extension
+`Routes.exception`/`Routes.Typed.exception` are core request handling, not extension
 configuration. Unmatched router404s are separate from matched application exceptions.
 
 Verify through live HTTP with `./gradlew :json-errors-example:test`.

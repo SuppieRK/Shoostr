@@ -7,9 +7,13 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import io.github.suppierk.shoostr.Shoostr;
 import io.github.suppierk.shoostr.testing.TestServer;
 import io.modelcontextprotocol.client.McpClient;
+import io.modelcontextprotocol.client.McpClient.SyncSpec;
+import io.modelcontextprotocol.client.McpSyncClient;
 import io.modelcontextprotocol.client.transport.HttpClientStreamableHttpTransport;
 import io.modelcontextprotocol.common.McpTransportContext;
 import io.modelcontextprotocol.server.McpServer;
+import io.modelcontextprotocol.server.McpSyncServer;
+import java.io.Closeable;
 import java.time.Duration;
 import java.util.Objects;
 import java.util.Optional;
@@ -19,37 +23,45 @@ import org.junit.jupiter.api.Test;
 
 class McpOwnershipTest {
   @Test
-  void rejectsANullNativeServerBeforeReturningAnAdapter() {
+  void rejectsNullNativeServerBeforeReturningAnAdapter() {
     var security =
         new McpHttpSecurity(
             Set.of(),
             ignored -> new McpIdentity("public", McpTransportContext.EMPTY, null),
-            (ignored2, ignored3) -> {});
+            (ignoredMcpIdentity, ignoredJsonRpcMessage) -> {});
 
-    try (var attempt = new ConstructionAttempt(() -> Mcp.sync(security, ignored4 -> null))) {
+    try (var attempt =
+        new ConstructionAttempt(
+            () -> Mcp.sync(security, ignoredMcpStreamableServerTransportProvider -> null))) {
       assertThrows(NullPointerException.class, attempt::construct);
     }
   }
 
   @Test
-  void rejectsADuplicateNativeTransportBindingDuringConstruction() {
+  void rejectsDuplicateNativeTransportBindingDuringConstruction() {
     var security =
         new McpHttpSecurity(
             Set.of(),
-            ignored5 -> new McpIdentity("public", McpTransportContext.EMPTY, null),
-            (ignored6, ignored7) -> {});
+            ignoredRequest -> new McpIdentity("public", McpTransportContext.EMPTY, null),
+            (ignoredMcpIdentity, ignoredJsonRpcMessage) -> {});
 
     try (var attempt =
-        new ConstructionAttempt(
-            () ->
-                Mcp.sync(
-                    security,
-                    transport -> {
-                      McpServer.sync(transport).build();
-                      return McpServer.sync(transport).build();
-                    }))) {
+        openAttemptForRejectsDuplicateNativeTransportBindingDuringConstruction(security)) {
       assertThrows(IllegalStateException.class, attempt::construct);
     }
+  }
+
+  private ConstructionAttempt
+      openAttemptForRejectsDuplicateNativeTransportBindingDuringConstruction(
+          McpHttpSecurity security) {
+    return new ConstructionAttempt(() ->
+        Mcp.sync(
+            security,
+            transport -> {
+              McpServer.sync(transport).build();
+
+              return McpServer.sync(transport).build();
+            }));
   }
 
   @Test
@@ -57,25 +69,19 @@ class McpOwnershipTest {
     var security =
         new McpHttpSecurity(
             Set.of(),
-            ignored8 -> new McpIdentity("public", McpTransportContext.EMPTY, null),
-            (ignored9, ignored10) -> {});
+            ignoredRequest -> new McpIdentity("public", McpTransportContext.EMPTY, null),
+            (ignoredMcpIdentity, ignoredJsonRpcMessage) -> {});
     var mcp =
         Mcp.sync(
             security, transport -> McpServer.sync(transport).serverInfo("owner", "1.0").build());
     var app = new Shoostr();
-    app.extensions(mcp).routes(routes -> routes.path("/mcp", mcp::routes));
+    app.routes(routes -> routes.path("/mcp", mcp::routes));
 
     try (var test = TestServer.start(app);
-        var client =
-            McpClient.sync(
-                    HttpClientStreamableHttpTransport.builder(test.baseUri().toString())
-                        .endpoint("/mcp")
-                        .build())
-                .requestTimeout(Duration.ofSeconds(5))
-                .initializationTimeout(Duration.ofSeconds(5))
-                .build()) {
+        var client = openClient(test)) {
       try (var attempt =
-          new ConstructionAttempt(() -> Mcp.sync(security, ignored11 -> mcp.server()))) {
+          new ConstructionAttempt(() ->
+              Mcp.sync(security, ignoredMcpStreamableServerTransportProvider -> mcp.server()))) {
         assertThrows(IllegalArgumentException.class, attempt::construct);
       }
 
@@ -84,20 +90,67 @@ class McpOwnershipTest {
     }
   }
 
+  private McpSyncClient openClient(TestServer test) {
+    return clientProperties(test).build();
+  }
+
+  private SyncSpec clientProperties(TestServer test) {
+    return McpClient.sync(
+            HttpClientStreamableHttpTransport.builder(test.baseUri().toString())
+                .endpoint("/mcp")
+                .build())
+        .requestTimeout(Duration.ofSeconds(5))
+        .initializationTimeout(Duration.ofSeconds(5));
+  }
+
   @Test
   void rejectsInstallingAnAdapterThatWasAlreadyClosed() throws Exception {
-    var mcp =
-        Mcp.sync(
-            new McpHttpSecurity(
-                Set.of(),
-                ignored12 -> new McpIdentity("public", McpTransportContext.EMPTY, null),
-                (ignored13, ignored14) -> {}),
-            transport -> McpServer.sync(transport).serverInfo("ownership", "1.0").build());
+    var mcp = createOwnershipMcp();
     mcp.close();
 
-    try (var app = new Shoostr()) {
-      assertThrows(IllegalStateException.class, () -> app.extensions(mcp));
+    {
+      var app = new Shoostr();
+
+      try (Closeable appCleanup = app::close) {
+        var routes = app.routes();
+
+        assertThrows(IllegalStateException.class, () -> routes.path("/mcp", mcp::routes));
+      }
     }
+  }
+
+  @Test
+  void rejectsSecondApplicationWithoutClosingTheOwnedAdapter() throws Exception {
+    var owner = new Shoostr();
+
+    try (Closeable ownerCleanup = owner::close) {
+      var mcp = createOwnershipMcp();
+      owner.routes().path("/mcp", mcp::routes);
+
+      try (var test = TestServer.start(owner)) {
+        var rejected = new Shoostr();
+
+        try (Closeable rejectedCleanup = rejected::close) {
+          var routes = rejected.routes();
+
+          assertThrows(IllegalStateException.class, () -> routes.path("/mcp", mcp::routes));
+        }
+
+        try (var client = openClient(test)) {
+          assertEquals("ownership", client.initialize().serverInfo().name());
+          assertTrue(client.closeGracefully());
+        }
+      }
+    }
+  }
+
+  private Mcp<McpSyncServer> createOwnershipMcp() {
+    return Mcp.sync(
+        new McpHttpSecurity(
+            Set.of(),
+            ignoredRequest -> new McpIdentity("public", McpTransportContext.EMPTY, null),
+            (ignoredMcpIdentity, ignoredJsonRpcMessage) -> {}),
+        transport -> McpServer.sync(transport).serverInfo("ownership", "1.0").build());
   }
 
   private static final class ConstructionAttempt implements AutoCloseable {
@@ -106,7 +159,7 @@ class McpOwnershipTest {
 
     private ConstructionAttempt(Supplier<Mcp<?>> factory) {
       this.factory = Objects.requireNonNull(factory);
-      adapter = Optional.empty();
+      this.adapter = Optional.empty();
     }
 
     private void construct() {

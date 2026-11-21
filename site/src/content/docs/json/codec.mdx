@@ -25,7 +25,7 @@ Implement `read(...)` to convert bytes to Java objects and `write(...)` to conve
 Shoostr delegates these conversions without choosing a serialization library or data format; JSON is one possible codec implementation, not a framework requirement.
 
 Register the codec with `app.codec(codec)` and register handlers through the returned typed view, as the example does with `.routes(...)`.
-HTTP handlers receive `TypedRequest` and `TypedResponse`; the same registration view also supplies typed WebSocket callbacks and an SSE event writer with these conversion helpers:
+HTTP handlers receive `Request.Typed` and `Response.Typed`; the same registration view also supplies typed WebSocket callbacks and an SSE event writer with these conversion helpers:
 
 | Helper                               | Codec operation     | Result                                                                       |
 | ------------------------------------ | ------------------- | ---------------------------------------------------------------------------- |

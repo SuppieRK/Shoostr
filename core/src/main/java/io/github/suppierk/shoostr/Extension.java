@@ -2,7 +2,6 @@ package io.github.suppierk.shoostr;
 
 import java.io.Closeable;
 import java.io.IOException;
-import org.jspecify.annotations.Nullable;
 
 /**
  * Optional application capability selected by instance during route registration. Installation is
@@ -15,15 +14,12 @@ import org.jspecify.annotations.Nullable;
  * restore each scope on its owning thread. Request attributes and principals retain their
  * references, not automatic thread safety. Terminal observers retain their separate
  * completion-thread contract.
- *
- * @param <C> provider's typed route configuration
  */
-public interface Extension<C> extends Closeable {
+public sealed interface Extension extends Closeable permits ApplicationExtension, RouteExtension {
   /**
-   * Claims cleanup responsibility before this instance is installed. The app validates the entire
-   * batch first, then claims instances in written order before invoking any installation callback.
-   * Returning successfully transfers responsibility to the receiving app, even if subsequent setup
-   * fails. A rejected or not-yet-claimed instance is never closed by that app.
+   * Claims cleanup responsibility before this instance is installed on first selection. Returning
+   * successfully transfers responsibility to the receiving app, even if subsequent setup fails. A
+   * rejected or not-yet-claimed instance is never closed by that app.
    *
    * <p>Providers owning exclusive resources must atomically reject reuse, including concurrent
    * attempts by different apps. A thrown claim must leave existing ownership unchanged and clean
@@ -35,29 +31,12 @@ public interface Extension<C> extends Closeable {
   default void claimOwnership() {}
 
   /**
-   * Registers application-wide behavior eagerly in written installation order.
+   * Establishes shared infrastructure eagerly on first use, before activation. Request features
+   * must be contributed through the activation role, not enabled globally here.
    *
    * @param callbacks registration-only callbacks, frozen when installation finishes
    */
   default void install(ApplicationCallbacks callbacks) {}
-
-  /**
-   * Creates configuration for a scope. Copy mutable scope-local settings rather than returning or
-   * mutating the parent. A provider without scope-local settings may return itself. Register
-   * callbacks on the supplied scope; core handles execution phases. This method also runs for
-   * inherited selections, without replaying the user's group callback. Providers must capture
-   * stable values in runtime callbacks. App-only extensions may leave this method unsupported.
-   * Select collaborating extensions separately in the user's route/group callback; nested with on
-   * this provider-only contribution scope is rejected.
-   *
-   * @param endpoint configuration receiving this extension's contributions
-   * @param inherited parent configuration, or null for the first selection
-   * @return independent mutable configuration, or this provider when it has no local settings
-   * @throws UnsupportedOperationException if this extension has no route configuration
-   */
-  default C configure(Extensions endpoint, @Nullable C inherited) {
-    throw new UnsupportedOperationException("This extension only provides application behavior");
-  }
 
   /** Finalizes metadata and owned resources after route facts arrive, before accepting traffic. */
   default void beforeStart() {}
@@ -68,7 +47,7 @@ public interface Extension<C> extends Closeable {
    * promptly without waiting for handlers or disposing resources still needed by draining requests
    * and terminal observers; final resource disposal belongs in {@link #close()}.
    *
-   * <p>Prevent new work atomically while signalling active work. Never access a live request or
+   * <p>Prevent new work atomically while signaling active work. Never access a live request or
    * response from this shutdown callback. Runtime failures are collected without skipping other
    * extensions, native shutdown or final cleanup. The default contributes no shutdown work.
    */

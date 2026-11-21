@@ -1,5 +1,6 @@
 package io.github.suppierk.shoostr.example.lifecycle;
 
+import io.github.suppierk.shoostr.Options;
 import io.github.suppierk.shoostr.RequestObservation;
 import io.github.suppierk.shoostr.RequestOutcome;
 import io.github.suppierk.shoostr.Shoostr;
@@ -30,64 +31,73 @@ public final class ExecutorExample {
     Objects.requireNonNull(workers);
     Objects.requireNonNull(context);
     Objects.requireNonNull(completed);
-    var app =
-        new Shoostr()
-            .observe(
-                request -> {
-                  // Capture the request value before dispatching work to a selected executor.
-                  var previous = context.get();
-                  var captured = request.header("X-Request-Id").orElse("unassigned");
+    var configuredOptions = options(virtual);
+
+    return new Shoostr(configuredOptions)
+        .observe(
+            request -> {
+              // Capture the request value before dispatching work to a selected executor.
+              var previous = context.get();
+              var captured = request.header("X-Request-Id").orElse("unassigned");
+              context.set(captured);
+
+              return new RequestObservation() {
+                /** {@inheritDoc} */
+                @Override
+                public AutoCloseable attach() {
+                  // Restore each worker's own previous value when its attachment closes.
+                  var workerPrevious = context.get();
                   context.set(captured);
-                  return new RequestObservation() {
-                    /** {@inheritDoc} */
-                    @Override
-                    public AutoCloseable attach() {
-                      // Restore each worker's own previous value when its attachment closes.
-                      var workerPrevious = context.get();
-                      context.set(captured);
-                      return () -> restore(context, workerPrevious);
-                    }
 
-                    /** {@inheritDoc} */
-                    @Override
-                    public void close() {
-                      // The observation's original thread has a separate context lifetime.
-                      restore(context, previous);
-                    }
+                  return () -> restore(context, workerPrevious);
+                }
 
-                    /** {@inheritDoc} */
-                    @Override
-                    public void complete(RequestOutcome outcome) {
-                      // Retain only the detached outcome, not the live request or response.
-                      completed.accept(outcome);
-                    }
-                  };
-                })
-            .exception(
-                RejectedExecutionException.class,
-                (ignored, ignored2, response) -> response.status(503).text("busy:" + context.get()))
-            .routes(
-                routes ->
-                    routes
-                        .get(
-                            "/default",
-                            (ignored3, response) ->
-                                response.text("virtual=" + Thread.currentThread().isVirtual()))
-                        // Shoostr borrows this pool; keep it alive until the application has
-                        // stopped.
-                        .get(
-                            "/selected",
-                            workers,
-                            (ignored4, response) ->
-                                response.text(
-                                    context.get() + "|" + Thread.currentThread().getName())));
+                /** {@inheritDoc} */
+                @Override
+                public void close() {
+                  // The observation's original thread has a separate context lifetime.
+                  restore(context, previous);
+                }
 
-    if (virtual) {
-      // Opt in for ordinary handlers; the selected endpoint still uses its borrowed pool.
-      app.virtualThreads();
-    }
+                /** {@inheritDoc} */
+                @Override
+                public void complete(RequestOutcome outcome) {
+                  // Retain only the detached outcome, not the live request or response.
+                  completed.accept(outcome);
+                }
+              };
+            })
+        .exception(
+            RejectedExecutionException.class,
+            (ignored, ignoredRequest, response) ->
+                response.status(503).text("busy:" + context.get()))
+        .routes(
+            routes ->
+                routes
+                    .get(
+                        "/default",
+                        (ignoredRequest, response) ->
+                            response.text("virtual=" + Thread.currentThread().isVirtual()))
+                    // Shoostr borrows this pool; keep it alive until the application has
+                    // stopped.
+                    .get(
+                        "/selected",
+                        workers,
+                        (ignoredRequest, response) ->
+                            response.text(context.get() + "|" + Thread.currentThread().getName())));
+  }
 
-    return app;
+  /**
+   * Configures the listener and resource policy used by this application.
+   *
+   * @param virtual application setting
+   * @return detached serving options
+   */
+  private static Options options(boolean virtual) {
+    var configuredOptions = new Options();
+    configuredOptions.setVirtualThreads(virtual);
+
+    return configuredOptions;
   }
 
   /**

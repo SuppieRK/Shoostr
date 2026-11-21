@@ -1,12 +1,15 @@
 package io.github.suppierk.shoostr;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
 import io.github.suppierk.shoostr.testing.TestServer;
 import java.io.ByteArrayInputStream;
+import java.io.Closeable;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.InetAddress;
@@ -22,8 +25,10 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.Arrays;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.eclipse.jetty.server.ServerConnector;
 import org.junit.jupiter.api.Test;
@@ -34,274 +39,380 @@ class StreamingInputOutputTest {
 
   @Test
   void readsRequestInputWithoutBufferingTheWholeBody() throws Exception {
-    try (var app = new Shoostr()) {
-      app.routes()
-          .post(
-              "/echo",
-              (request, response) ->
-                  response.text(
-                      new String(request.input().readAllBytes(), StandardCharsets.UTF_8)));
+    {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        var result =
-            test.send(
-                request ->
-                    request
-                        .path("/echo")
-                        .method("POST")
-                        .body("streamed".getBytes(StandardCharsets.UTF_8)),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(200, result.statusCode());
-        assertEquals("streamed", result.body());
+      try (Closeable appCleanup = app::close) {
+        app.routes()
+            .post(
+                "/echo",
+                (request, response) ->
+                    response.text(
+                        new String(request.input().readAllBytes(), StandardCharsets.UTF_8)));
+
+        try (var test = TestServer.start(app)) {
+          var result = sendResultForReadsRequestInputWithoutBufferingTheWholeBody(test);
+
+          assertEquals(200, result.statusCode());
+          assertEquals("streamed", result.body());
+        }
       }
     }
+  }
+
+  private HttpResponse<String> sendResultForReadsRequestInputWithoutBufferingTheWholeBody(
+      TestServer test) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request.path("/echo").method("POST").body("streamed".getBytes(StandardCharsets.UTF_8)),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @Test
   void consumesAnInitialChunkBeforeTheRemainingChunkArrives() throws Exception {
     var initialConsumed = new CountDownLatch(1);
 
-    try (var app =
-            new Shoostr()
-                .modifyServer(
-                    nativeServer ->
-                        ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
-        var socket = new Socket()) {
-      app.routes()
-          .post(
-              "/chunks",
-              (request, response) -> {
-                var input = request.input();
-                var first = input.read();
-                initialConsumed.countDown();
-                var second = input.read();
-                response.text("" + (char) first + (char) second);
-              });
-      app.start();
-      socket.connect(new InetSocketAddress(InetAddress.getAllByName("127.0.0.1")[0], app.port()));
-      var output = socket.getOutputStream();
-      output.write(
-          "POST /chunks HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\n\r\n1\r\na\r\n"
-              .getBytes(StandardCharsets.US_ASCII));
-      output.flush();
-      assertTrue(initialConsumed.await(3, TimeUnit.SECONDS));
-      output.write("1\r\nb\r\n0\r\n\r\n".getBytes(StandardCharsets.US_ASCII));
-      output.flush();
-      socket.shutdownOutput();
-      assertTrue(
-          new String(socket.getInputStream().readAllBytes(), StandardCharsets.US_ASCII)
-              .contains("ab"));
+    {
+      var app =
+          new Shoostr()
+              .modifyServer(
+                  nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
+
+      try (Closeable appCleanup1 = app::close;
+          var socket = new Socket()) {
+        app.routes()
+            .post(
+                "/chunks",
+                (request, response) -> {
+                  var input = request.input();
+                  var first = input.read();
+                  initialConsumed.countDown();
+                  var second = input.read();
+                  response.text("" + (char) first + (char) second);
+                });
+        app.start();
+        socket.connect(new InetSocketAddress(InetAddress.getAllByName("127.0.0.1")[0], app.port()));
+        var output = socket.getOutputStream();
+        output.write(
+            """
+            POST /chunks HTTP/1.1\r
+            Host: localhost\r
+            Transfer-Encoding: chunked\r
+            \r
+            1\r
+            a\r
+            """
+                .getBytes(StandardCharsets.US_ASCII));
+        output.flush();
+
+        assertTrue(initialConsumed.await(3, TimeUnit.SECONDS));
+
+        output.write("1\r\nb\r\n0\r\n\r\n".getBytes(StandardCharsets.US_ASCII));
+        output.flush();
+        socket.shutdownOutput();
+
+        assertTrue(
+            new String(socket.getInputStream().readAllBytes(), StandardCharsets.US_ASCII)
+                .contains("ab"));
+      }
     }
   }
 
   @Test
   void rejectsBufferedBodyAccessAfterStreamingInputAccess() throws Exception {
-    try (var app = new Shoostr()) {
-      app.routes()
-          .post(
-              "/input",
-              (request, response) -> {
-                assertEquals('b', request.input().read());
-                assertThrows(IllegalStateException.class, request::bodyBytes);
-                response.text("exclusive");
-              });
+    {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        var result =
-            test.send(
-                request ->
-                    request
-                        .path("/input")
-                        .method("POST")
-                        .body("body".getBytes(StandardCharsets.UTF_8)),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(200, result.statusCode());
-        assertEquals("exclusive", result.body());
+      try (Closeable appCleanup2 = app::close) {
+        app.routes()
+            .post(
+                "/input",
+                (request, response) -> {
+                  assertEquals('b', request.input().read());
+                  assertThrows(IllegalStateException.class, request::bodyBytes);
+
+                  response.text("exclusive");
+                });
+
+        try (var test = TestServer.start(app)) {
+          var result = sendResultForRejectsBufferedBodyAccessAfterStreamingInputAccess(test);
+
+          assertEquals(200, result.statusCode());
+          assertEquals("exclusive", result.body());
+        }
       }
     }
+  }
+
+  private HttpResponse<String> sendResultForRejectsBufferedBodyAccessAfterStreamingInputAccess(
+      TestServer test) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request.path("/input").method("POST").body("body".getBytes(StandardCharsets.UTF_8)),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @Test
   void rejectsStreamingInputAccessAfterBufferedBodyAccess() throws Exception {
-    try (var app = new Shoostr()) {
-      app.routes()
-          .post(
-              "/buffered",
-              (request, response) -> {
-                request.bodyBytes();
-                assertThrows(IllegalStateException.class, request::input);
-                response.text("exclusive");
-              });
+    {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        var result =
-            test.send(
-                request ->
-                    request
-                        .path("/buffered")
-                        .method("POST")
-                        .body("body".getBytes(StandardCharsets.UTF_8)),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(200, result.statusCode());
-        assertEquals("exclusive", result.body());
+      try (Closeable appCleanup3 = app::close) {
+        app.routes()
+            .post(
+                "/buffered",
+                (request, response) -> {
+                  request.bodyBytes();
+
+                  assertThrows(IllegalStateException.class, request::input);
+
+                  response.text("exclusive");
+                });
+
+        try (var test = TestServer.start(app)) {
+          var result = sendResultForRejectsStreamingInputAccessAfterBufferedBodyAccess(test);
+
+          assertEquals(200, result.statusCode());
+          assertEquals("exclusive", result.body());
+        }
       }
     }
   }
 
+  private HttpResponse<String> sendResultForRejectsStreamingInputAccessAfterBufferedBodyAccess(
+      TestServer test) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request.path("/buffered").method("POST").body("body".getBytes(StandardCharsets.UTF_8)),
+        HttpResponse.BodyHandlers.ofString());
+  }
+
   @Test
   void rejectsChunkedStreamingInputAfterTheConsumedByteLimit() throws Exception {
-    var options = new Options(3, 1_048_576, 8192, 1000, MultipartOptions.defaults());
+    var options = new Options();
+    options.setMaxRequestBytes(3);
+    options.setMaxResponseBytes(1_048_576);
+    options.setStreamBufferBytes(8192);
+    options.setMaxParameters(1000);
+    options.setMultipart(new MultipartOptions());
 
-    try (var app =
-            new Shoostr(options)
-                .modifyServer(
-                    listenerServer -> {
-                      var listener = (ServerConnector) listenerServer.getConnectors()[0];
-                      listener.setHost("127.0.0.1");
-                      listener.setPort(0);
-                      listener.setIdleTimeout(30000);
-                    });
-        var client = HttpClient.newHttpClient()) {
-      app.routes()
-          .post(
-              "/input",
-              (request, response) ->
-                  response.text(
-                      new String(request.input().readAllBytes(), StandardCharsets.UTF_8)));
-      app.start();
-      var result =
-          client.send(
-              HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/input"))
-                  .POST(
-                      HttpRequest.BodyPublishers.ofInputStream(
-                          () -> new ByteArrayInputStream("four".getBytes(StandardCharsets.UTF_8))))
-                  .build(),
-              HttpResponse.BodyHandlers.ofString());
-      assertEquals(413, result.statusCode());
-      assertEquals("Content Too Large", result.body());
+    {
+      var app = createAppForRejectsChunkedStreamingInputAfterTheConsumedByteLimit(options);
+
+      try (Closeable appCleanup4 = app::close;
+          var client = HttpClient.newHttpClient()) {
+        app.routes()
+            .post(
+                "/input",
+                (request, response) ->
+                    response.text(
+                        new String(request.input().readAllBytes(), StandardCharsets.UTF_8)));
+        app.start();
+        var result =
+            sendResultForRejectsChunkedStreamingInputAfterTheConsumedByteLimit(client, app);
+
+        assertEquals(413, result.statusCode());
+        assertEquals("Content Too Large", result.body());
+      }
     }
+  }
+
+  private Shoostr createAppForRejectsChunkedStreamingInputAfterTheConsumedByteLimit(
+      Options options) {
+    return new Shoostr(options)
+        .modifyServer(listenerServer -> {
+          var listener = (ServerConnector) listenerServer.getConnectors()[0];
+          listener.setHost("127.0.0.1");
+          listener.setPort(0);
+          listener.setIdleTimeout(30000);
+        });
+  }
+
+  private HttpResponse<String> sendResultForRejectsChunkedStreamingInputAfterTheConsumedByteLimit(
+      HttpClient client, Shoostr app) throws IOException, InterruptedException {
+    return client.send(
+        HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/input"))
+            .POST(
+                HttpRequest.BodyPublishers.ofInputStream(
+                    () -> new ByteArrayInputStream("four".getBytes(StandardCharsets.UTF_8))))
+            .build(),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @Test
   void rejectsChunkedStreamingInputSkippedPastTheConsumedByteLimit() throws Exception {
-    var options = new Options(3, 1_048_576, 8192, 1000, MultipartOptions.defaults());
+    var options = new Options();
+    options.setMaxRequestBytes(3);
+    options.setMaxResponseBytes(1_048_576);
+    options.setStreamBufferBytes(8192);
+    options.setMaxParameters(1000);
+    options.setMultipart(new MultipartOptions());
 
-    try (var app =
-            new Shoostr(options)
-                .modifyServer(
-                    listenerServer -> {
-                      var listener = (ServerConnector) listenerServer.getConnectors()[0];
-                      listener.setHost("127.0.0.1");
-                      listener.setPort(0);
-                      listener.setIdleTimeout(30000);
-                    });
-        var client = HttpClient.newHttpClient()) {
-      app.routes()
-          .post(
-              "/input",
-              (request, response) -> {
-                request.input().skipNBytes(4);
-                response.text("unreachable");
-              });
-      app.start();
-      var result =
-          client.send(
-              HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/input"))
-                  .POST(
-                      HttpRequest.BodyPublishers.ofInputStream(
-                          () -> new ByteArrayInputStream("four".getBytes(StandardCharsets.UTF_8))))
-                  .build(),
-              HttpResponse.BodyHandlers.ofString());
-      assertEquals(413, result.statusCode());
-      assertEquals("Content Too Large", result.body());
+    {
+      var app = createAppForRejectsChunkedStreamingInputSkippedPastTheConsumedByteLimit(options);
+
+      try (Closeable appCleanup5 = app::close;
+          var client = HttpClient.newHttpClient()) {
+        app.routes()
+            .post(
+                "/input",
+                (request, response) -> {
+                  request.input().skipNBytes(4);
+                  response.text("unreachable");
+                });
+        app.start();
+        var result =
+            sendResultForRejectsChunkedStreamingInputSkippedPastTheConsumedByteLimit(client, app);
+
+        assertEquals(413, result.statusCode());
+        assertEquals("Content Too Large", result.body());
+      }
     }
+  }
+
+  private Shoostr createAppForRejectsChunkedStreamingInputSkippedPastTheConsumedByteLimit(
+      Options options) {
+    return new Shoostr(options)
+        .modifyServer(listenerServer -> {
+          var listener = (ServerConnector) listenerServer.getConnectors()[0];
+          listener.setHost("127.0.0.1");
+          listener.setPort(0);
+          listener.setIdleTimeout(30000);
+        });
+  }
+
+  private HttpResponse<String>
+      sendResultForRejectsChunkedStreamingInputSkippedPastTheConsumedByteLimit(
+          HttpClient client, Shoostr app) throws IOException, InterruptedException {
+    return client.send(
+        HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/input"))
+            .POST(
+                HttpRequest.BodyPublishers.ofInputStream(
+                    () -> new ByteArrayInputStream("four".getBytes(StandardCharsets.UTF_8))))
+            .build(),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @Test
   void rejectsMultipartAccessAfterStreamingInputAccess() throws Exception {
     var boundary = "streaming-input-boundary";
-    var body =
-        "--"
-            + boundary
-            + "\r\nContent-Disposition: form-data; name=field\r\n\r\nvalue\r\n--"
-            + boundary
-            + "--\r\n";
+    var body = createBodyForRejectsMultipartAccessAfterStreamingInputAccess(boundary);
 
-    try (var app = new Shoostr()) {
-      app.routes()
-          .post(
-              "/input",
-              (request, response) -> {
-                request.input();
-                assertThrows(IllegalStateException.class, () -> request.formParam("field"));
-                response.text("exclusive");
-              });
+    {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        var result =
-            test.send(
-                request ->
-                    request
-                        .path("/input")
-                        .header("Content-Type", "multipart/form-data; boundary=" + boundary)
-                        .method("POST")
-                        .body(body.getBytes(StandardCharsets.UTF_8)),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(200, result.statusCode());
-        assertEquals("exclusive", result.body());
+      try (Closeable appCleanup6 = app::close) {
+        app.routes()
+            .post(
+                "/input",
+                (request, response) -> {
+                  request.input();
+
+                  assertThrows(IllegalStateException.class, () -> request.formParam("field"));
+
+                  response.text("exclusive");
+                });
+
+        try (var test = TestServer.start(app)) {
+          var result =
+              sendResultForRejectsMultipartAccessAfterStreamingInputAccess(test, boundary, body);
+
+          assertEquals(200, result.statusCode());
+          assertEquals("exclusive", result.body());
+        }
       }
     }
+  }
+
+  private String createBodyForRejectsMultipartAccessAfterStreamingInputAccess(String boundary) {
+    return "--"
+        + boundary
+        + "\r\nContent-Disposition: form-data; name=field\r\n\r\nvalue\r\n--"
+        + boundary
+        + "--\r\n";
+  }
+
+  private HttpResponse<String> sendResultForRejectsMultipartAccessAfterStreamingInputAccess(
+      TestServer test, String boundary, String body) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/input")
+                .header("Content-Type", "multipart/form-data; boundary=" + boundary)
+                .method("POST")
+                .body(body.getBytes(StandardCharsets.UTF_8)),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @Test
   void rejectsStreamingInputAccessAfterMultipartAccess() throws Exception {
     var boundary = "multipart-input-boundary";
-    var body =
-        "--"
-            + boundary
-            + "\r\nContent-Disposition: form-data; name=field\r\n\r\nvalue\r\n--"
-            + boundary
-            + "--\r\n";
+    var body = createBodyForRejectsStreamingInputAccessAfterMultipartAccess(boundary);
 
-    try (var app = new Shoostr()) {
-      app.routes()
-          .post(
-              "/multipart",
-              (request, response) -> {
-                request.formParam("field");
-                assertThrows(IllegalStateException.class, request::input);
-                response.text("exclusive");
-              });
+    {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        var result =
-            test.send(
-                request ->
-                    request
-                        .path("/multipart")
-                        .header("Content-Type", "multipart/form-data; boundary=" + boundary)
-                        .method("POST")
-                        .body(body.getBytes(StandardCharsets.UTF_8)),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(200, result.statusCode());
-        assertEquals("exclusive", result.body());
+      try (Closeable appCleanup7 = app::close) {
+        app.routes()
+            .post(
+                "/multipart",
+                (request, response) -> {
+                  request.formParam("field");
+
+                  assertThrows(IllegalStateException.class, request::input);
+
+                  response.text("exclusive");
+                });
+
+        try (var test = TestServer.start(app)) {
+          var result =
+              sendResultForRejectsStreamingInputAccessAfterMultipartAccess(test, boundary, body);
+
+          assertEquals(200, result.statusCode());
+          assertEquals("exclusive", result.body());
+        }
       }
     }
   }
 
+  private String createBodyForRejectsStreamingInputAccessAfterMultipartAccess(String boundary) {
+    return "--"
+        + boundary
+        + "\r\nContent-Disposition: form-data; name=field\r\n\r\nvalue\r\n--"
+        + boundary
+        + "--\r\n";
+  }
+
+  private HttpResponse<String> sendResultForRejectsStreamingInputAccessAfterMultipartAccess(
+      TestServer test, String boundary, String body) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/multipart")
+                .header("Content-Type", "multipart/form-data; boundary=" + boundary)
+                .method("POST")
+                .body(body.getBytes(StandardCharsets.UTF_8)),
+        HttpResponse.BodyHandlers.ofString());
+  }
+
   @Test
-  void writesAFileWithoutStagingItsWholeContent() throws Exception {
+  void writesFileWithoutStagingItsWholeContent() throws Exception {
     var file = Files.createTempFile(temporaryDirectory, "response-file-test", ".txt");
     Files.writeString(file, "file output");
 
-    try (var app = new Shoostr()) {
-      app.routes().get("/file", (ignored, response) -> response.file(file, "text/plain"));
+    try {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        var result =
-            test.send(request -> request.path("/file"), HttpResponse.BodyHandlers.ofString());
-        assertEquals(200, result.statusCode());
-        assertEquals("file output", result.body());
+      try (Closeable appCleanup8 = app::close) {
+        app.routes().get("/file", (ignored, response) -> response.file(file, "text/plain"));
+
+        try (var test = TestServer.start(app)) {
+          var result =
+              test.send(request -> request.path("/file"), HttpResponse.BodyHandlers.ofString());
+
+          assertEquals(200, result.statusCode());
+          assertEquals("file output", result.body());
+        }
       }
     } finally {
       Files.deleteIfExists(file);
@@ -310,91 +421,125 @@ class StreamingInputOutputTest {
 
   @Test
   void rejectsOversizedFiniteBodiesWithoutChangingThePreviouslyStagedBody() throws Exception {
-    var options = new Options(1024, 3, 2, 1000, MultipartOptions.defaults());
+    var options = new Options();
+    options.setMaxRequestBytes(1024);
+    options.setMaxResponseBytes(3);
+    options.setStreamBufferBytes(2);
+    options.setMaxParameters(1000);
+    options.setMultipart(new MultipartOptions());
     var oversizedBody = "abcd".getBytes(StandardCharsets.UTF_8);
 
-    try (var app =
-        new Shoostr(options)
-            .modifyServer(
-                listenerServer -> {
-                  var listener = (ServerConnector) listenerServer.getConnectors()[0];
-                  listener.setHost("127.0.0.1");
-                  listener.setPort(0);
-                  listener.setIdleTimeout(5000);
-                })) {
-      app.routes()
-          .get(
-              "/finite",
-              (ignored2, response) -> {
-                response.body("text/plain", "abc".getBytes(StandardCharsets.UTF_8));
-                assertThrows(
-                    IllegalArgumentException.class,
-                    () -> response.body("text/plain", oversizedBody));
-              });
+    {
+      var app =
+          createAppForRejectsOversizedFiniteBodiesWithoutChangingThePreviouslyStagedBody(options);
 
-      try (var test = TestServer.start(app)) {
-        var result =
-            test.send(request -> request.path("/finite"), HttpResponse.BodyHandlers.ofString());
-        assertEquals(200, result.statusCode());
-        assertEquals("abc", result.body());
+      try (Closeable appCleanup9 = app::close) {
+        app.routes()
+            .get(
+                "/finite",
+                (ignoredRequest, response) -> {
+                  response.body("text/plain", "abc".getBytes(StandardCharsets.UTF_8));
+
+                  assertThrows(
+                      IllegalArgumentException.class,
+                      () -> response.body("text/plain", oversizedBody));
+                });
+
+        try (var test = TestServer.start(app)) {
+          var result =
+              test.send(request -> request.path("/finite"), HttpResponse.BodyHandlers.ofString());
+
+          assertEquals(200, result.statusCode());
+          assertEquals("abc", result.body());
+        }
       }
     }
   }
 
+  private Shoostr createAppForRejectsOversizedFiniteBodiesWithoutChangingThePreviouslyStagedBody(
+      Options options) {
+    return new Shoostr(options)
+        .modifyServer(listenerServer -> {
+          var listener = (ServerConnector) listenerServer.getConnectors()[0];
+          listener.setHost("127.0.0.1");
+          listener.setPort(0);
+          listener.setIdleTimeout(5000);
+        });
+  }
+
   @Test
   void streamsOutputLargerThanTheFiniteResponseLimit() throws Exception {
-    var options = new Options(1_048_576, 3, 2, 1000, MultipartOptions.defaults());
+    var options = new Options();
+    options.setMaxRequestBytes(1_048_576);
+    options.setMaxResponseBytes(3);
+    options.setStreamBufferBytes(2);
+    options.setMaxParameters(1000);
+    options.setMultipart(new MultipartOptions());
 
-    try (var app =
-        new Shoostr(options)
-            .modifyServer(
-                listenerServer -> {
-                  var listener = (ServerConnector) listenerServer.getConnectors()[0];
-                  listener.setHost("127.0.0.1");
-                  listener.setPort(0);
-                  listener.setIdleTimeout(30000);
-                })) {
-      app.routes()
-          .get(
-              "/stream",
-              (ignored3, response) ->
-                  response.input(
-                      new ByteArrayInputStream("streamed".getBytes(StandardCharsets.UTF_8)),
-                      "text/plain"));
+    {
+      var app = createAppForStreamsOutputLargerThanTheFiniteResponseLimit(options);
 
-      try (var test = TestServer.start(app)) {
-        var result =
-            test.send(request -> request.path("/stream"), HttpResponse.BodyHandlers.ofString());
-        assertEquals(200, result.statusCode());
-        assertEquals("streamed", result.body());
+      try (Closeable appCleanup10 = app::close) {
+        app.routes()
+            .get(
+                "/stream",
+                (ignoredRequest, response) ->
+                    assertSame(
+                        response,
+                        response.input(
+                            new ByteArrayInputStream("streamed".getBytes(StandardCharsets.UTF_8)),
+                            "text/plain")));
+
+        try (var test = TestServer.start(app)) {
+          var result =
+              test.send(request -> request.path("/stream"), HttpResponse.BodyHandlers.ofString());
+
+          assertEquals(200, result.statusCode());
+          assertEquals("streamed", result.body());
+        }
       }
     }
+  }
+
+  private Shoostr createAppForStreamsOutputLargerThanTheFiniteResponseLimit(Options options) {
+    return new Shoostr(options)
+        .modifyServer(listenerServer -> {
+          var listener = (ServerConnector) listenerServer.getConnectors()[0];
+          listener.setHost("127.0.0.1");
+          listener.setPort(0);
+          listener.setIdleTimeout(30000);
+        });
   }
 
   @Test
   void writesAnInputStreamWithoutStagingItsWholeContent() throws Exception {
     var closed = new AtomicBoolean();
 
-    try (var app = new Shoostr()) {
-      app.routes()
-          .get(
-              "/stream",
-              (ignored4, response) ->
-                  response.input(
-                      new ByteArrayInputStream("stream output".getBytes(StandardCharsets.UTF_8)) {
-                        @Override
-                        public void close() {
-                          closed.set(true);
-                        }
-                      },
-                      "text/plain"));
+    {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        var result =
-            test.send(request -> request.path("/stream"), HttpResponse.BodyHandlers.ofString());
-        assertEquals(200, result.statusCode());
-        assertEquals("stream output", result.body());
-        assertTrue(closed.get());
+      try (Closeable appCleanup11 = app::close) {
+        app.routes()
+            .get(
+                "/stream",
+                (ignoredRequest, response) ->
+                    response.input(
+                        new ByteArrayInputStream("stream output".getBytes(StandardCharsets.UTF_8)) {
+                          @Override
+                          public void close() {
+                            closed.set(true);
+                          }
+                        },
+                        "text/plain"));
+
+        try (var test = TestServer.start(app)) {
+          var result =
+              test.send(request -> request.path("/stream"), HttpResponse.BodyHandlers.ofString());
+
+          assertEquals(200, result.statusCode());
+          assertEquals("stream output", result.body());
+          assertTrue(closed.get());
+        }
       }
     }
   }
@@ -404,18 +549,23 @@ class StreamingInputOutputTest {
     var file = Files.createTempFile(temporaryDirectory, "response-head-file-test", ".txt");
     Files.writeString(file, "file output");
 
-    try (var app = new Shoostr()) {
-      app.routes().head("/file", (ignored5, response) -> response.file(file, "text/plain"));
+    try {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        var result =
-            test.send(
-                request -> request.path("/file").method("HEAD"),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(200, result.statusCode());
-        assertEquals("", result.body());
-        assertEquals("text/plain", result.headers().firstValue("Content-Type").orElseThrow());
-        assertEquals("11", result.headers().firstValue("Content-Length").orElseThrow());
+      try (Closeable appCleanup12 = app::close) {
+        app.routes().head("/file", (ignoredRequest, response) -> response.file(file, "text/plain"));
+
+        try (var test = TestServer.start(app)) {
+          var result =
+              test.send(
+                  request -> request.path("/file").method("HEAD"),
+                  HttpResponse.BodyHandlers.ofString());
+
+          assertEquals(200, result.statusCode());
+          assertEquals("", result.body());
+          assertEquals("text/plain", result.headers().firstValue("Content-Type").orElseThrow());
+          assertEquals("11", result.headers().firstValue("Content-Length").orElseThrow());
+        }
       }
     } finally {
       Files.deleteIfExists(file);
@@ -423,41 +573,112 @@ class StreamingInputOutputTest {
   }
 
   @Test
-  void closesInputWithoutReadingItForBodylessResponses() throws Exception {
-    var closed = new AtomicBoolean();
+  void confinesHeadInputToItsHandlerThreadAndClosesSourcesWithoutReading() throws Exception {
+    var closes = new AtomicInteger();
+    var app = new Shoostr();
 
-    try (var app = new Shoostr()) {
+    try (Closeable appCleanup = app::close) {
       app.routes()
-          .get(
-              "/empty",
-              (ignored6, response) -> {
-                response.status(204);
-                response.input(
-                    new InputStream() {
-                      @Override
-                      public int read() {
-                        return fail("bodyless response read its source");
-                      }
+          .head(
+              "/input",
+              (ignoredRequest, response) -> {
+                try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+                  executor
+                      .submit(() -> {
+                        var input = unreadableInput(closes);
 
-                      @Override
-                      public int read(byte[] bytes, int offset, int length) {
-                        return fail("bodyless response read its source");
-                      }
+                        return assertThrows(
+                            IllegalStateException.class,
+                            () -> response.input(input, "application/foreign"));
+                      })
+                      .get(3, TimeUnit.SECONDS);
+                }
 
-                      @Override
-                      public void close() {
-                        closed.set(true);
-                      }
-                    },
-                    "text/plain");
+                assertNull(response.header("Content-Type"));
+
+                response
+                    .input(unreadableInput(closes), "application/custom")
+                    .setHeader("X-Chain", "ok");
               });
 
       try (var test = TestServer.start(app)) {
         var result =
-            test.send(request -> request.path("/empty"), HttpResponse.BodyHandlers.ofString());
-        assertEquals(204, result.statusCode());
+            test.send(
+                request -> request.path("/input").method("HEAD"),
+                HttpResponse.BodyHandlers.ofString());
+
+        assertEquals(200, result.statusCode());
         assertEquals("", result.body());
-        assertTrue(closed.get());
+        assertEquals(
+            "application/custom", result.headers().firstValue("Content-Type").orElseThrow());
+        assertEquals("ok", result.headers().firstValue("X-Chain").orElseThrow());
+        assertEquals(2, closes.get());
+      }
+    }
+  }
+
+  private InputStream unreadableInput(AtomicInteger closes) {
+    return new InputStream() {
+      @Override
+      public int read() {
+        return fail("HEAD response read its source");
+      }
+
+      @Override
+      public int read(byte[] bytes, int offset, int length) {
+        return fail("HEAD response read its source");
+      }
+
+      @Override
+      public void close() {
+        closes.incrementAndGet();
+      }
+    };
+  }
+
+  @Test
+  void closesInputWithoutReadingItForBodylessResponses() throws Exception {
+    var closed = new AtomicBoolean();
+
+    {
+      var app = new Shoostr();
+
+      try (Closeable appCleanup13 = app::close) {
+        app.routes()
+            .get(
+                "/empty",
+                (ignoredRequest, response) -> {
+                  response.status(204);
+                  assertSame(
+                      response,
+                      response.input(
+                          new InputStream() {
+                            @Override
+                            public int read() {
+                              return fail("bodyless response read its source");
+                            }
+
+                            @Override
+                            public int read(byte[] bytes, int offset, int length) {
+                              return fail("bodyless response read its source");
+                            }
+
+                            @Override
+                            public void close() {
+                              closed.set(true);
+                            }
+                          },
+                          "text/plain"));
+                });
+
+        try (var test = TestServer.start(app)) {
+          var result =
+              test.send(request -> request.path("/empty"), HttpResponse.BodyHandlers.ofString());
+
+          assertEquals(204, result.statusCode());
+          assertEquals("", result.body());
+          assertTrue(closed.get());
+        }
       }
     }
   }
@@ -466,25 +687,30 @@ class StreamingInputOutputTest {
   void closesInputWhenStreamingSetupFails() throws Exception {
     var closed = new AtomicBoolean();
 
-    try (var app = new Shoostr()) {
-      app.routes()
-          .get(
-              "/invalid",
-              (ignored7, response) ->
-                  response.input(
-                      new ByteArrayInputStream("body".getBytes(StandardCharsets.UTF_8)) {
-                        @Override
-                        public void close() {
-                          closed.set(true);
-                        }
-                      },
-                      "text/plain\ninvalid"));
+    {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        var result =
-            test.send(request -> request.path("/invalid"), HttpResponse.BodyHandlers.ofString());
-        assertEquals(500, result.statusCode());
-        assertTrue(closed.get());
+      try (Closeable appCleanup14 = app::close) {
+        app.routes()
+            .get(
+                "/invalid",
+                (ignoredRequest, response) ->
+                    response.input(
+                        new ByteArrayInputStream("body".getBytes(StandardCharsets.UTF_8)) {
+                          @Override
+                          public void close() {
+                            closed.set(true);
+                          }
+                        },
+                        "text/plain\ninvalid"));
+
+        try (var test = TestServer.start(app)) {
+          var result =
+              test.send(request -> request.path("/invalid"), HttpResponse.BodyHandlers.ofString());
+
+          assertEquals(500, result.statusCode());
+          assertTrue(closed.get());
+        }
       }
     }
   }
@@ -493,38 +719,42 @@ class StreamingInputOutputTest {
   void closesInputWhenReadingItFails() throws Exception {
     var closed = new AtomicBoolean();
 
-    try (var app = new Shoostr()) {
-      app.routes()
-          .get(
-              "/read-error",
-              (ignored8, response) ->
-                  response.input(
-                      new InputStream() {
-                        @Override
-                        public int read() throws IOException {
-                          throw new IOException("read failed");
-                        }
+    {
+      var app = new Shoostr();
 
-                        @Override
-                        public int read(byte[] bytes, int offset, int length) throws IOException {
-                          throw new IOException("read failed");
-                        }
+      try (Closeable appCleanup15 = app::close) {
+        app.routes()
+            .get(
+                "/read-error",
+                (ignoredRequest, response) ->
+                    response.input(
+                        new InputStream() {
+                          @Override
+                          public int read() throws IOException {
+                            throw new IOException("read failed");
+                          }
 
-                        @Override
-                        public void close() {
-                          closed.set(true);
-                        }
-                      },
-                      "text/plain"));
+                          @Override
+                          public int read(byte[] bytes, int offset, int length) throws IOException {
+                            throw new IOException("read failed");
+                          }
 
-      try (var test = TestServer.start(app)) {
-        assertThrows(
-            IOException.class,
-            () ->
-                test.send(
-                    request -> request.path("/read-error").timeout(Duration.ofSeconds(3)),
-                    HttpResponse.BodyHandlers.ofString()));
-        assertTrue(closed.get());
+                          @Override
+                          public void close() {
+                            closed.set(true);
+                          }
+                        },
+                        "text/plain"));
+
+        try (var test = TestServer.start(app)) {
+          assertThrows(
+              IOException.class,
+              () ->
+                  test.send(
+                      request -> request.path("/read-error").timeout(Duration.ofSeconds(3)),
+                      HttpResponse.BodyHandlers.ofString()));
+          assertTrue(closed.get());
+        }
       }
     }
   }
@@ -534,66 +764,79 @@ class StreamingInputOutputTest {
     var started = new CountDownLatch(1);
     var closed = new CountDownLatch(1);
 
-    try (var app =
-            new Shoostr()
-                .modifyServer(
-                    nativeServer ->
-                        ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
-        var socket = new Socket()) {
-      app.routes()
-          .get(
-              "/disconnect",
-              (ignored9, response) ->
-                  response.input(
-                      new InputStream() {
-                        @Override
-                        public int read(byte[] value, int offset, int length) {
-                          started.countDown();
-                          Arrays.fill(value, offset, offset + length, (byte) 'x');
-                          return length;
-                        }
+    {
+      var app =
+          new Shoostr()
+              .modifyServer(
+                  nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
 
-                        @Override
-                        public int read() {
-                          return 'x';
-                        }
+      try (Closeable appCleanup16 = app::close;
+          var socket = new Socket()) {
+        app.routes()
+            .get(
+                "/disconnect",
+                (ignoredRequest, response) ->
+                    response.input(
+                        new InputStream() {
+                          @Override
+                          public int read(byte[] value, int offset, int length) {
+                            started.countDown();
+                            Arrays.fill(value, offset, offset + length, (byte) 'x');
 
-                        @Override
-                        public void close() {
-                          closed.countDown();
-                        }
-                      },
-                      "application/octet-stream"));
-      app.start();
-      socket.connect(new InetSocketAddress(InetAddress.getAllByName("127.0.0.1")[0], app.port()));
-      socket.setSoLinger(true, 0);
-      socket
-          .getOutputStream()
-          .write(
-              "GET /disconnect HTTP/1.1\r\nHost: localhost\r\n\r\n"
-                  .getBytes(StandardCharsets.US_ASCII));
-      socket.getOutputStream().flush();
-      assertTrue(started.await(3, TimeUnit.SECONDS));
-      socket.close();
-      assertTrue(closed.await(3, TimeUnit.SECONDS));
+                            return length;
+                          }
+
+                          @Override
+                          public int read() {
+                            return 'x';
+                          }
+
+                          @Override
+                          public void close() {
+                            closed.countDown();
+                          }
+                        },
+                        "application/octet-stream"));
+        app.start();
+        socket.connect(new InetSocketAddress(InetAddress.getAllByName("127.0.0.1")[0], app.port()));
+        socket.setSoLinger(true, 0);
+        socket
+            .getOutputStream()
+            .write(
+                "GET /disconnect HTTP/1.1\r\nHost: localhost\r\n\r\n"
+                    .getBytes(StandardCharsets.US_ASCII));
+        socket.getOutputStream().flush();
+
+        assertTrue(started.await(3, TimeUnit.SECONDS));
+
+        socket.close();
+
+        assertTrue(closed.await(3, TimeUnit.SECONDS));
+      }
     }
   }
 
   @Test
   void allowsExplicitHeadStreamingWithoutWireContent() throws Exception {
-    try (var app = new Shoostr()) {
-      app.routes()
-          .head(
-              "/stream",
-              (ignored10, response) -> response.startStream("text/plain").write("suppressed"));
+    {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        var result =
-            test.send(
-                request -> request.path("/stream").method("HEAD"),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(200, result.statusCode());
-        assertEquals("", result.body());
+      try (Closeable appCleanup17 = app::close) {
+        app.routes()
+            .head(
+                "/stream",
+                (ignoredRequest, response) ->
+                    response.startStream("text/plain").write("suppressed"));
+
+        try (var test = TestServer.start(app)) {
+          var result =
+              test.send(
+                  request -> request.path("/stream").method("HEAD"),
+                  HttpResponse.BodyHandlers.ofString());
+
+          assertEquals(200, result.statusCode());
+          assertEquals("", result.body());
+        }
       }
     }
   }
@@ -602,27 +845,33 @@ class StreamingInputOutputTest {
   void rejectsRetainedStreamingInputAfterHandlerCompletion() throws Exception {
     var retained = new AtomicReference<InputStream>();
 
-    try (var app = new Shoostr()) {
-      app.routes()
-          .post(
-              "/input",
-              (request, response) -> {
-                retained.set(request.input());
-                response.text("ready");
-              });
+    {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        var result =
-            test.send(
-                request ->
-                    request
-                        .path("/input")
-                        .method("POST")
-                        .body("body".getBytes(StandardCharsets.UTF_8)),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(200, result.statusCode());
-        assertThrows(IllegalStateException.class, retained.get()::read);
+      try (Closeable appCleanup18 = app::close) {
+        app.routes()
+            .post(
+                "/input",
+                (request, response) -> {
+                  retained.set(request.input());
+                  response.text("ready");
+                });
+
+        try (var test = TestServer.start(app)) {
+          var result = sendResultForRejectsRetainedStreamingInputAfterHandlerCompletion(test);
+
+          assertEquals(200, result.statusCode());
+          assertThrows(IllegalStateException.class, retained.get()::read);
+        }
       }
     }
+  }
+
+  private HttpResponse<String> sendResultForRejectsRetainedStreamingInputAfterHandlerCompletion(
+      TestServer test) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request.path("/input").method("POST").body("body".getBytes(StandardCharsets.UTF_8)),
+        HttpResponse.BodyHandlers.ofString());
   }
 }

@@ -6,6 +6,7 @@ import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.TimeUnit;
 import org.eclipse.jetty.http.HttpFields;
+import org.eclipse.jetty.http.HttpFields.Mutable;
 import org.eclipse.jetty.server.Request;
 import org.eclipse.jetty.util.Callback;
 import org.openjdk.jmh.annotations.Benchmark;
@@ -34,12 +35,15 @@ import org.openjdk.jmh.annotations.Warmup;
 public class FiniteResponseBenchmark {
   private static final String CONTENT_TYPE = "text/plain; charset=utf-8";
 
+  /** Number of characters in the response body. */
   @Param({"0", "13", "1024", "16384"})
   public int characters;
 
+  /** Character repertoire used to build the response. */
   @Param({"ascii", "unicode"})
   public String shape;
 
+  /** Response API used to send the prepared body. */
   @Param({"bytes", "text"})
   public String representation;
 
@@ -52,7 +56,7 @@ public class FiniteResponseBenchmark {
 
   /** Initializes the fixture's empty transport capture before trial setup. */
   public FiniteResponseBenchmark() {
-    submitted = ByteBuffer.allocate(0);
+    this.submitted = ByteBuffer.allocate(0);
   }
 
   /**
@@ -86,41 +90,59 @@ public class FiniteResponseBenchmark {
           default -> throw new IllegalArgumentException("Unknown shape: " + shape);
         };
     payload = text.getBytes(StandardCharsets.UTF_8);
-    var inbound =
-        (Request)
-            Proxy.newProxyInstance(
-                getClass().getClassLoader(),
-                new Class<?>[] {Request.class},
-                (ignored, method, ignored2) ->
-                    switch (method.getName()) {
-                      case "getMethod" -> "GET";
-                      case "getHeaders" -> HttpFields.EMPTY;
-                      case "consumeAvailable" -> true;
-                      case "addHttpStreamWrapper" -> null;
-                      default -> throw new UnsupportedOperationException(method.getName());
-                    });
+    var inbound = nativeRequest();
     var headers = HttpFields.build();
-    var sink =
-        (org.eclipse.jetty.server.Response)
-            Proxy.newProxyInstance(
-                getClass().getClassLoader(),
-                new Class<?>[] {org.eclipse.jetty.server.Response.class},
-                (ignored3, method, arguments) ->
-                    switch (method.getName()) {
-                      case "getStatus" -> 200;
-                      case "getHeaders" -> headers;
-                      case "isCommitted" -> written;
-                      case "write" -> {
-                        written = true;
-                        submitted = (ByteBuffer) arguments[1];
-                        ((Callback) arguments[2]).succeeded();
-                        yield null;
-                      }
-                      default -> throw new UnsupportedOperationException(method.getName());
-                    });
+    var sink = responseSink(headers);
     response =
-        io.github.suppierk.shoostr.Request.create(inbound, sink, Options.defaults(), Callback.NOOP)
+        io.github.suppierk.shoostr.Request.create(inbound, sink, new Options(), Callback.NOOP)
             .response();
+  }
+
+  /**
+   * Creates the native request fixture used by the benchmark.
+   *
+   * @return native request fixture
+   */
+  private Request nativeRequest() {
+    return (Request)
+        Proxy.newProxyInstance(
+            getClass().getClassLoader(),
+            new Class<?>[] {Request.class},
+            (ignored, method, ignoredObjectValues) ->
+                switch (method.getName()) {
+                  case "getMethod" -> "GET";
+                  case "getHeaders" -> HttpFields.EMPTY;
+                  case "consumeAvailable" -> true;
+                  case "addHttpStreamWrapper" -> null;
+                  default -> throw new UnsupportedOperationException(method.getName());
+                });
+  }
+
+  /**
+   * Creates the native response sink used by the benchmark.
+   *
+   * @param headers native mutable response headers
+   * @return native response fixture
+   */
+  private org.eclipse.jetty.server.Response responseSink(Mutable headers) {
+    return (org.eclipse.jetty.server.Response)
+        Proxy.newProxyInstance(
+            getClass().getClassLoader(),
+            new Class<?>[] {org.eclipse.jetty.server.Response.class},
+            (ignoredObject, method, arguments) ->
+                switch (method.getName()) {
+                  case "getStatus" -> 200;
+                  case "getHeaders" -> headers;
+                  case "isCommitted" -> written;
+                  case "write" -> {
+                    written = true;
+                    submitted = (ByteBuffer) arguments[1];
+
+                    ((Callback) arguments[2]).succeeded();
+                    yield null;
+                  }
+                  default -> throw new UnsupportedOperationException(method.getName());
+                });
   }
 
   /**
@@ -131,8 +153,10 @@ public class FiniteResponseBenchmark {
    */
   byte[] complete() throws IOException {
     response.complete();
+
     var bytes = new byte[submitted.remaining()];
     submitted.duplicate().get(bytes);
+
     return bytes;
   }
 }

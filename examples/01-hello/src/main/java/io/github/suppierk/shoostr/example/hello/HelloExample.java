@@ -20,8 +20,10 @@ public final class HelloExample {
    */
   public static void main(String[] args) throws Exception {
     var app = application();
+
     // Start the listener; Shoostr already registers the JVM shutdown hook.
     app.start();
+
     LOGGER.info("Hello: http://127.0.0.1:{}/hello", app.port());
   }
 

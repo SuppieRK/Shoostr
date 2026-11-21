@@ -10,6 +10,8 @@ import io.github.suppierk.shoostr.http.HttpHeaders;
 import io.github.suppierk.shoostr.http.HttpMethods;
 import io.github.suppierk.shoostr.testing.TestRequest;
 import io.github.suppierk.shoostr.testing.TestServer;
+import java.io.Closeable;
+import java.io.IOException;
 import java.net.CookieManager;
 import java.net.CookiePolicy;
 import java.net.http.HttpResponse;
@@ -24,6 +26,7 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.EnumSource;
+import org.junit.jupiter.params.provider.ValueSource;
 
 class CsrfTest {
   @ParameterizedTest
@@ -35,50 +38,65 @@ class CsrfTest {
     var csrf = new Csrf();
     var executions = new AtomicInteger();
 
-    try (var app = new Shoostr()) {
-      app.sessions().extensions(csrf);
-      app.routes().get("/token", (request, response) -> response.text(csrf.token(request)));
-      app.routes()
-          .route(
-              method,
-              "/safe",
-              (request, response) -> {
-                assertTrue(request.getSession().isPresent());
-                executions.incrementAndGet();
-                response.text("accepted");
-              },
-              e -> e.with(csrf));
+    {
+      var app = new Shoostr();
 
-      try (var test =
-          TestServer.start(
-              app,
-              client -> client.cookieHandler(new CookieManager(null, CookiePolicy.ACCEPT_NONE)))) {
+      try (Closeable appCleanup = app::close) {
+        app.sessions();
+        app.routes().get("/token", (request, response) -> response.text(csrf.token(request)));
+        app.routes()
+            .route(
+                method,
+                "/safe",
+                (request, response) -> {
+                  assertTrue(request.getSession().isPresent());
 
-        var token =
-            test.send(
-                request -> request.path("/token").timeout(Duration.ofSeconds(3)),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(200, token.statusCode());
-        assertFalse(token.body().isBlank());
-        var cookie = token.headers().firstValue("Set-Cookie").orElseThrow().split(";", 2)[0];
+                  executions.incrementAndGet();
+                  response.text("accepted");
+                },
+                lifecycle -> lifecycle.withExtension(csrf));
 
-        var result =
-            test.send(
-                request ->
-                    request
-                        .path("/safe")
-                        .timeout(Duration.ofSeconds(3))
-                        .header("Cookie", cookie)
-                        .header("Origin", "http://127.0.0.1:" + app.port())
-                        .method(method.value()),
-                HttpResponse.BodyHandlers.ofString());
+        try (var test =
+            TestServer.start(
+                app,
+                client ->
+                    client.cookieHandler(new CookieManager(null, CookiePolicy.ACCEPT_NONE)))) {
 
-        assertEquals(200, result.statusCode());
-        assertEquals(method == HttpMethods.HEAD ? "" : "accepted", result.body());
-        assertEquals(1, executions.get());
-        assertTrue(result.headers().allValues("Set-Cookie").isEmpty());
+          var token =
+              test.send(
+                  request -> request.path("/token").timeout(Duration.ofSeconds(3)),
+                  HttpResponse.BodyHandlers.ofString());
+
+          assertEquals(200, token.statusCode());
+          assertFalse(token.body().isBlank());
+
+          var cookie = token.headers().firstValue("Set-Cookie").orElseThrow().split(";", 2)[0];
+
+          var result =
+              sendResultForBypassesTokensForExplicitlyRegisteredSafeMethods(
+                  test, cookie, app, method);
+
+          assertEquals(200, result.statusCode());
+          assertEquals(method == HttpMethods.HEAD ? "" : "accepted", result.body());
+          assertEquals(1, executions.get());
+          assertTrue(result.headers().allValues("Set-Cookie").isEmpty());
+        }
       }
     }
+  }
+
+  private HttpResponse<String> sendResultForBypassesTokensForExplicitlyRegisteredSafeMethods(
+      TestServer test, String cookie, Shoostr app, HttpMethods method)
+      throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/safe")
+                .timeout(Duration.ofSeconds(3))
+                .header("Cookie", cookie)
+                .header("Origin", "http://127.0.0.1:" + app.port())
+                .method(method.value()),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @ParameterizedTest
@@ -98,67 +116,87 @@ class CsrfTest {
     var csrf = new Csrf();
     var executions = new AtomicInteger();
 
-    try (var app = new Shoostr()) {
-      app.sessions().extensions(csrf);
-      app.routes().get("/token", (request, response) -> response.text(csrf.token(request)));
-      app.routes()
-          .route(
-              method,
-              "/mutation",
-              (ignored, response) -> {
-                executions.incrementAndGet();
-                response.text("accepted");
-              },
-              e -> e.with(csrf));
+    {
+      var app = new Shoostr();
 
-      try (var test =
-          TestServer.start(
-              app,
-              client -> client.cookieHandler(new CookieManager(null, CookiePolicy.ACCEPT_NONE)))) {
-
-        var token =
-            test.send(
-                request -> request.path("/token").timeout(Duration.ofSeconds(3)),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(200, token.statusCode());
-        assertFalse(token.body().isBlank());
-        var cookie = token.headers().firstValue("Set-Cookie").orElseThrow().split(";", 2)[0];
-        var origin = "http://127.0.0.1:" + app.port();
-
-        var accepted =
-            test.send(
-                request ->
-                    request
-                        .path("/mutation")
-                        .timeout(Duration.ofSeconds(3))
-                        .header("Cookie", cookie)
-                        .header("Origin", origin)
-                        .header("X-CSRF-Token", token.body())
-                        .method(method.value()),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(200, accepted.statusCode());
-        assertEquals("accepted", accepted.body());
-        assertEquals(1, executions.get());
-
-        var rejected =
-            test.send(
-                request -> {
-                  request
-                      .path("/mutation")
-                      .timeout(Duration.ofSeconds(3))
-                      .header("Cookie", cookie)
-                      .header("Origin", origin)
-                      .method(method.value());
-                  if (!suppliedToken.isEmpty()) {
-                    request.header("X-CSRF-Token", suppliedToken);
-                  }
+      try (Closeable appCleanup1 = app::close) {
+        app.sessions();
+        app.routes().get("/token", (request, response) -> response.text(csrf.token(request)));
+        app.routes()
+            .route(
+                method,
+                "/mutation",
+                (ignored, response) -> {
+                  executions.incrementAndGet();
+                  response.text("accepted");
                 },
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(403, rejected.statusCode());
-        assertEquals(1, executions.get());
-        assertTrue(rejected.headers().allValues("Set-Cookie").isEmpty());
+                lifecycle -> lifecycle.withExtension(csrf));
+
+        try (var test =
+            TestServer.start(
+                app,
+                client ->
+                    client.cookieHandler(new CookieManager(null, CookiePolicy.ACCEPT_NONE)))) {
+
+          var token =
+              test.send(
+                  request -> request.path("/token").timeout(Duration.ofSeconds(3)),
+                  HttpResponse.BodyHandlers.ofString());
+
+          assertEquals(200, token.statusCode());
+          assertFalse(token.body().isBlank());
+
+          var cookie = token.headers().firstValue("Set-Cookie").orElseThrow().split(";", 2)[0];
+          var origin = "http://127.0.0.1:" + app.port();
+
+          var accepted = sendAcceptedRequestForInvalidProof(test, cookie, origin, token, method);
+
+          assertEquals(200, accepted.statusCode());
+          assertEquals("accepted", accepted.body());
+          assertEquals(1, executions.get());
+
+          var rejected =
+              sendRejectedRequestForInvalidProof(test, cookie, origin, method, suppliedToken);
+
+          assertEquals(403, rejected.statusCode());
+          assertEquals(1, executions.get());
+          assertTrue(rejected.headers().allValues("Set-Cookie").isEmpty());
+        }
       }
     }
+  }
+
+  private HttpResponse<String> sendAcceptedRequestForInvalidProof(
+      TestServer test, String cookie, String origin, HttpResponse<String> token, HttpMethods method)
+      throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/mutation")
+                .timeout(Duration.ofSeconds(3))
+                .header("Cookie", cookie)
+                .header("Origin", origin)
+                .header("X-CSRF-Token", token.body())
+                .method(method.value()),
+        HttpResponse.BodyHandlers.ofString());
+  }
+
+  private HttpResponse<String> sendRejectedRequestForInvalidProof(
+      TestServer test, String cookie, String origin, HttpMethods method, String suppliedToken)
+      throws IOException, InterruptedException {
+    return test.send(
+        request -> {
+          request
+              .path("/mutation")
+              .timeout(Duration.ofSeconds(3))
+              .header("Cookie", cookie)
+              .header("Origin", origin)
+              .method(method.value());
+          if (!suppliedToken.isEmpty()) {
+            request.header("X-CSRF-Token", suppliedToken);
+          }
+        },
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @Test
@@ -166,200 +204,274 @@ class CsrfTest {
     var csrf = new Csrf();
     var executions = new AtomicInteger();
 
-    try (var app = new Shoostr()) {
-      app.sessions().extensions(csrf);
-      app.routes()
-          .get("/token", (request, response) -> response.text(csrf.token(request)))
-          .path(
-              "/browser",
-              routes ->
-                  routes.post(
-                      "/submit",
-                      (request, response) -> {
-                        executions.incrementAndGet();
-                        response.text("accepted");
-                      },
-                      e -> e.with(csrf)),
-              e -> e.with(csrf));
+    {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        var token = test.send(r -> r.path("/token"), HttpResponse.BodyHandlers.ofString()).body();
-        var origin = "http://127.0.0.1:" + app.port();
-        assertEquals(
-            403,
-            test.send(r -> r.path("/browser/submit").method("POST").header("Origin", origin))
-                .statusCode());
-        assertEquals(0, executions.get());
-        var accepted =
-            test.send(
-                r ->
-                    r.path("/browser/submit")
-                        .method("POST")
-                        .header("Origin", origin)
-                        .header("X-CSRF-Token", token),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(200, accepted.statusCode());
-        assertEquals("accepted", accepted.body());
-        assertEquals(1, executions.get());
+      try (Closeable appCleanup2 = app::close) {
+        app.sessions();
+        app.routes()
+            .get("/token", (request, response) -> response.text(csrf.token(request)))
+            .path(
+                "/browser",
+                routes ->
+                    routes.post(
+                        "/submit",
+                        (request, response) -> {
+                          executions.incrementAndGet();
+                          response.text("accepted");
+                        },
+                        lifecycle -> lifecycle.withExtension(csrf)),
+                lifecycle -> lifecycle.withExtension(csrf));
+
+        try (var test = TestServer.start(app)) {
+          var token =
+              test.send(
+                      testRequest -> testRequest.path("/token"),
+                      HttpResponse.BodyHandlers.ofString())
+                  .body();
+          var origin = "http://127.0.0.1:" + app.port();
+
+          assertEquals(
+              403,
+              test.send(testRequest ->
+                      testRequest.path("/browser/submit").method("POST").header("Origin", origin))
+                  .statusCode());
+          assertEquals(0, executions.get());
+
+          var accepted = sendAcceptedRequestForInheritedProtection(test, origin, token);
+
+          assertEquals(200, accepted.statusCode());
+          assertEquals("accepted", accepted.body());
+          assertEquals(1, executions.get());
+        }
       }
     }
   }
 
+  private HttpResponse<String> sendAcceptedRequestForInheritedProtection(
+      TestServer test, String origin, String token) throws IOException, InterruptedException {
+    return test.send(
+        testRequest ->
+            testRequest
+                .path("/browser/submit")
+                .method("POST")
+                .header("Origin", origin)
+                .header("X-CSRF-Token", token),
+        HttpResponse.BodyHandlers.ofString());
+  }
+
   @Test
-  void installationAloneDoesNotProtectRoutesOrEnableSessions() throws Exception {
+  void excludedApplicationDefaultDoesNotProtectRouteOrEnableSessions() throws Exception {
     var csrf = new Csrf();
 
-    try (var app =
-        new Shoostr()
-            .modifyServer(
-                nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0))) {
-      app.extensions(csrf)
-          .routes()
-          .post(
-              "/unselected",
-              (request, response) -> {
-                assertTrue(request.getSession().isEmpty());
-                assertThrows(IllegalStateException.class, request::getOrCreateSession);
-                response.text("no session");
-              });
+    {
+      var app =
+          new Shoostr()
+              .modifyServer(
+                  nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
 
-      try (var test = TestServer.start(app)) {
-        var result =
-            test.send(
-                request -> request.path("/unselected").method("POST"),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(200, result.statusCode());
-        assertEquals("no session", result.body());
-        assertTrue(result.headers().allValues("Set-Cookie").isEmpty());
+      try (Closeable appCleanup3 = app::close) {
+        app.withExtension(csrf)
+            .routes()
+            .post(
+                "/unselected",
+                (request, response) -> {
+                  assertTrue(request.getSession().isEmpty());
+                  assertThrows(IllegalStateException.class, request::getOrCreateSession);
+
+                  response.text("no session");
+                },
+                lifecycle -> lifecycle.withoutExtension(csrf));
+
+        try (var test = TestServer.start(app)) {
+          var result =
+              test.send(
+                  request -> request.path("/unselected").method("POST"),
+                  HttpResponse.BodyHandlers.ofString());
+
+          assertEquals(200, result.statusCode());
+          assertEquals("no session", result.body());
+          assertTrue(result.headers().allValues("Set-Cookie").isEmpty());
+        }
       }
     }
   }
 
   @Test
-  @SuppressWarnings("NullAway") // A missing token is part of the rejection scenario.
+  @SuppressWarnings("NullAway")
+  // A missing token is part of the rejection scenario.
   void protectsCookieAuthenticatedMutationWithSessionTokenAndOrigin() throws Exception {
     var executions = new AtomicInteger();
     var csrf = new Csrf();
 
-    try (var app = new Shoostr()) {
-      app.sessions().extensions(csrf);
-      app.routes()
-          .path(
-              "/",
-              routes -> {
-                routes.get("/form", (request, response) -> response.text(csrf.token(request)));
-                routes.post(
-                    "/submit",
-                    (ignored4, response) -> {
-                      executions.incrementAndGet();
-                      response.text("accepted");
-                    });
-              },
-              e -> e.with(csrf));
+    {
+      var app = new Shoostr();
 
-      try (var test =
-          TestServer.start(
-              app,
-              client -> client.cookieHandler(new CookieManager(null, CookiePolicy.ACCEPT_NONE)))) {
+      try (Closeable appCleanup4 = app::close) {
+        app.sessions();
+        app.routes()
+            .path(
+                "/",
+                routes -> {
+                  routes.get("/form", (request, response) -> response.text(csrf.token(request)));
+                  routes.post(
+                      "/submit",
+                      (ignoredRequest, response) -> {
+                        executions.incrementAndGet();
+                        response.text("accepted");
+                      });
+                },
+                lifecycle -> lifecycle.withExtension(csrf));
 
-        var form =
-            test.send(request -> request.path("/form"), HttpResponse.BodyHandlers.ofString());
-        var cookie = form.headers().firstValue("Set-Cookie").orElseThrow().split(";", 2)[0];
-        assertFalse(form.body().isBlank());
+        try (var test =
+            TestServer.start(
+                app,
+                client ->
+                    client.cookieHandler(new CookieManager(null, CookiePolicy.ACCEPT_NONE)))) {
 
-        var missing =
-            test.send(
-                request ->
-                    request
-                        .path("/submit")
-                        .header("Cookie", cookie)
-                        .header("Origin", "http://127.0.0.1:" + app.port())
-                        .method("POST"),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(403, missing.statusCode());
-        assertEquals(0, executions.get());
+          var form =
+              test.send(request -> request.path("/form"), HttpResponse.BodyHandlers.ofString());
+          var cookie = form.headers().firstValue("Set-Cookie").orElseThrow().split(";", 2)[0];
 
-        var accepted =
-            test.send(
-                request ->
-                    request
-                        .path("/submit")
-                        .header("Cookie", cookie)
-                        .header("Origin", "http://127.0.0.1:" + app.port())
-                        .header("X-CSRF-Token", form.body())
-                        .method("POST"),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(200, accepted.statusCode());
-        assertEquals("accepted", accepted.body());
-        assertEquals(1, executions.get());
+          assertFalse(form.body().isBlank());
+
+          var missing =
+              sendMissingRequestForProtectsCookieAuthenticatedMutationWithSessionTokenAndOrigin(
+                  test, cookie, app);
+
+          assertEquals(403, missing.statusCode());
+          assertEquals(0, executions.get());
+
+          var accepted =
+              sendAcceptedRequestForProtectsCookieAuthenticatedMutationWithSessionTokenAndOrigin(
+                  test, cookie, app, form);
+
+          assertEquals(200, accepted.statusCode());
+          assertEquals("accepted", accepted.body());
+          assertEquals(1, executions.get());
+        }
       }
     }
   }
 
-  @Test
-  void acceptsOneTokenInAFormFieldWhenTheOriginHeaderIsUnavailable() throws Exception {
-    try (var app = new Shoostr()) {
-      var csrf = new Csrf();
-      app.sessions();
-      app.extensions(csrf);
-      app.routes()
-          .path(
-              "/",
-              routes -> {
-                routes.get("/form", (request, response) -> response.text(csrf.token(request)));
-                routes.post("/submit", (ignored5, response) -> response.text("accepted"));
-              },
-              e -> e.with(csrf));
+  private HttpResponse<String>
+      sendMissingRequestForProtectsCookieAuthenticatedMutationWithSessionTokenAndOrigin(
+          TestServer test, String cookie, Shoostr app) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/submit")
+                .header("Cookie", cookie)
+                .header("Origin", "http://127.0.0.1:" + app.port())
+                .method("POST"),
+        HttpResponse.BodyHandlers.ofString());
+  }
 
-      try (var test =
-          TestServer.start(
-              app,
-              client -> client.cookieHandler(new CookieManager(null, CookiePolicy.ACCEPT_NONE)))) {
+  private HttpResponse<String>
+      sendAcceptedRequestForProtectsCookieAuthenticatedMutationWithSessionTokenAndOrigin(
+          TestServer test, String cookie, Shoostr app, HttpResponse<String> form)
+          throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/submit")
+                .header("Cookie", cookie)
+                .header("Origin", "http://127.0.0.1:" + app.port())
+                .header("X-CSRF-Token", form.body())
+                .method("POST"),
+        HttpResponse.BodyHandlers.ofString());
+  }
 
-        var form =
-            test.send(request -> request.path("/form"), HttpResponse.BodyHandlers.ofString());
-        var cookie = form.headers().firstValue("Set-Cookie").orElseThrow().split(";", 2)[0];
+  @ParameterizedTest
+  @ValueSource(strings = {"/form", "#section"})
+  void acceptsOneTokenInFormFieldWhenTheOriginHeaderIsUnavailable(String refererSuffix)
+      throws Exception {
+    {
+      var app = new Shoostr();
 
-        var result =
-            test.send(
-                request ->
-                    request
-                        .path("/submit")
-                        .header("Cookie", cookie)
-                        .header("Referer", "http://127.0.0.1:" + app.port() + "/form")
-                        .header("Content-Type", "application/x-www-form-urlencoded")
-                        .method("POST")
-                        .body(("_csrf=" + form.body()).getBytes(StandardCharsets.UTF_8)),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(200, result.statusCode());
-        assertEquals("accepted", result.body());
+      try (Closeable appCleanup5 = app::close) {
+        var csrf = new Csrf();
+        app.sessions();
 
-        var boundary = "csrf-boundary";
-        var multipartBody =
-            "--"
-                + boundary
-                + "\r\n"
-                + "Content-Disposition: form-data; name=\"_csrf\"\r\n\r\n"
-                + form.body()
-                + "\r\n--"
-                + boundary
-                + "--\r\n";
+        app.routes()
+            .path(
+                "/",
+                routes -> {
+                  routes.get("/form", (request, response) -> response.text(csrf.token(request)));
+                  routes.post("/submit", (ignoredRequest, response) -> response.text("accepted"));
+                },
+                lifecycle -> lifecycle.withExtension(csrf));
 
-        assertEquals(
-            200,
-            test.send(
-                    request ->
-                        request
-                            .path("/submit")
-                            .header("Cookie", cookie)
-                            .header("Origin", "http://127.0.0.1:" + app.port())
-                            .header("Content-Type", "multipart/form-data; boundary=" + boundary)
-                            .method("POST")
-                            .body(multipartBody.getBytes(StandardCharsets.UTF_8)),
-                    HttpResponse.BodyHandlers.ofString())
-                .statusCode());
+        try (var test =
+            TestServer.start(
+                app,
+                client ->
+                    client.cookieHandler(new CookieManager(null, CookiePolicy.ACCEPT_NONE)))) {
+
+          var form =
+              test.send(request -> request.path("/form"), HttpResponse.BodyHandlers.ofString());
+          var cookie = form.headers().firstValue("Set-Cookie").orElseThrow().split(";", 2)[0];
+
+          var result =
+              sendResultForAcceptsOneTokenInFormFieldWhenTheOriginHeaderIsUnavailable(
+                  test, cookie, app, form, refererSuffix);
+
+          assertEquals(200, result.statusCode());
+          assertEquals("accepted", result.body());
+
+          var boundary = "csrf-boundary";
+          var multipartBody =
+              createMultipartBodyForAcceptsOneTokenInFormFieldWhenTheOriginHeaderIsUnavailable(
+                  boundary, form);
+
+          assertEquals(
+              200,
+              test.send(
+                      request ->
+                          request
+                              .path("/submit")
+                              .header("Cookie", cookie)
+                              .header("Origin", "http://127.0.0.1:" + app.port())
+                              .header("Content-Type", "multipart/form-data; boundary=" + boundary)
+                              .method("POST")
+                              .body(multipartBody.getBytes(StandardCharsets.UTF_8)),
+                      HttpResponse.BodyHandlers.ofString())
+                  .statusCode());
+        }
       }
     }
+  }
+
+  private HttpResponse<String>
+      sendResultForAcceptsOneTokenInFormFieldWhenTheOriginHeaderIsUnavailable(
+          TestServer test,
+          String cookie,
+          Shoostr app,
+          HttpResponse<String> form,
+          String refererSuffix)
+          throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/submit")
+                .header("Cookie", cookie)
+                .header("Referer", "http://127.0.0.1:" + app.port() + refererSuffix)
+                .header("Content-Type", "application/x-www-form-urlencoded")
+                .method("POST")
+                .body(("_csrf=" + form.body()).getBytes(StandardCharsets.UTF_8)),
+        HttpResponse.BodyHandlers.ofString());
+  }
+
+  private String createMultipartBodyForAcceptsOneTokenInFormFieldWhenTheOriginHeaderIsUnavailable(
+      String boundary, HttpResponse<String> form) {
+    return "--"
+        + boundary
+        + "\r\n"
+        + "Content-Disposition: form-data; name=\"_csrf\"\r\n\r\n"
+        + form.body()
+        + "\r\n--"
+        + boundary
+        + "--\r\n";
   }
 
   @Test
@@ -367,64 +479,85 @@ class CsrfTest {
     var executions = new AtomicInteger();
     var csrf = new Csrf();
 
-    try (var app = new Shoostr()) {
-      app.sessions().extensions(csrf);
-      app.routes().get("/form", (request, response) -> response.text(csrf.token(request)));
-      app.routes()
-          .post(
-              "/submit",
-              (ignored6, response) -> {
-                executions.incrementAndGet();
-                response.text("accepted");
-              },
-              e -> e.with(csrf));
+    {
+      var app = new Shoostr();
 
-      try (var test =
-          TestServer.start(
-              app,
-              client -> client.cookieHandler(new CookieManager(null, CookiePolicy.ACCEPT_NONE)))) {
+      try (Closeable appCleanup6 = app::close) {
+        app.sessions();
+        app.routes().get("/form", (request, response) -> response.text(csrf.token(request)));
+        app.routes()
+            .post(
+                "/submit",
+                (ignoredRequest, response) -> {
+                  executions.incrementAndGet();
+                  response.text("accepted");
+                },
+                lifecycle -> lifecycle.withExtension(csrf));
 
-        var form =
-            test.send(
-                request -> request.path("/form").timeout(Duration.ofSeconds(3)),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(200, form.statusCode());
-        assertFalse(form.body().isBlank());
-        var cookie = form.headers().firstValue("Set-Cookie").orElseThrow().split(";", 2)[0];
-        var resumed =
-            test.send(
-                request ->
-                    request.path("/form").timeout(Duration.ofSeconds(3)).header("Cookie", cookie),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(200, resumed.statusCode());
-        assertEquals(form.body(), resumed.body());
-        assertTrue(resumed.headers().allValues("Set-Cookie").isEmpty());
+        try (var test =
+            TestServer.start(
+                app,
+                client ->
+                    client.cookieHandler(new CookieManager(null, CookiePolicy.ACCEPT_NONE)))) {
 
-        var body =
-            """
-          --file-only\r
-          Content-Disposition: form-data; name="file"; filename="note.txt"\r
-          Content-Type: text/plain\r
-          \r
-          uploaded content\r
-          --file-only--\r
-          """;
-        var rejected =
-            test.send(
-                request ->
-                    request
-                        .path("/submit")
-                        .timeout(Duration.ofSeconds(3))
-                        .header("Cookie", cookie)
-                        .header("Origin", "http://127.0.0.1:" + app.port())
-                        .header("Content-Type", "multipart/form-data; boundary=file-only")
-                        .method("POST")
-                        .body(body.getBytes(StandardCharsets.UTF_8)),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(403, rejected.statusCode());
-        assertEquals(0, executions.get());
+          var form =
+              test.send(
+                  request -> request.path("/form").timeout(Duration.ofSeconds(3)),
+                  HttpResponse.BodyHandlers.ofString());
+
+          assertEquals(200, form.statusCode());
+          assertFalse(form.body().isBlank());
+
+          var cookie = form.headers().firstValue("Set-Cookie").orElseThrow().split(";", 2)[0];
+          var resumed =
+              test.send(
+                  request ->
+                      request.path("/form").timeout(Duration.ofSeconds(3)).header("Cookie", cookie),
+                  HttpResponse.BodyHandlers.ofString());
+
+          assertEquals(200, resumed.statusCode());
+          assertEquals(form.body(), resumed.body());
+          assertTrue(resumed.headers().allValues("Set-Cookie").isEmpty());
+
+          var body = createBodyForRejectsFileOnlyMultipartWithoutCsrfTokenBeforeInvokingHandler();
+          var rejected =
+              sendRejectedRequestForRejectsFileOnlyMultipartWithoutCsrfTokenBeforeInvokingHandler(
+                  test, cookie, app, body);
+
+          assertEquals(403, rejected.statusCode());
+          assertEquals(0, executions.get());
+        }
       }
     }
+  }
+
+  private String createBodyForRejectsFileOnlyMultipartWithoutCsrfTokenBeforeInvokingHandler() {
+    return
+        """
+        --file-only\r
+        Content-Disposition: form-data; name="file"; filename="note.txt"\r
+        Content-Type: text/plain\r
+        \r
+        uploaded content\r
+        --file-only--\r
+        """;
+  }
+
+  private HttpResponse<String>
+      sendRejectedRequestForRejectsFileOnlyMultipartWithoutCsrfTokenBeforeInvokingHandler(
+          TestServer test, String cookie, Shoostr app, String body)
+          throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/submit")
+                .timeout(Duration.ofSeconds(3))
+                .header("Cookie", cookie)
+                .header("Origin", "http://127.0.0.1:" + app.port())
+                .header("Content-Type", "multipart/form-data; boundary=file-only")
+                .method("POST")
+                .body(body.getBytes(StandardCharsets.UTF_8)),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @Test
@@ -433,187 +566,237 @@ class CsrfTest {
     var executions = new AtomicInteger();
     var csrf = new Csrf();
 
-    try (var app = new Shoostr()) {
-      app.sessions();
-      app.extensions(csrf);
-      app.routes()
-          .path(
-              "/",
-              routes -> {
-                routes.get("/form", (request, response) -> response.text(csrf.token(request)));
-                routes.post("/submit", (ignored7, ignored8) -> executions.incrementAndGet());
-              },
-              e -> e.with(csrf));
+    {
+      var app = new Shoostr();
 
-      try (var test =
-          TestServer.start(
-              app,
-              client -> client.cookieHandler(new CookieManager(null, CookiePolicy.ACCEPT_NONE)))) {
+      try (Closeable appCleanup7 = app::close) {
+        app.sessions();
 
-        var form =
-            test.send(request -> request.path("/form"), HttpResponse.BodyHandlers.ofString());
-        var cookie = form.headers().firstValue("Set-Cookie").orElseThrow().split(";", 2)[0];
-        var token = form.body();
-        var base = "http://127.0.0.1:" + app.port();
-        List<Consumer<TestRequest>> rejected =
-            List.of(
-                request ->
-                    request
-                        .path("/submit")
-                        .header("Cookie", cookie)
-                        .header("X-CSRF-Token", token)
-                        .method("POST"),
-                request ->
-                    request
-                        .path("/submit")
-                        .header("Cookie", cookie)
-                        .header("X-CSRF-Token", token)
-                        .header("Origin", "https://attacker.example")
-                        .method("POST"),
-                request ->
-                    request
-                        .path("/submit")
-                        .header("Cookie", cookie)
-                        .header("X-CSRF-Token", token)
-                        .header("Origin", "null")
-                        .method("POST"),
-                request ->
-                    request
-                        .path("/submit")
-                        .header("Cookie", cookie)
-                        .header("X-CSRF-Token", token)
-                        .header("Origin", base + " https://attacker.example")
-                        .method("POST"),
-                request ->
-                    request
-                        .path("/submit")
-                        .header("Cookie", cookie)
-                        .header("X-CSRF-Token", token)
-                        .header("Origin", base)
-                        .header("Origin", base)
-                        .method("POST"),
-                request ->
-                    request
-                        .path("/submit")
-                        .header("Cookie", cookie)
-                        .header("X-CSRF-Token", token)
-                        .header("Origin", base + "/path")
-                        .method("POST"),
-                request ->
-                    request
-                        .path("/submit")
-                        .header("Cookie", cookie)
-                        .header("X-CSRF-Token", "wrong")
-                        .header("Origin", base)
-                        .method("POST"),
-                request ->
-                    request
-                        .path("/submit")
-                        .header("Cookie", cookie)
-                        .header("X-CSRF-Token", token)
-                        .header("X-CSRF-Token", token)
-                        .header("Origin", base)
-                        .method("POST"),
-                request ->
-                    request
-                        .path("/submit")
-                        .header("Cookie", "JSESSIONID=unknown")
-                        .header("X-CSRF-Token", token)
-                        .header("Origin", base)
-                        .method("POST"));
-        for (var candidate : rejected) {
-          var result = test.send(candidate, HttpResponse.BodyHandlers.ofString());
-          assertEquals(403, result.statusCode());
-          assertFalse(result.headers().firstValue("Set-Cookie").isPresent());
+        app.routes()
+            .path(
+                "/",
+                routes -> {
+                  routes.get("/form", (request, response) -> response.text(csrf.token(request)));
+                  routes.post(
+                      "/submit", (ignoredRequest, ignoredResponse) -> executions.incrementAndGet());
+                },
+                lifecycle -> lifecycle.withExtension(csrf));
+
+        try (var test =
+            TestServer.start(
+                app,
+                client ->
+                    client.cookieHandler(new CookieManager(null, CookiePolicy.ACCEPT_NONE)))) {
+
+          var form =
+              test.send(request -> request.path("/form"), HttpResponse.BodyHandlers.ofString());
+          var cookie = form.headers().firstValue("Set-Cookie").orElseThrow().split(";", 2)[0];
+          var token = form.body();
+          var base = "http://127.0.0.1:" + app.port();
+          List<Consumer<TestRequest>> rejected =
+              createRejectedForRejectedWrites(cookie, token, base);
+          for (var candidate : rejected) {
+            var result = test.send(candidate, HttpResponse.BodyHandlers.ofString());
+
+            assertEquals(403, result.statusCode());
+            assertFalse(result.headers().firstValue("Set-Cookie").isPresent());
+          }
+
+          assertEquals(
+              403,
+              test.send(
+                      request ->
+                          request
+                              .path("/submit")
+                              .header("Cookie", cookie)
+                              .header("Origin", base)
+                              .header("Content-Type", "application/x-www-form-urlencoded")
+                              .method("POST")
+                              .body(
+                                  ("_csrf=" + token + "&_csrf=" + token)
+                                      .getBytes(StandardCharsets.UTF_8)),
+                      HttpResponse.BodyHandlers.ofString())
+                  .statusCode());
+          assertEquals(0, executions.get());
         }
-
-        assertEquals(
-            403,
-            test.send(
-                    request ->
-                        request
-                            .path("/submit")
-                            .header("Cookie", cookie)
-                            .header("Origin", base)
-                            .header("Content-Type", "application/x-www-form-urlencoded")
-                            .method("POST")
-                            .body(
-                                ("_csrf=" + token + "&_csrf=" + token)
-                                    .getBytes(StandardCharsets.UTF_8)),
-                    HttpResponse.BodyHandlers.ofString())
-                .statusCode());
-        assertEquals(0, executions.get());
       }
     }
   }
 
-  @Test
-  void rejectsMalformedRefererWithoutCreatingASessionOrRunningBusinessCode() throws Exception {
+  private List<Consumer<TestRequest>> createRejectedForRejectedWrites(
+      String cookie, String token, String base) {
+    return List.of(
+        request ->
+            request
+                .path("/submit")
+                .header("Cookie", cookie)
+                .header("X-CSRF-Token", token)
+                .method("POST"),
+        request ->
+            request
+                .path("/submit")
+                .header("Cookie", cookie)
+                .header("X-CSRF-Token", token)
+                .header("Origin", "https://attacker.example")
+                .method("POST"),
+        request ->
+            request
+                .path("/submit")
+                .header("Cookie", cookie)
+                .header("X-CSRF-Token", token)
+                .header("Origin", "null")
+                .method("POST"),
+        request ->
+            request
+                .path("/submit")
+                .header("Cookie", cookie)
+                .header("X-CSRF-Token", token)
+                .header("Origin", base + " https://attacker.example")
+                .method("POST"),
+        request ->
+            request
+                .path("/submit")
+                .header("Cookie", cookie)
+                .header("X-CSRF-Token", token)
+                .header("Origin", base)
+                .header("Origin", base)
+                .method("POST"),
+        request ->
+            request
+                .path("/submit")
+                .header("Cookie", cookie)
+                .header("X-CSRF-Token", token)
+                .header("Origin", base + "/path")
+                .method("POST"),
+        request ->
+            request
+                .path("/submit")
+                .header("Cookie", cookie)
+                .header("X-CSRF-Token", "wrong")
+                .header("Origin", base)
+                .method("POST"),
+        request ->
+            request
+                .path("/submit")
+                .header("Cookie", cookie)
+                .header("X-CSRF-Token", token)
+                .header("X-CSRF-Token", token)
+                .header("Origin", base)
+                .method("POST"),
+        request ->
+            request
+                .path("/submit")
+                .header("Cookie", cookie)
+                .header("X-CSRF-Token", token)
+                .header("Origin", base)
+                .header("Content-Type", "application/x-www-form-urlencoded")
+                .method("POST")
+                .body(("_csrf=" + token).getBytes(StandardCharsets.UTF_8)),
+        request ->
+            request
+                .path("/submit")
+                .header("Cookie", cookie)
+                .header("X-CSRF-Token", token)
+                .header("Referer", "/relative")
+                .method("POST"),
+        request ->
+            request
+                .path("/submit")
+                .header("Cookie", "JSESSIONID=unknown")
+                .header("X-CSRF-Token", token)
+                .header("Origin", base)
+                .method("POST"));
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"http://[", "http:", "http:/"})
+  void rejectsMalformedRefererWithoutCreatingSessionOrRunningBusinessCode(String referer)
+      throws Exception {
     var executions = new AtomicInteger();
 
-    try (var app = new Shoostr()) {
-      var csrf = new Csrf();
-      app.sessions();
-      app.extensions(csrf);
-      app.routes()
-          .path(
-              "/",
-              routes ->
-                  routes.post("/submit", (ignored9, ignored10) -> executions.incrementAndGet()),
-              e -> e.with(csrf));
+    {
+      var app = new Shoostr();
 
-      try (var test =
-          TestServer.start(
-              app,
-              client -> client.cookieHandler(new CookieManager(null, CookiePolicy.ACCEPT_NONE)))) {
+      try (Closeable appCleanup8 = app::close) {
+        var csrf = new Csrf();
+        app.sessions();
 
-        var result =
-            test.send(
-                request -> request.path("/submit").header("Referer", "http://[").method("POST"),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(403, result.statusCode());
-        assertEquals(0, executions.get());
-        assertFalse(result.headers().firstValue("Set-Cookie").isPresent());
+        app.routes()
+            .path(
+                "/",
+                routes ->
+                    routes.post(
+                        "/submit",
+                        (ignoredRequest, ignoredResponse) -> executions.incrementAndGet()),
+                lifecycle -> lifecycle.withExtension(csrf));
+
+        try (var test =
+            TestServer.start(
+                app,
+                client ->
+                    client.cookieHandler(new CookieManager(null, CookiePolicy.ACCEPT_NONE)))) {
+
+          var result =
+              test.send(
+                  request -> request.path("/submit").header("Referer", referer).method("POST"),
+                  HttpResponse.BodyHandlers.ofString());
+
+          assertEquals(403, result.statusCode());
+          assertEquals(0, executions.get());
+          assertFalse(result.headers().firstValue("Set-Cookie").isPresent());
+        }
       }
     }
   }
 
   @Test
   void leavesBearerOnlyRoutesOutsideTheBrowserProtectionScope() throws Exception {
-    try (var app = new Shoostr()) {
-      var csrf = new Csrf();
-      app.sessions();
-      app.extensions(csrf);
-      app.routes()
-          .path(
-              "/",
-              routes -> routes.post("/browser", (ignored11, response) -> response.text("browser")),
-              e -> e.with(csrf));
-      app.routes().post("/api", (ignored12, response) -> response.text("api"));
+    {
+      var app = new Shoostr();
 
-      try (var test =
-          TestServer.start(
-              app,
-              client -> client.cookieHandler(new CookieManager(null, CookiePolicy.ACCEPT_NONE)))) {
+      try (Closeable appCleanup9 = app::close) {
+        var csrf = new Csrf();
+        app.sessions();
 
-        var api =
-            test.send(
-                request ->
-                    request
-                        .path("/api")
-                        .header("Authorization", "Bearer supplied-by-client")
-                        .method("POST"),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(200, api.statusCode());
-        assertEquals("api", api.body());
-        assertEquals(
-            403,
-            test.send(
-                    request -> request.path("/browser").method("POST"),
-                    HttpResponse.BodyHandlers.ofString())
-                .statusCode());
+        app.routes()
+            .path(
+                "/",
+                routes ->
+                    routes.post("/browser", (ignoredRequest, response) -> response.text("browser")),
+                lifecycle -> lifecycle.withExtension(csrf));
+        app.routes().post("/api", (ignoredRequest, response) -> response.text("api"));
+
+        try (var test =
+            TestServer.start(
+                app,
+                client ->
+                    client.cookieHandler(new CookieManager(null, CookiePolicy.ACCEPT_NONE)))) {
+
+          var api = sendApiRequestForLeavesBearerOnlyRoutesOutsideTheBrowserProtectionScope(test);
+
+          assertEquals(200, api.statusCode());
+          assertEquals("api", api.body());
+          assertEquals(
+              403,
+              test.send(
+                      request -> request.path("/browser").method("POST"),
+                      HttpResponse.BodyHandlers.ofString())
+                  .statusCode());
+        }
       }
     }
+  }
+
+  private HttpResponse<String>
+      sendApiRequestForLeavesBearerOnlyRoutesOutsideTheBrowserProtectionScope(TestServer test)
+          throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/api")
+                .header("Authorization", "Bearer supplied-by-client")
+                .method("POST"),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @Test
@@ -622,108 +805,143 @@ class CsrfTest {
     var equivalent = new Csrf();
     var originalHash = csrf.hashCode();
 
-    try (var app = new Shoostr()) {
-      app.sessions();
-      app.extensions(csrf);
-      app.routes()
-          .path(
-              "/",
-              routes -> {
-                routes.get("/form", (request, response) -> response.text(csrf.token(request)));
-                routes.post(
-                    "/renew",
-                    (request, response) -> {
-                      request.renewSessionId();
-                      response.text(csrf.token(request));
-                    });
-                routes.post("/submit", (ignored13, response) -> response.text("accepted"));
-                routes.post(
-                    "/logout",
-                    (request, response) -> {
-                      request.getSession().orElseThrow().invalidate();
-                      response.removeCookie("JSESSIONID").text("logged out");
-                    });
-              },
-              e -> e.with(csrf));
+    {
+      var app = new Shoostr();
 
-      try (var test =
-          TestServer.start(
-              app,
-              client -> client.cookieHandler(new CookieManager(null, CookiePolicy.ACCEPT_NONE)))) {
+      try (Closeable appCleanup10 = app::close) {
+        app.sessions();
 
-        var form =
-            test.send(request -> request.path("/form"), HttpResponse.BodyHandlers.ofString());
-        var oldCookie = form.headers().firstValue("Set-Cookie").orElseThrow().split(";", 2)[0];
-        assertEquals(equivalent, csrf);
-        assertEquals(originalHash, csrf.hashCode());
-        var origin = "http://127.0.0.1:" + app.port();
-        var renewed =
-            test.send(
-                request ->
-                    request
-                        .path("/renew")
-                        .header("Cookie", oldCookie)
-                        .header("Origin", origin)
-                        .header("X-CSRF-Token", form.body())
-                        .method("POST"),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(200, renewed.statusCode());
-        var newCookie = renewed.headers().firstValue("Set-Cookie").orElseThrow().split(";", 2)[0];
-        assertNotEquals(form.body(), renewed.body());
-        assertNotEquals(oldCookie, newCookie);
-        assertEquals(equivalent, csrf);
-        assertEquals(originalHash, csrf.hashCode());
-        assertEquals(
-            403,
-            test.send(
-                    request ->
-                        request
-                            .path("/submit")
-                            .header("Cookie", newCookie)
-                            .header("Origin", "http://127.0.0.1:" + app.port())
-                            .header("X-CSRF-Token", form.body())
-                            .method("POST"),
-                    HttpResponse.BodyHandlers.ofString())
-                .statusCode());
-        assertEquals(
-            200,
-            test.send(
-                    request ->
-                        request
-                            .path("/submit")
-                            .header("Cookie", newCookie)
-                            .header("Origin", "http://127.0.0.1:" + app.port())
-                            .header("X-CSRF-Token", renewed.body())
-                            .method("POST"),
-                    HttpResponse.BodyHandlers.ofString())
-                .statusCode());
+        app.routes()
+            .path(
+                "/",
+                routes -> {
+                  routes.get("/form", (request, response) -> response.text(csrf.token(request)));
+                  routes.post(
+                      "/renew",
+                      (request, response) -> {
+                        request.renewSessionId();
+                        response.text(csrf.token(request));
+                      });
+                  routes.post("/submit", (ignoredRequest, response) -> response.text("accepted"));
+                  routes.post(
+                      "/logout",
+                      (request, response) -> {
+                        request.getSession().orElseThrow().invalidate();
+                        response.removeCookie("JSESSIONID").text("logged out");
+                      });
+                },
+                lifecycle -> lifecycle.withExtension(csrf));
 
-        var logout =
-            test.send(
-                request ->
-                    request
-                        .path("/logout")
-                        .header("Cookie", newCookie)
-                        .header("Origin", origin)
-                        .header("X-CSRF-Token", renewed.body())
-                        .method("POST"),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(200, logout.statusCode());
-        assertEquals("logged out", logout.body());
-        assertEquals(
-            403,
-            test.send(
-                    request ->
-                        request
-                            .path("/submit")
-                            .header("Cookie", newCookie)
-                            .header("Origin", "http://127.0.0.1:" + app.port())
-                            .header("X-CSRF-Token", renewed.body())
-                            .method("POST"),
-                    HttpResponse.BodyHandlers.ofString())
-                .statusCode());
+        try (var test =
+            TestServer.start(
+                app,
+                client ->
+                    client.cookieHandler(new CookieManager(null, CookiePolicy.ACCEPT_NONE)))) {
+
+          var form =
+              test.send(request -> request.path("/form"), HttpResponse.BodyHandlers.ofString());
+          var oldCookie = form.headers().firstValue("Set-Cookie").orElseThrow().split(";", 2)[0];
+
+          assertEquals(equivalent, csrf);
+          assertEquals(originalHash, csrf.hashCode());
+
+          var origin = "http://127.0.0.1:" + app.port();
+          var renewed =
+              sendRenewedRequestForRotatesTokenAfterSessionRenewalAndRejectsReplayAfterLogout(
+                  test, oldCookie, origin, form);
+
+          assertEquals(200, renewed.statusCode());
+
+          var newCookie = renewed.headers().firstValue("Set-Cookie").orElseThrow().split(";", 2)[0];
+
+          assertNotEquals(form.body(), renewed.body());
+          assertNotEquals(oldCookie, newCookie);
+          assertEquals(equivalent, csrf);
+          assertEquals(originalHash, csrf.hashCode());
+          assertEquals(
+              403,
+              test.send(
+                      request ->
+                          request
+                              .path("/submit")
+                              .header("Cookie", newCookie)
+                              .header("Origin", "http://127.0.0.1:" + app.port())
+                              .header("X-CSRF-Token", form.body())
+                              .method("POST"),
+                      HttpResponse.BodyHandlers.ofString())
+                  .statusCode());
+          assertEquals(
+              200,
+              test.send(
+                      request ->
+                          request
+                              .path("/submit")
+                              .header("Cookie", newCookie)
+                              .header("Origin", "http://127.0.0.1:" + app.port())
+                              .header("X-CSRF-Token", renewed.body())
+                              .method("POST"),
+                      HttpResponse.BodyHandlers.ofString())
+                  .statusCode());
+
+          var logout =
+              sendLogoutRequestForRotatesTokenAfterSessionRenewalAndRejectsReplayAfterLogout(
+                  test, newCookie, origin, renewed);
+
+          assertEquals(200, logout.statusCode());
+          assertEquals("logged out", logout.body());
+          assertEquals(
+              403,
+              test.send(
+                      request ->
+                          request
+                              .path("/submit")
+                              .header("Cookie", newCookie)
+                              .header("Origin", "http://127.0.0.1:" + app.port())
+                              .header("X-CSRF-Token", renewed.body())
+                              .method("POST"),
+                      HttpResponse.BodyHandlers.ofString())
+                  .statusCode());
+        }
       }
     }
+  }
+
+  private HttpResponse<String>
+      sendRenewedRequestForRotatesTokenAfterSessionRenewalAndRejectsReplayAfterLogout(
+          TestServer test, String oldCookie, String origin, HttpResponse<String> form)
+          throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/renew")
+                .header("Cookie", oldCookie)
+                .header("Origin", origin)
+                .header("X-CSRF-Token", form.body())
+                .method("POST"),
+        HttpResponse.BodyHandlers.ofString());
+  }
+
+  private HttpResponse<String>
+      sendLogoutRequestForRotatesTokenAfterSessionRenewalAndRejectsReplayAfterLogout(
+          TestServer test, String newCookie, String origin, HttpResponse<String> renewed)
+          throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/logout")
+                .header("Cookie", newCookie)
+                .header("Origin", origin)
+                .header("X-CSRF-Token", renewed.body())
+                .method("POST"),
+        HttpResponse.BodyHandlers.ofString());
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"*", "null", "not-an-origin", "https://client.example/path"})
+  void rejectsInvalidTrustedOriginsWhenBuilding(String origin) {
+    var builder = Csrf.builder().trustedOrigins(origin);
+
+    assertThrows(IllegalArgumentException.class, builder::build);
   }
 
   @Test
@@ -733,102 +951,133 @@ class CsrfTest {
         Csrf.builder().trustedOrigins("https://client.example", "https://second.example").build();
     var executions = new AtomicInteger();
 
-    try (var app = new Shoostr()) {
-      app.sessions();
-      var cors =
-          new Cors(
-              CorsPolicy.builder()
-                  .origins("https://client.example", "https://second.example")
-                  .methods(HttpMethods.GET, HttpMethods.POST)
-                  .allowedHeaders(HttpHeaders.CONTENT_TYPE, HttpHeaders.of("X-CSRF-Token"))
-                  .exposedHeaders(HttpHeaders.ETAG, HttpHeaders.of("X-Request-Id"))
-                  .credentials(true)
-                  .build());
-      app.extensions(cors).configureExtensionsDefaults(e -> e.with(cors));
-      app.extensions(csrf);
-      app.routes()
-          .path(
-              "/",
-              routes -> {
-                routes.get("/form", (request, response) -> response.text(csrf.token(request)));
-                routes.post(
-                    "/submit",
-                    (ignored14, response) -> {
-                      executions.incrementAndGet();
-                      response.text("accepted");
-                    });
-              },
-              e -> e.with(csrf));
+    {
+      var app = new Shoostr();
 
-      try (var test =
-          TestServer.start(
-              app,
-              client -> client.cookieHandler(new CookieManager(null, CookiePolicy.ACCEPT_NONE)))) {
+      try (Closeable appCleanup11 = app::close) {
+        app.sessions();
+        var cors = createCorsForTrustedBrowserOrigin();
+        app.withExtension(cors);
 
-        var form =
-            test.send(request -> request.path("/form"), HttpResponse.BodyHandlers.ofString());
-        var cookie = form.headers().firstValue("Set-Cookie").orElseThrow().split(";", 2)[0];
-        var preflight =
-            test.send(
-                request ->
-                    request
-                        .path("/submit")
-                        .header("Origin", "https://client.example")
-                        .header("Access-Control-Request-Method", "POST")
-                        .header("Access-Control-Request-Headers", "X-CSRF-Token")
-                        .method("OPTIONS"),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(204, preflight.statusCode());
-        assertTrue(preflight.body().isEmpty());
-        assertFalse(preflight.headers().firstValue("Set-Cookie").isPresent());
-        assertEquals(0, executions.get());
+        app.routes()
+            .path(
+                "/",
+                routes -> {
+                  routes.get("/form", (request, response) -> response.text(csrf.token(request)));
+                  routes.post(
+                      "/submit",
+                      (ignoredRequest, response) -> {
+                        executions.incrementAndGet();
+                        response.text("accepted");
+                      });
+                },
+                lifecycle -> lifecycle.withExtension(csrf));
 
-        var denied =
-            test.send(
-                request ->
-                    request
-                        .path("/submit")
-                        .header("Cookie", cookie)
-                        .header("Origin", "https://client.example")
-                        .method("POST"),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(403, denied.statusCode());
-        assertEquals(0, executions.get());
+        try (var test =
+            TestServer.start(
+                app,
+                client ->
+                    client.cookieHandler(new CookieManager(null, CookiePolicy.ACCEPT_NONE)))) {
 
-        var accepted =
-            test.send(
-                request ->
-                    request
-                        .path("/submit")
-                        .header("Cookie", cookie)
-                        .header("Origin", "https://client.example")
-                        .header("X-CSRF-Token", form.body())
-                        .method("POST"),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(200, accepted.statusCode());
-        assertEquals(
-            "https://client.example",
-            accepted.headers().firstValue("Access-Control-Allow-Origin").orElseThrow());
-        assertEquals(1, executions.get());
-        assertEquals(
-            "ETag, X-Request-Id",
-            accepted.headers().firstValue("Access-Control-Expose-Headers").orElseThrow());
-        var second =
-            test.send(
-                request ->
-                    request
-                        .path("/submit")
-                        .method("POST")
-                        .header("Cookie", cookie)
-                        .header("Origin", "https://second.example")
-                        .header("X-CSRF-Token", form.body()),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(200, second.statusCode());
-        assertEquals(
-            "https://second.example",
-            second.headers().firstValue("Access-Control-Allow-Origin").orElseThrow());
-        assertEquals(2, executions.get());
+          var form =
+              test.send(request -> request.path("/form"), HttpResponse.BodyHandlers.ofString());
+          final var cookie = form.headers().firstValue("Set-Cookie").orElseThrow().split(";", 2)[0];
+          var preflight = sendPreflightRequestForTrustedBrowserOrigin(test);
+
+          assertEquals(204, preflight.statusCode());
+          assertTrue(preflight.body().isEmpty());
+          assertFalse(preflight.headers().firstValue("Set-Cookie").isPresent());
+          assertEquals(0, executions.get());
+
+          var denied = sendDeniedRequestForTrustedBrowserOrigin(test, cookie);
+
+          assertEquals(403, denied.statusCode());
+          assertEquals(0, executions.get());
+
+          var accepted = sendAcceptedRequestForTrustedBrowserOrigin(test, cookie, form);
+
+          assertEquals(200, accepted.statusCode());
+          assertEquals(
+              "https://client.example",
+              accepted.headers().firstValue("Access-Control-Allow-Origin").orElseThrow());
+          assertEquals(1, executions.get());
+          assertEquals(
+              "ETag, X-Request-Id",
+              accepted.headers().firstValue("Access-Control-Expose-Headers").orElseThrow());
+
+          var second = sendSecondRequestForTrustedBrowserOrigin(test, cookie, form);
+
+          assertEquals(200, second.statusCode());
+          assertEquals(
+              "https://second.example",
+              second.headers().firstValue("Access-Control-Allow-Origin").orElseThrow());
+          assertEquals(2, executions.get());
+        }
       }
     }
+  }
+
+  private Cors createCorsForTrustedBrowserOrigin() {
+    return new Cors(
+        CorsPolicy.builder()
+            .origins("https://client.example", "https://second.example")
+            .methods(HttpMethods.GET, HttpMethods.POST)
+            .allowedHeaders(HttpHeaders.CONTENT_TYPE, HttpHeaders.of("X-CSRF-Token"))
+            .exposedHeaders(HttpHeaders.ETAG, HttpHeaders.of("X-Request-Id"))
+            .credentials(true)
+            .build());
+  }
+
+  private HttpResponse<String> sendPreflightRequestForTrustedBrowserOrigin(TestServer test)
+      throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/submit")
+                .header("Origin", "https://client.example")
+                .header("Access-Control-Request-Method", "POST")
+                .header("Access-Control-Request-Headers", "X-CSRF-Token")
+                .method("OPTIONS"),
+        HttpResponse.BodyHandlers.ofString());
+  }
+
+  private HttpResponse<String> sendDeniedRequestForTrustedBrowserOrigin(
+      TestServer test, String cookie) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/submit")
+                .header("Cookie", cookie)
+                .header("Origin", "https://client.example")
+                .method("POST"),
+        HttpResponse.BodyHandlers.ofString());
+  }
+
+  private HttpResponse<String> sendAcceptedRequestForTrustedBrowserOrigin(
+      TestServer test, String cookie, HttpResponse<String> form)
+      throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/submit")
+                .header("Cookie", cookie)
+                .header("Origin", "https://client.example")
+                .header("X-CSRF-Token", form.body())
+                .method("POST"),
+        HttpResponse.BodyHandlers.ofString());
+  }
+
+  private HttpResponse<String> sendSecondRequestForTrustedBrowserOrigin(
+      TestServer test, String cookie, HttpResponse<String> form)
+      throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/submit")
+                .method("POST")
+                .header("Cookie", cookie)
+                .header("Origin", "https://second.example")
+                .header("X-CSRF-Token", form.body()),
+        HttpResponse.BodyHandlers.ofString());
   }
 }

@@ -20,7 +20,8 @@ public interface Codec {
    * @throws Exception if decoding fails; classify malformed input explicitly rather than turning
    *     unexpected failures into client errors
    */
-  @SuppressWarnings("java:S112") // Match Handler's application-defined checked exception contract.
+  @SuppressWarnings("java:S112")
+  // Match Handler's application-defined checked exception contract.
   <T> T read(byte[] source, Class<T> type) throws Exception;
 
   /**
@@ -33,6 +34,7 @@ public interface Codec {
    * @return nonnull encoded bytes
    * @throws Exception if encoding fails, without automatic conversion to BadRequestException
    */
-  @SuppressWarnings("java:S112") // Match Handler's application-defined checked exception contract.
+  @SuppressWarnings("java:S112")
+  // Match Handler's application-defined checked exception contract.
   byte[] write(Object value) throws Exception;
 }

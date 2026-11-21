@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import io.github.suppierk.shoostr.http.HttpMethods;
 import io.github.suppierk.shoostr.testing.TestServer;
 import java.io.ByteArrayInputStream;
+import java.io.Closeable;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.http.HttpResponse;
@@ -37,6 +38,28 @@ import org.junit.jupiter.params.provider.ValueSource;
 class ExchangeEqualityTest {
   @TempDir Path directory;
 
+  private static Codec codec(String marker) {
+    return new Codec() {
+      @Override
+      public <T> T read(byte[] source, Class<T> type) {
+        return type.cast(new String(source, StandardCharsets.UTF_8));
+      }
+
+      @Override
+      public byte[] write(Object value) {
+        return (marker + value).getBytes(StandardCharsets.UTF_8);
+      }
+    };
+  }
+
+  private static MultiPart.Part part(String marker) {
+    return new MultiPart.ByteBufferPart(
+        marker,
+        marker + ".txt",
+        HttpFields.EMPTY,
+        ByteBuffer.wrap(marker.getBytes(StandardCharsets.UTF_8)));
+  }
+
   @ParameterizedTest
   @ValueSource(booleans = {false, true})
   void preservesExchangeAndStreamIdentityThroughReadWriteFlushAndCompletion(boolean typed)
@@ -47,77 +70,83 @@ class ExchangeEqualityTest {
     var hashes = new HashMap<Object, Integer>();
     var completed = new LinkedBlockingQueue<RequestOutcome>();
 
-    try (var app = new Shoostr().afterRequest(completed::add)) {
-      if (typed) {
-        app.codec(codec("configured"));
-      }
+    {
+      var app = new Shoostr().afterRequest(completed::add);
 
-      app.routes()
-          .post(
-              "/exchange",
-              (request, response) -> {
-                exchanges.add(Map.entry(request, response));
-                hashes.put(request, request.hashCode());
-                hashes.put(response, response.hashCode());
-                assertEquals("payload", request.bodyText());
-                request.attribute("processed", true);
-                var output = response.startStream("text/plain");
-                outputs.add(output);
-                hashes.put(output, output.hashCode());
-                output.write("done").flush();
-              })
-          .get(
-              "/events",
-              (request, response) -> {
-                var output = response.startEventStream();
-                events.add(output);
-                hashes.put(output, output.hashCode());
-                output.send("hello").heartbeat();
-              });
-
-      try (var server = TestServer.start(app)) {
-        for (int index = 0; index < 2; index++) {
-          var response =
-              server.send(
-                  request ->
-                      request
-                          .path("/exchange")
-                          .method("POST")
-                          .body("payload".getBytes(StandardCharsets.UTF_8)),
-                  HttpResponse.BodyHandlers.ofString());
-          assertEquals(200, response.statusCode());
-          assertEquals("done", response.body());
-          assertNotNull(completed.poll(3, TimeUnit.SECONDS));
-          var eventResponse =
-              server.send(request -> request.path("/events"), HttpResponse.BodyHandlers.ofString());
-          assertEquals(200, eventResponse.statusCode());
-          assertTrue(eventResponse.body().contains("data: hello"));
-          assertNotNull(completed.poll(3, TimeUnit.SECONDS));
-        }
-        assertNotEquals(exchanges.get(0).getKey(), exchanges.get(1).getKey());
-        assertNotEquals(exchanges.get(0).getValue(), exchanges.get(1).getValue());
-        assertNotEquals(outputs.get(0), outputs.get(1));
-        assertNotEquals(events.get(0), events.get(1));
-
+      try (Closeable appCleanup = app::close) {
         if (typed) {
-          verifier(TypedRequest.class, exchanges, outputs).verify();
-          verifier(TypedResponse.class, exchanges, outputs).verify();
-          verifier(TypedEventStream.class, exchanges, outputs).verify();
-        } else {
-          verifier(Request.class, exchanges, outputs)
-              .withRedefinedSubclass(TypedRequest.class)
-              .verify();
-          verifier(Response.class, exchanges, outputs)
-              .withRedefinedSubclass(TypedResponse.class)
-              .verify();
-          verifier(Response.EventStream.class, exchanges, outputs)
-              .withRedefinedSubclass(TypedEventStream.class)
-              .verify();
+          app.codec(codec("configured"));
         }
 
-        verifier(Response.Stream.class, exchanges, outputs).verify();
-        verifier(Class.forName(Response.class.getName() + "$FlushCompletion"), exchanges, outputs)
-            .verify();
+        app.routes()
+            .post(
+                "/exchange",
+                (request, response) -> {
+                  exchanges.add(Map.entry(request, response));
+                  hashes.put(request, request.hashCode());
+                  hashes.put(response, response.hashCode());
+
+                  assertEquals("payload", request.bodyText());
+
+                  request.attribute("processed", true);
+                  var output = response.startStream("text/plain");
+                  outputs.add(output);
+                  hashes.put(output, output.hashCode());
+                  output.write("done").flush();
+                })
+            .get(
+                "/events",
+                (request, response) -> {
+                  var output = response.startEventStream();
+                  events.add(output);
+                  hashes.put(output, output.hashCode());
+                  output.send("hello").heartbeat();
+                });
+
+        try (var server = TestServer.start(app)) {
+          for (int index = 0; index < 2; index++) {
+            var response =
+                sendResponseForPreservesExchangeAndStreamIdentityThroughReadWriteFlushAndCompletion(
+                    server);
+
+            assertEquals(200, response.statusCode());
+            assertEquals("done", response.body());
+            assertNotNull(completed.poll(3, TimeUnit.SECONDS));
+
+            var eventResponse =
+                server.send(
+                    request -> request.path("/events"), HttpResponse.BodyHandlers.ofString());
+
+            assertEquals(200, eventResponse.statusCode());
+            assertTrue(eventResponse.body().contains("data: hello"));
+            assertNotNull(completed.poll(3, TimeUnit.SECONDS));
+          }
+
+          assertNotEquals(exchanges.get(0).getKey(), exchanges.get(1).getKey());
+          assertNotEquals(exchanges.get(0).getValue(), exchanges.get(1).getValue());
+          assertNotEquals(outputs.get(0), outputs.get(1));
+          assertNotEquals(events.get(0), events.get(1));
+
+          if (typed) {
+            verifier(Request.Typed.class, exchanges, outputs).verify();
+            verifier(Response.Typed.class, exchanges, outputs).verify();
+            verifier(Response.EventStream.Typed.class, exchanges, outputs).verify();
+          } else {
+            verifier(Request.class, exchanges, outputs)
+                .withRedefinedSubclass(Request.Typed.class)
+                .verify();
+            verifier(Response.class, exchanges, outputs)
+                .withRedefinedSubclass(Response.Typed.class)
+                .verify();
+            verifier(Response.EventStream.class, exchanges, outputs)
+                .withRedefinedSubclass(Response.EventStream.Typed.class)
+                .verify();
+          }
+
+          verifier(Response.Stream.class, exchanges, outputs).verify();
+          verifier(Class.forName(Response.class.getName() + "$FlushCompletion"), exchanges, outputs)
+              .verify();
+        }
       }
     }
 
@@ -128,7 +157,20 @@ class ExchangeEqualityTest {
       assertEquals(entry.getValue().intValue(), entry.getKey().hashCode());
       assertTrue(retained.remove(entry.getKey()));
     }
+
     assertTrue(retained.isEmpty());
+  }
+
+  private HttpResponse<String>
+      sendResponseForPreservesExchangeAndStreamIdentityThroughReadWriteFlushAndCompletion(
+          TestServer server) throws IOException, InterruptedException {
+    return server.send(
+        request ->
+            request
+                .path("/exchange")
+                .method("POST")
+                .body("payload".getBytes(StandardCharsets.UTF_8)),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   private <T> SingleTypeEqualsVerifierApi<T> verifier(
@@ -177,27 +219,5 @@ class ExchangeEqualityTest {
             new ByteArrayInputStream(new byte[] {1}),
             new ByteArrayInputStream(new byte[] {2}))
         .suppress(Warning.INHERITED_DIRECTLY_FROM_OBJECT, Warning.ALL_FIELDS_SHOULD_BE_USED);
-  }
-
-  private static Codec codec(String marker) {
-    return new Codec() {
-      @Override
-      public <T> T read(byte[] source, Class<T> type) {
-        return type.cast(new String(source, StandardCharsets.UTF_8));
-      }
-
-      @Override
-      public byte[] write(Object value) {
-        return (marker + value).getBytes(StandardCharsets.UTF_8);
-      }
-    };
-  }
-
-  private static MultiPart.Part part(String marker) {
-    return new MultiPart.ByteBufferPart(
-        marker,
-        marker + ".txt",
-        HttpFields.EMPTY,
-        ByteBuffer.wrap(marker.getBytes(StandardCharsets.UTF_8)));
   }
 }

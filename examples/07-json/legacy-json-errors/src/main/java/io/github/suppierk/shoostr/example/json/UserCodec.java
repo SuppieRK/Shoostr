@@ -14,7 +14,7 @@ final class UserCodec implements Codec {
   /** Creates the mapper once, before any concurrent request can use it. */
   UserCodec() {
     // Jackson's ObjectMapper does the JSON conversion; Shoostr does not choose a JSON library.
-    mapper = new ObjectMapper().enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
+    this.mapper = new ObjectMapper().enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
   }
 
   /**

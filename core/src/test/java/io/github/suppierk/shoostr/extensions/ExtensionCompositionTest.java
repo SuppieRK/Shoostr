@@ -4,13 +4,13 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
 
 import io.github.suppierk.shoostr.AuthenticationExtension;
-import io.github.suppierk.shoostr.Extension;
-import io.github.suppierk.shoostr.Extensions;
 import io.github.suppierk.shoostr.Handler;
+import io.github.suppierk.shoostr.Lifecycle;
 import io.github.suppierk.shoostr.Request;
 import io.github.suppierk.shoostr.Response;
 import io.github.suppierk.shoostr.Shoostr;
 import io.github.suppierk.shoostr.testing.TestServer;
+import java.io.Closeable;
 import java.net.http.HttpResponse;
 import java.util.ArrayList;
 import java.util.List;
@@ -25,94 +25,116 @@ class ExtensionCompositionTest {
     var calls = new AtomicInteger();
     var groupCalls = new AtomicInteger();
     var auth =
-        new AuthenticationExtension() {
-          @Override
-          public void handle(Request request, Response response) {
-            calls.incrementAndGet();
-            request.principal(() -> "alice");
-          }
-        };
+        createAuthForInheritsIndependentMetadataAndAuthenticationWithoutReplayingGroupConfiguration(
+            calls);
     var docs = new Documentation();
     var otherDocs = new Documentation();
     var retained = new AtomicReference<Description>();
     Handler shared =
         (request, response) -> response.text(request.principal().orElseThrow().getName());
 
-    try (var app = new Shoostr()) {
-      assertSame(app, app.authentication(auth));
-      assertSame(app, app.extensions(docs, otherDocs));
-      app.routes(
-          routes -> {
-            routes.path(
-                "/users",
-                users -> {
-                  users.get("/{id}", shared, e -> retained.set(e.with(docs).summary("One user")));
-                  users.get("/search", shared);
-                },
-                e -> {
-                  groupCalls.incrementAndGet();
-                  e.with(auth);
-                  e.with(docs).tag("users").summary("Users");
-                  e.with(otherDocs).tag("public").summary("Other document");
-                });
-            routes.get(
-                "/openapi.json",
-                docs.handler(),
-                e -> {
-                  e.with(auth);
-                  e.with(docs).summary("API description");
-                });
-          });
+    {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
+      try (Closeable appCleanup = app::close) {
 
-        assertEquals(1, groupCalls.get());
-        assertEquals(
-            "alice",
-            test.send(request -> request.path("/users/123"), HttpResponse.BodyHandlers.ofString())
-                .body());
-        assertEquals(
-            "alice",
-            test.send(
-                    request -> request.path("/users/search"), HttpResponse.BodyHandlers.ofString())
-                .body());
-        retained.get().summary("Changed after startup");
-        assertEquals(
-            "GET /users/{id} users One user\nGET /users/search users Users\nGET /openapi.json  API description",
-            test.send(
-                    request -> request.path("/openapi.json"), HttpResponse.BodyHandlers.ofString())
-                .body());
-        assertEquals(3, calls.get());
-        assertEquals(
-            List.of(
-                "GET /users/{id} public Other document", "GET /users/search public Other document"),
-            otherDocs.operations);
+        app.routes(routes -> {
+          routes.path(
+              "/users",
+              users -> {
+                users.get(
+                    "/{id}",
+                    shared,
+                    lifecycle -> retained.set(lifecycle.withExtension(docs).summary("One user")));
+                users.get("/search", shared);
+              },
+              lifecycle -> {
+                groupCalls.incrementAndGet();
+                lifecycle.withExtension(auth);
+                lifecycle.withExtension(docs).tag("users").summary("Users");
+                lifecycle.withExtension(otherDocs).tag("public").summary("Other document");
+              });
+          routes.get(
+              "/openapi.json",
+              docs.handler(),
+              lifecycle -> {
+                lifecycle.withExtension(auth);
+                lifecycle.withExtension(docs).summary("API description");
+              });
+        });
+
+        try (var test = TestServer.start(app)) {
+
+          assertEquals(1, groupCalls.get());
+          assertEquals(
+              "alice",
+              test.send(request -> request.path("/users/123"), HttpResponse.BodyHandlers.ofString())
+                  .body());
+          assertEquals(
+              "alice",
+              test.send(
+                      request -> request.path("/users/search"),
+                      HttpResponse.BodyHandlers.ofString())
+                  .body());
+
+          retained.get().summary("Changed after startup");
+
+          assertEquals(
+              """
+              GET /users/{id} users One user
+              GET /users/search users Users
+              GET /openapi.json  API description\
+              """,
+              test.send(
+                      request -> request.path("/openapi.json"),
+                      HttpResponse.BodyHandlers.ofString())
+                  .body());
+          assertEquals(3, calls.get());
+          assertEquals(
+              List.of(
+                  "GET /users/{id} public Other document",
+                  "GET /users/search public Other document"),
+              otherDocs.operations);
+        }
       }
     }
   }
 
-  private static final class Documentation implements Extension<Description> {
+  private AuthenticationExtension
+      createAuthForInheritsIndependentMetadataAndAuthenticationWithoutReplayingGroupConfiguration(
+          AtomicInteger calls) {
+    return new AuthenticationExtension() {
+      @Override
+      public void handle(Request request, Response response) {
+        calls.incrementAndGet();
+        request.principal(() -> "alice");
+      }
+    };
+  }
+
+  private static final class Documentation implements TestExtension<Description> {
     private final List<String> operations;
 
     private Documentation() {
-      operations = new ArrayList<>();
+      this.operations = new ArrayList<>();
     }
 
     @Override
-    public Description configure(Extensions endpoint, Description inherited) {
+    public Description configure(Lifecycle endpoint, Description inherited) {
       var description = new Description(inherited);
+
       assertSame(
           endpoint,
-          endpoint.onRoute(
-              (method, path) ->
-                  operations.add(
-                      method.value()
-                          + " "
-                          + path
-                          + " "
-                          + description.tag
-                          + " "
-                          + description.summary)));
+          endpoint.onRoute((method, path) ->
+              operations.add(
+                  method.value()
+                      + " "
+                      + path
+                      + " "
+                      + description.tag
+                      + " "
+                      + description.summary)));
+
       return description;
     }
 
@@ -126,8 +148,8 @@ class ExtensionCompositionTest {
     private String summary;
 
     private Description(Description inherited) {
-      tag = inherited == null ? "" : inherited.tag;
-      summary = inherited == null ? "" : inherited.summary;
+      this.tag = inherited == null ? "" : inherited.tag;
+      this.summary = inherited == null ? "" : inherited.summary;
     }
 
     Description tag(String value) {

@@ -1,5 +1,7 @@
 package io.github.suppierk.shoostr;
 
+import static io.github.suppierk.shoostr.Locks.runUnderLock;
+
 import java.io.FilterInputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -7,6 +9,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.locks.ReentrantLock;
 import org.eclipse.jetty.http.MultiPart;
 import org.eclipse.jetty.io.Content;
 
@@ -15,6 +18,7 @@ public final class Upload {
   private final MultiPart.Part delegate;
   private final Runnable access;
   private final List<InputStream> streams;
+  private final ReentrantLock streamsLock;
 
   /**
    * Creates an upload wrapper scoped to one request's handler lifetime.
@@ -25,7 +29,8 @@ public final class Upload {
   Upload(MultiPart.Part delegate, Runnable access) {
     this.delegate = delegate;
     this.access = access;
-    streams = new ArrayList<>();
+    this.streams = new ArrayList<>();
+    this.streamsLock = new ReentrantLock();
   }
 
   /**
@@ -35,6 +40,7 @@ public final class Upload {
    */
   public String name() {
     access.run();
+
     return delegate.getName();
   }
 
@@ -45,6 +51,7 @@ public final class Upload {
    */
   public String fileName() {
     access.run();
+
     return delegate.getFileName();
   }
 
@@ -55,6 +62,7 @@ public final class Upload {
    */
   public long size() {
     access.run();
+
     return delegate.getLength();
   }
 
@@ -65,39 +73,48 @@ public final class Upload {
    */
   public InputStream content() {
     access.run();
-    var stream =
-        new FilterInputStream(Content.Source.asInputStream(delegate.createContentSource())) {
-          /** Validates request lifetime before reading one byte. */
-          @Override
-          public int read() throws IOException {
-            access.run();
-            return super.read();
-          }
+    final var stream = openContentStream();
 
-          /** Validates request lifetime before reading a byte range. */
-          @Override
-          public int read(byte[] value, int offset, int length) throws IOException {
-            access.run();
-            Objects.checkFromIndexSize(offset, length, value.length);
-            if (length == 0) {
-              return 0;
-            }
-
-            return super.read(value, offset, length);
-          }
-
-          /** Validates request lifetime before advancing past bytes. */
-          @Override
-          public long skip(long count) throws IOException {
-            access.run();
-            return super.skip(count);
-          }
-        };
-    synchronized (streams) {
-      streams.add(stream);
-    }
+    runUnderLock(streamsLock, () -> streams.add(stream));
 
     return stream;
+  }
+
+  /**
+   * Opens guarded content for immediate registration with this upload's cleanup owner.
+   *
+   * @return a stream that checks request access before each operation
+   */
+  private InputStream openContentStream() {
+    return new FilterInputStream(Content.Source.asInputStream(delegate.createContentSource())) {
+      /** Validates request lifetime before reading one byte. */
+      @Override
+      public int read() throws IOException {
+        access.run();
+
+        return super.read();
+      }
+
+      /** Validates request lifetime before reading a byte range. */
+      @Override
+      public int read(byte[] value, int offset, int length) throws IOException {
+        access.run();
+        Objects.checkFromIndexSize(offset, length, value.length);
+        if (length == 0) {
+          return 0;
+        }
+
+        return super.read(value, offset, length);
+      }
+
+      /** Validates request lifetime before advancing past bytes. */
+      @Override
+      public long skip(long count) throws IOException {
+        access.run();
+
+        return super.skip(count);
+      }
+    };
   }
 
   /**
@@ -110,20 +127,24 @@ public final class Upload {
   public Path persistTo(Path destination) throws IOException {
     access.run();
     delegate.writeTo(Objects.requireNonNull(destination));
+
     return destination;
   }
 
   /** Closes content streams opened by this upload before its temporary part is released. */
   void close() {
-    synchronized (streams) {
-      for (var stream : streams) {
-        try {
-          stream.close();
-        } catch (IOException ignored) {
-          // Cleanup continues so every resource gets a close attempt.
-        }
-      }
-      streams.clear();
-    }
+    runUnderLock(
+        streamsLock,
+        () -> {
+          for (final var stream : streams) {
+            try {
+              stream.close();
+            } catch (IOException ignored) {
+              // Cleanup continues so every resource gets a close attempt.
+            }
+          }
+
+          streams.clear();
+        });
   }
 }

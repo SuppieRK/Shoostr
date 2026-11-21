@@ -2,18 +2,19 @@ plugins {
 	id 'java-library'
 }
 
-version = '2026.11.5.0'
+version = '2026.11.21.0'
 
 dependencies {
-	api shoostrDependency('core', '2026.11.5.0')
-	api platform('io.modelcontextprotocol.sdk:mcp-bom:2.1.0')
+	api shoostrDependency('core', '2026.11.21.0')
+	api platform('io.modelcontextprotocol.sdk:mcp-bom:2.2.0')
 	api 'io.modelcontextprotocol.sdk:mcp-core'
-	api('io.projectreactor:reactor-core:3.8.8') {
+	api('io.projectreactor:reactor-core:3.9.0') {
 		because 'Fix CVE-2026-47863 and CVE-2026-47857 in the SDK Reactor dependency.'
 	}
-	api platform('com.fasterxml.jackson:jackson-bom:2.22.4')
+	api platform('com.fasterxml.jackson:jackson-bom:2.23.0')
 	implementation 'io.modelcontextprotocol.sdk:mcp-json-jackson2'
-	testImplementation project(':test')
+	testImplementation dependencies.project(':test')
+	testImplementation 'org.yaml:snakeyaml:2.7'
 	testImplementation 'nl.jqno.equalsverifier:equalsverifier:4.5.2'
 	testImplementation 'org.awaitility:awaitility:4.3.0'
 }

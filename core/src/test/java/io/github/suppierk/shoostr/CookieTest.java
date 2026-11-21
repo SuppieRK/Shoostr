@@ -12,6 +12,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import io.github.suppierk.shoostr.http.Cookie;
 import io.github.suppierk.shoostr.http.exceptions.BadRequestException;
 import io.github.suppierk.shoostr.testing.TestServer;
+import java.io.IOException;
 import java.net.CookieManager;
 import java.net.CookiePolicy;
 import java.net.http.HttpResponse;
@@ -59,12 +60,15 @@ class CookieTest {
               assertTrue(request.cookie("missing").isEmpty());
               assertEquals(List.of(), request.cookies("missing"));
               assertEquals(List.of("first", "second"), request.cookieMap().get("token"));
+
               var cookieMap = request.cookieMap();
               var tokens = request.cookies("token");
+
               assertSame(cookieMap, request.cookieMap());
               assertSame(tokens, cookieMap.get("token"));
               assertThrows(UnsupportedOperationException.class, cookieMap::clear);
               assertThrows(UnsupportedOperationException.class, () -> tokens.add("bad"));
+
               response.text("ok");
             });
 
@@ -72,18 +76,23 @@ class CookieTest {
         TestServer.start(
             app,
             client -> client.cookieHandler(new CookieManager(null, CookiePolicy.ACCEPT_NONE)))) {
-      var result =
-          test.send(
-              request ->
-                  request
-                      .path("/cookies")
-                      .timeout(Duration.ofSeconds(3))
-                      .header("Cookie", "token=first; Token=upper; empty=")
-                      .header("Cookie", "token=second; encoded=a+b%2F"),
-              HttpResponse.BodyHandlers.ofString());
+      var result = sendResultForReadsRepeatedCookiesWithoutDecodingValues(test);
+
       assertEquals(200, result.statusCode());
       assertEquals("ok", result.body());
     }
+  }
+
+  private HttpResponse<String> sendResultForReadsRepeatedCookiesWithoutDecodingValues(
+      TestServer test) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/cookies")
+                .timeout(Duration.ofSeconds(3))
+                .header("Cookie", "token=first; Token=upper; empty=")
+                .header("Cookie", "token=second; encoded=a+b%2F"),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @Test
@@ -98,32 +107,37 @@ class CookieTest {
         TestServer.start(
             app,
             client -> client.cookieHandler(new CookieManager(null, CookiePolicy.ACCEPT_NONE)))) {
-      var result =
-          test.send(
-              request ->
-                  request
-                      .path("/cookies")
-                      .timeout(Duration.ofSeconds(3))
-                      .header("Cookie", "token=first; token=second"),
-              HttpResponse.BodyHandlers.ofString());
+      var result = sendResultForExposesEveryCookieValueInCookieMap(test);
+
       assertEquals(200, result.statusCode());
       assertEquals("[first, second]", result.body());
     }
   }
 
+  private HttpResponse<String> sendResultForExposesEveryCookieValueInCookieMap(TestServer test)
+      throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/cookies")
+                .timeout(Duration.ofSeconds(3))
+                .header("Cookie", "token=first; token=second"),
+        HttpResponse.BodyHandlers.ofString());
+  }
+
   @Test
   void rejectsStrictlyInvalidCookiesBeforeHooksAndReportsCompletionOnce() throws Exception {
     var admissions = new AtomicInteger();
-    var handlers = new AtomicInteger();
+    final var handlers = new AtomicInteger();
     var outcomes = new LinkedBlockingQueue<RequestOutcome>();
     app.modifyHttpConfiguration(
         configuration -> configuration.setRequestCookieCompliance(CookieCompliance.RFC6265_STRICT));
-    app.onRequestHeaders((ignored, ignored2) -> admissions.incrementAndGet());
+    app.onRequestHeaders((ignored, ignoredResponse) -> admissions.incrementAndGet());
     app.afterRequest(outcomes::add);
     app.routes()
         .get(
             "/cookies",
-            (ignored3, response) -> {
+            (ignoredRequest, response) -> {
               handlers.incrementAndGet();
               response.text("ok");
             });
@@ -133,17 +147,15 @@ class CookieTest {
             app,
             client -> client.cookieHandler(new CookieManager(null, CookiePolicy.ACCEPT_NONE)))) {
       var rejected =
-          test.send(
-              request ->
-                  request
-                      .path("/cookies")
-                      .timeout(Duration.ofSeconds(3))
-                      .header("Cookie", "token=first; invalid"),
-              HttpResponse.BodyHandlers.ofString());
+          sendRejectedRequestForRejectsStrictlyInvalidCookiesBeforeHooksAndReportsCompletionOnce(
+              test);
+
       assertEquals(400, rejected.statusCode());
       assertEquals(0, admissions.get());
       assertEquals(0, handlers.get());
+
       var rejectedOutcome = outcomes.poll(3, TimeUnit.SECONDS);
+
       assertNotNull(rejectedOutcome);
       assertEquals(400, rejectedOutcome.statusCode());
       assertNull(rejectedOutcome.routePattern());
@@ -163,7 +175,9 @@ class CookieTest {
                           .header("Cookie", "token=valid"),
                   HttpResponse.BodyHandlers.ofString())
               .statusCode());
+
       var acceptedOutcome = outcomes.poll(3, TimeUnit.SECONDS);
+
       assertNotNull(acceptedOutcome);
       assertEquals(200, acceptedOutcome.statusCode());
       assertNull(acceptedOutcome.applicationFailure());
@@ -171,6 +185,18 @@ class CookieTest {
       assertEquals(1, handlers.get());
       assertNull(outcomes.poll());
     }
+  }
+
+  private HttpResponse<String>
+      sendRejectedRequestForRejectsStrictlyInvalidCookiesBeforeHooksAndReportsCompletionOnce(
+          TestServer test) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/cookies")
+                .timeout(Duration.ofSeconds(3))
+                .header("Cookie", "token=first; invalid"),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @Test
@@ -183,17 +209,16 @@ class CookieTest {
             (request, response) -> {
               retained.set(request);
               snapshot.set(request.cookieMap());
+
               assertEquals("quoted", request.cookie("quoted").orElseThrow());
 
               try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
                 executor
-                    .submit(
-                        () -> {
-                          assertThrows(IllegalStateException.class, () -> request.cookie("quoted"));
-                          assertThrows(
-                              IllegalStateException.class, () -> request.cookies("quoted"));
-                          assertThrows(IllegalStateException.class, request::cookieMap);
-                        })
+                    .submit(() -> {
+                      assertThrows(IllegalStateException.class, () -> request.cookie("quoted"));
+                      assertThrows(IllegalStateException.class, () -> request.cookies("quoted"));
+                      assertThrows(IllegalStateException.class, request::cookieMap);
+                    })
                     .get(3, TimeUnit.SECONDS);
               }
 
@@ -205,6 +230,7 @@ class CookieTest {
             (request, response) -> {
               assertEquals(Map.of(), request.cookieMap());
               assertTrue(request.cookie("quoted").isEmpty());
+
               response.text("empty");
             });
 
@@ -229,7 +255,9 @@ class CookieTest {
                   HttpResponse.BodyHandlers.ofString())
               .body());
       assertEquals(Map.of("quoted", List.of("quoted")), snapshot.get());
+
       var closedRequest = retained.get();
+
       assertThrows(IllegalStateException.class, () -> closedRequest.cookie("quoted"));
       assertThrows(IllegalStateException.class, () -> closedRequest.cookies("quoted"));
       assertThrows(IllegalStateException.class, closedRequest::cookieMap);
@@ -241,7 +269,7 @@ class CookieTest {
     app.routes()
         .get(
             "/set",
-            (ignored4, response) -> {
+            (ignoredRequest, response) -> {
               response.cookie("first", "a+b%2F").cookie(new Cookie("empty", ""));
               response.text("ok");
             });
@@ -254,6 +282,7 @@ class CookieTest {
           test.send(
               request -> request.path("/set").timeout(Duration.ofSeconds(3)),
               HttpResponse.BodyHandlers.ofString());
+
       assertEquals(200, result.statusCode());
       assertEquals(
           List.of("first=a+b%2F; Path=/", "empty=; Path=/"),
@@ -266,14 +295,8 @@ class CookieTest {
   @Test
   void writesExplicitCookieAttributes() throws Exception {
     var base = new Cookie("session", "value");
-    var configured =
-        base.withPath("/app")
-            .withDomain(".EXAMPLE.test")
-            .withMaxAge(60)
-            .withExpires(Instant.parse("2030-01-01T00:00:00Z"))
-            .withSecure(true)
-            .withHttpOnly(true)
-            .withSameSite(Cookie.SameSite.LAX);
+    final var configured = createConfiguredForWritesExplicitCookieAttributes(base);
+
     assertEquals("/", base.path());
     assertNull(base.domain());
     assertEquals(-1, base.maxAge());
@@ -281,10 +304,11 @@ class CookieTest {
     assertFalse(base.httpOnly());
     assertNull(base.sameSite());
     assertNull(base.expires());
+
     app.routes()
         .get(
             "/attributes",
-            (ignored5, response) ->
+            (ignoredRequest, response) ->
                 response.setHeader("Expires", "Thu, 01 Jan 1970 00:00:00 GMT").cookie(configured));
 
     try (var test =
@@ -295,14 +319,27 @@ class CookieTest {
           test.send(
               request -> request.path("/attributes").timeout(Duration.ofSeconds(3)),
               HttpResponse.BodyHandlers.ofString());
+
       assertEquals(200, result.statusCode());
       assertEquals(
           List.of(
-              "session=value; Path=/app; Domain=example.test; Max-Age=60; Expires=Tue, 01 Jan 2030 00:00:00 GMT; Secure; HttpOnly; SameSite=Lax"),
+              "session=value; Path=/app; Domain=example.test; "
+                  + "Max-Age=60; Expires=Tue, 01 Jan 2030 00:00:00 GMT;"
+                  + " Secure; HttpOnly; SameSite=Lax"),
           result.headers().allValues("Set-Cookie"));
       assertEquals(
           "Thu, 01 Jan 1970 00:00:00 GMT", result.headers().firstValue("Expires").orElseThrow());
     }
+  }
+
+  private Cookie createConfiguredForWritesExplicitCookieAttributes(Cookie base) {
+    return base.withPath("/app")
+        .withDomain(".EXAMPLE.test")
+        .withMaxAge(60)
+        .withExpires(Instant.parse("2030-01-01T00:00:00Z"))
+        .withSecure(true)
+        .withHttpOnly(true)
+        .withSameSite(Cookie.SameSite.LAX);
   }
 
   @Test
@@ -310,7 +347,7 @@ class CookieTest {
     app.routes()
         .get(
             "/replace",
-            (ignored6, response) ->
+            (ignoredRequest, response) ->
                 response
                     .cookie("id", "root")
                     .cookie(new Cookie("id", "path").withPath("/app"))
@@ -329,6 +366,7 @@ class CookieTest {
           test.send(
               request -> request.path("/replace").timeout(Duration.ofSeconds(3)),
               HttpResponse.BodyHandlers.ofString());
+
       assertEquals(200, result.statusCode());
       assertEquals(
           List.of(
@@ -351,7 +389,7 @@ class CookieTest {
     app.routes()
         .get(
             "/delete",
-            (ignored7, response) ->
+            (ignoredRequest, response) ->
                 response
                     .cookie("id", "root")
                     .cookie(new Cookie("id", "keep").withPath("/app"))
@@ -371,13 +409,16 @@ class CookieTest {
           test.send(
               request -> request.path("/delete").timeout(Duration.ofSeconds(3)),
               HttpResponse.BodyHandlers.ofString());
+
       assertEquals(200, result.statusCode());
       assertEquals(
           List.of(
               "id=keep; Path=/app",
               "id=; Path=/; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT",
-              "id=; Path=/app; Domain=example.test; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT",
-              "secure=; Path=/; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Secure; HttpOnly; SameSite=None",
+              "id=; Path=/app; Domain=example.test; Max-Age=0; "
+                  + "Expires=Thu, 01 Jan 1970 00:00:00 GMT",
+              "secure=; Path=/; Max-Age=0; Expires=Thu, 01 Jan "
+                  + "1970 00:00:00 GMT; Secure; HttpOnly; SameSite=None",
               "zero=value; Path=/; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT"),
           result.headers().allValues("Set-Cookie"));
       assertEquals("value", secured.value());
@@ -390,20 +431,26 @@ class CookieTest {
     app.routes()
         .get(
             "/security",
-            (ignored8, response) -> {
+            (ignoredRequest, response) -> {
               var insecure = new Cookie("id", "value");
+
               assertThrows(
                   IllegalArgumentException.class,
                   () -> insecure.withSameSite(Cookie.SameSite.NONE));
+
               for (var name : List.of("__Secure-id", "__sEcUrE-id", "__Host-id", "__HOST-id")) {
                 assertThrows(IllegalArgumentException.class, () -> response.cookie(name, "value"));
               }
               var host = Cookie.secure("__Host-id", "value").withHttpOnly(true);
+
               assertThrows(IllegalArgumentException.class, () -> host.withPath("/app"));
               assertThrows(IllegalArgumentException.class, () -> host.withDomain("example.test"));
               assertThrows(IllegalArgumentException.class, () -> host.withSecure(false));
+
               var cross = Cookie.secure("cross", "value").withSameSite(Cookie.SameSite.NONE);
+
               assertThrows(IllegalArgumentException.class, () -> cross.withSecure(false));
+
               response
                   .cookie(cross)
                   .cookie(Cookie.secure("__Secure-id", "value").withPath("/app"))
@@ -419,23 +466,26 @@ class CookieTest {
           test.send(
               request -> request.path("/security").timeout(Duration.ofSeconds(3)),
               HttpResponse.BodyHandlers.ofString());
+
       assertEquals(200, result.statusCode());
       assertEquals(
           List.of(
               "cross=value; Path=/; Secure; SameSite=None",
               "__Secure-id=value; Path=/app; Secure",
-              "__Host-id=; Path=/; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Secure; HttpOnly"),
+              "__Host-id=; Path=/; Max-Age=0; Expires=Thu, 01 "
+                  + "Jan 1970 00:00:00 GMT; Secure; HttpOnly"),
           result.headers().allValues("Set-Cookie"));
     }
   }
 
   @Test
-  @SuppressWarnings("NullAway") // The test verifies that null cookie inputs are rejected.
+  @SuppressWarnings("NullAway")
+  // The test verifies that null cookie inputs are rejected.
   void rejectsInvalidCookiesBeforeChangingHeaders() throws Exception {
     app.routes()
         .get(
             "/invalid",
-            (ignored9, response) -> {
+            (ignoredRequest, response) -> {
               var base = new Cookie("id", "kept");
               response.cookie(base);
               for (var name : List.of("", "bad name", "bad=name", "bad;name", "bad\r\nname", "é")) {
@@ -472,6 +522,7 @@ class CookieTest {
                   List.of("", "relative", "/bad; Secure", "/bad\r\n", "/é", "/trailing ")) {
                 assertThrows(IllegalArgumentException.class, () -> base.withPath(path));
               }
+
               assertThrows(IllegalArgumentException.class, () -> base.withMaxAge(-2));
               assertThrows(IllegalArgumentException.class, () -> base.withExpires(Instant.MIN));
               assertThrows(IllegalArgumentException.class, () -> base.withExpires(Instant.MAX));
@@ -489,6 +540,7 @@ class CookieTest {
           test.send(
               request -> request.path("/invalid").timeout(Duration.ofSeconds(3)),
               HttpResponse.BodyHandlers.ofString());
+
       assertEquals(200, result.statusCode());
       assertEquals(List.of("id=kept; Path=/"), result.headers().allValues("Set-Cookie"));
     }
@@ -499,7 +551,7 @@ class CookieTest {
     app.routes()
         .get(
             "/quoted",
-            (ignored10, response) -> {
+            (ignoredRequest, response) -> {
               response.cookie("quoted", "\"abc\"").cookie("empty", "\"\"");
               for (var value :
                   List.of("\"a b\"", "\"a;b\"", "\"a\\b\"", "\"unclosed", "\"a\"b\"")) {
@@ -516,6 +568,7 @@ class CookieTest {
           test.send(
               request -> request.path("/quoted").timeout(Duration.ofSeconds(3)),
               HttpResponse.BodyHandlers.ofString());
+
       assertEquals(200, result.statusCode());
       assertEquals(
           List.of("quoted=\"abc\"; Path=/", "empty=\"\"; Path=/"),
@@ -526,26 +579,11 @@ class CookieTest {
   @Test
   void supportsIndependentExpiryAndAttributeRemoval() throws Exception {
     var expiry = Instant.parse("2030-01-01T00:00:00.999Z");
-    var reset =
-        new Cookie("reset", "value")
-            .withDomain("example.test")
-            .withDomain(null)
-            .withPath("/app")
-            .withPath("/")
-            .withMaxAge(30)
-            .withMaxAge(-1)
-            .withExpires(expiry)
-            .withExpires(null)
-            .withSecure(true)
-            .withSecure(false)
-            .withHttpOnly(true)
-            .withHttpOnly(false)
-            .withSameSite(Cookie.SameSite.STRICT)
-            .withSameSite(null);
+    var reset = createResetForSupportsIndependentExpiryAndAttributeRemoval(expiry);
     app.routes()
         .get(
             "/expiry",
-            (ignored11, response) ->
+            (ignoredRequest, response) ->
                 response
                     .cookie(new Cookie("only", "value").withExpires(expiry))
                     .cookie(new Cookie("huge", "value").withMaxAge(Long.MAX_VALUE))
@@ -559,6 +597,7 @@ class CookieTest {
           test.send(
               request -> request.path("/expiry").timeout(Duration.ofSeconds(3)),
               HttpResponse.BodyHandlers.ofString());
+
       assertEquals(200, result.statusCode());
       assertEquals(
           List.of(
@@ -569,12 +608,30 @@ class CookieTest {
     }
   }
 
+  private Cookie createResetForSupportsIndependentExpiryAndAttributeRemoval(Instant expiry) {
+    return new Cookie("reset", "value")
+        .withDomain("example.test")
+        .withDomain(null)
+        .withPath("/app")
+        .withPath("/")
+        .withMaxAge(30)
+        .withMaxAge(-1)
+        .withExpires(expiry)
+        .withExpires(null)
+        .withSecure(true)
+        .withSecure(false)
+        .withHttpOnly(true)
+        .withHttpOnly(false)
+        .withSameSite(Cookie.SameSite.STRICT)
+        .withSameSite(null);
+  }
+
   @Test
   void enforcesCookieResponseLifetimeAndErrorCleanup() throws Exception {
     var retained = new AtomicReference<Response>();
     app.exception(
         IllegalArgumentException.class,
-        (ignored12, request, response) ->
+        (ignoredFailure, request, response) ->
             response
                 .status(409)
                 .cookie("mapped", request.cookie("incoming").orElseThrow())
@@ -582,43 +639,43 @@ class CookieTest {
     app.routes()
         .get(
             "/stream",
-            (ignored13, response) -> {
+            (ignoredRequest, response) -> {
               retained.set(response);
               response.cookie("before", "value");
 
               try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
                 executor
-                    .submit(
-                        () -> {
-                          assertThrows(
-                              IllegalStateException.class,
-                              () -> response.cookie("foreign", "value"));
-                          assertThrows(
-                              IllegalStateException.class, () -> response.removeCookie("before"));
-                        })
+                    .submit(() -> {
+                      assertThrows(
+                          IllegalStateException.class, () -> response.cookie("foreign", "value"));
+                      assertThrows(
+                          IllegalStateException.class, () -> response.removeCookie("before"));
+                    })
                     .get(3, TimeUnit.SECONDS);
               }
 
               var stream = response.startStream("text/plain");
+
               assertThrows(IllegalStateException.class, () -> response.cookie("late", "value"));
               assertThrows(IllegalStateException.class, () -> response.removeCookie("before"));
+
               stream.write("streamed");
             });
     app.routes()
         .get(
             "/failed",
-            (ignored14, response) -> {
+            (ignoredRequest, response) -> {
               response.cookie("discarded", "value");
               throw new BadRequestException();
             });
     app.routes()
         .get(
             "/mapped",
-            (ignored15, response) -> {
+            (ignoredRequest, response) -> {
               response.cookie("discarded", "value");
               throw new IllegalArgumentException("private");
             });
-    app.routes().head("/head", (ignored16, response) -> response.cookie("head", "value"));
+    app.routes().head("/head", (ignoredRequest, response) -> response.cookie("head", "value"));
 
     try (var test =
         TestServer.start(
@@ -628,44 +685,57 @@ class CookieTest {
           test.send(
               request -> request.path("/stream").timeout(Duration.ofSeconds(3)),
               HttpResponse.BodyHandlers.ofString());
+
       assertEquals("streamed", streamed.body());
       assertEquals(List.of("before=value; Path=/"), streamed.headers().allValues("Set-Cookie"));
+
       var closedResponse = retained.get();
+
       assertThrows(IllegalStateException.class, () -> closedResponse.cookie("late", "value"));
       assertThrows(IllegalStateException.class, () -> closedResponse.removeCookie("before"));
+
       var failed =
           test.send(
               request -> request.path("/failed").timeout(Duration.ofSeconds(3)),
               HttpResponse.BodyHandlers.ofString());
+
       assertEquals(400, failed.statusCode());
       assertEquals(List.of(), failed.headers().allValues("Set-Cookie"));
-      var mapped =
-          test.send(
-              request ->
-                  request
-                      .path("/mapped")
-                      .timeout(Duration.ofSeconds(3))
-                      .header("Cookie", "incoming=value"),
-              HttpResponse.BodyHandlers.ofString());
+
+      var mapped = sendMappedRequestForEnforcesCookieResponseLifetimeAndErrorCleanup(test);
+
       assertEquals(409, mapped.statusCode());
       assertEquals(List.of("mapped=value; Path=/"), mapped.headers().allValues("Set-Cookie"));
+
       var head =
           test.send(
               request -> request.path("/head").timeout(Duration.ofSeconds(3)).method("HEAD"),
               HttpResponse.BodyHandlers.ofString());
+
       assertEquals(200, head.statusCode());
       assertEquals("", head.body());
       assertEquals(List.of("head=value; Path=/"), head.headers().allValues("Set-Cookie"));
     }
   }
 
-  @Test
-  void roundTripsAndDeletesThroughAClientCookieStore() throws Exception {
+  private HttpResponse<String> sendMappedRequestForEnforcesCookieResponseLifetimeAndErrorCleanup(
+      TestServer test) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/mapped")
+                .timeout(Duration.ofSeconds(3))
+                .header("Cookie", "incoming=value"),
+        HttpResponse.BodyHandlers.ofString());
+  }
 
-    app.routes().get("/set", (ignored17, response) -> response.cookie("id", "value"));
+  @Test
+  void roundTripsAndDeletesThroughClientCookieStore() throws Exception {
+
+    app.routes().get("/set", (ignoredRequest, response) -> response.cookie("id", "value"));
     app.routes()
         .get("/read", (request, response) -> response.text(request.cookie("id").orElse("missing")));
-    app.routes().get("/delete", (ignored18, response) -> response.removeCookie("id"));
+    app.routes().get("/delete", (ignoredRequest, response) -> response.removeCookie("id"));
 
     try (var test = TestServer.start(app, client -> client.cookieHandler(new CookieManager()))) {
       assertEquals(

@@ -1,12 +1,14 @@
+import io.github.suppierk.build.GoogleTextBlockFormatting
 import io.github.suppierk.build.StatementSpacingCheck
 
 buildscript {
 	dependencies {
-		classpath(platform('com.fasterxml.jackson:jackson-bom:2.22.4')) {
+		classpath 'io.github.suppierk:shoostr-build-logic'
+		classpath(platform('com.fasterxml.jackson:jackson-bom:2.23.0')) {
 			because 'Align Jib build dependencies with the patched Jackson version used by the project.'
 		}
 		constraints {
-			add('classpath', 'com.google.guava:guava:33.7.2-jre') {
+			add('classpath', 'com.google.guava:guava:33.8.0-jre') {
 				because 'Fix CVE-2026-102554 in the transitive Jib build dependency.'
 			}
 			add('classpath', 'org.apache.commons:commons-lang3:3.21.0') {
@@ -19,39 +21,48 @@ buildscript {
 plugins {
 	id 'java'
 	id 'checkstyle'
-	id 'com.diffplug.spotless' version '8.10.4'
-	id 'net.ltgt.errorprone' version '5.1.1' apply false
+	id 'com.diffplug.spotless' version '8.12.0'
+	id 'net.ltgt.errorprone' version '5.2.0' apply false
 	id 'net.ltgt.nullaway' version '3.3.0' apply false
-	id 'org.sonarqube' version '7.5.0.8588'
+	id 'org.sonarqube' version '7.6.0.18749'
 	id 'info.solidsoft.pitest' version '1.19.0' apply false
 	id 'com.google.cloud.tools.jib' version '3.5.4' apply false
 	id 'com.vanniktech.maven.publish.base' version '0.37.0' apply false
 }
 
 allprojects {
-	apply plugin: 'com.diffplug.spotless'
+	if (!projectDir.toPath().startsWith(rootProject.file('examples').toPath())) {
+		apply plugin: 'com.diffplug.spotless'
+
+		spotless {
+			groovyGradle { greclipse() }
+		}
+	}
 	apply plugin: 'checkstyle'
 	apply plugin: 'java'
 	apply from: rootProject.file('config/gradle/errorprone.gradle')
+	apply from: rootProject.file('config/gradle/constructor-fields.gradle')
 
 	java { toolchain { languageVersion = JavaLanguageVersion.of(21) } }
+
 	tasks.withType(JavaCompile).configureEach {
 		options.encoding = 'UTF-8'
 		options.release = 21
 		options.compilerArgs.add('-proc:none')
 	}
+
 	tasks.withType(Test).configureEach { useJUnitPlatform() }
+
 	repositories { mavenCentral() }
-	spotless {
-		groovyGradle { greclipse() }
-	}
+
 	checkstyle {
-		toolVersion = '14.3.0'
+		toolVersion = '14.4.0'
 		configFile = rootProject.file('config/checkstyle/checkstyle.xml')
+		maxWarnings = 0
 	}
 	dependencies {
 		constraints {
-			add('checkstyle', 'com.google.guava:guava:33.7.2-jre') {
+			add('checkstyle', 'com.google.guava:guava:33.8.0-jre') {
 				because 'Fix CVE-2026-102554 in Checkstyle tooling.'
 			}
 		}
@@ -59,14 +70,14 @@ allprojects {
 		testImplementation platform('org.junit:junit-bom:6.1.3')
 		testImplementation 'org.junit.jupiter:junit-jupiter'
 		testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
-		checkstyle 'com.puppycrawl.tools:checkstyle:14.3.0'
-		checkstyle files(rootProject.file('buildSrc/build/libs/buildSrc.jar'))
+		checkstyle 'com.puppycrawl.tools:checkstyle:14.4.0'
+		checkstyle 'io.github.suppierk:shoostr-build-logic'
 	}
 }
 
 project(':core') { dependencies { testImplementation gradleTestKit() } }
 
-subprojects {
+subprojects { targetProject ->
 	apply plugin: 'java'
 	if (name != 'microbenchmarks') {
 		apply from: rootProject.file('config/gradle/nullaway.gradle')
@@ -79,25 +90,25 @@ subprojects {
 		javaLauncher = javaToolchains.launcherFor(java.toolchain)
 	}
 
-	spotless {
-		java {
-			googleJavaFormat()
-			// Bump both Java custom-step versions when StatementSpacingCheck changes.
-			bumpThisNumberIfACustomStepChanges(2)
-			custom 'statement spacing', { String source ->
-				StatementSpacingCheck.format(source)
+	if (plugins.hasPlugin('com.diffplug.spotless')) {
+		spotless {
+			java {
+				googleJavaFormat()
+				// Bump both Java custom-step versions when a custom formatter changes.
+				bumpThisNumberIfACustomStepChanges(5)
+				custom 'statement spacing', { String source ->
+					StatementSpacingCheck.format(source)
+				}
+				custom 'Google text block indentation', { String source ->
+					GoogleTextBlockFormatting.format(source)
+				}
 			}
 		}
 	}
 
 	sourceSets.configureEach { sourceSet ->
-		def javaRules = tasks.register("checkstyle${sourceSet.name.capitalize()}JavaRules", Checkstyle) {
-			description = "Checks ${sourceSet.name} sources with the shared Java rules."
-			source sourceSet.allJava
-			classpath = sourceSet.output + sourceSet.compileClasspath
-			configFile = rootProject.file(
-					sourceSet.name == 'test' ? 'config/checkstyle/java-test.xml' : 'config/checkstyle/java.xml')
-		}
+		def javaRules = this.registerJavaRules(targetProject, sourceSet)
+
 		tasks.named("checkstyle${sourceSet.name.capitalize()}") {
 			dependsOn javaRules
 		}
@@ -107,20 +118,23 @@ subprojects {
 
 spotless {
 	groovyGradle {
-		target '*.gradle', 'buildSrc/*.gradle', 'config/gradle/*.gradle'
+		target '*.gradle', 'build-logic/*.gradle', 'config/gradle/*.gradle', 'core/src/test/resources/published-consumer/*.gradle'
 	}
 	java {
-		target 'buildSrc/src/**/*.java', 'config/checkstyle/tests/**/*.java'
+		target 'build-logic/src/**/*.java', 'config/checkstyle/tests/**/*.java', 'core/src/test/resources/published-consumer/**/*.java'
 		googleJavaFormat()
-		bumpThisNumberIfACustomStepChanges(2)
+		bumpThisNumberIfACustomStepChanges(5)
 		custom 'statement spacing', { String source ->
 			StatementSpacingCheck.format(source)
+		}
+		custom 'Google text block indentation', { String source ->
+			GoogleTextBlockFormatting.format(source)
 		}
 	}
 }
 
 def checkstyleBuildLogic = tasks.register('checkstyleBuildLogic', Checkstyle) {
-	source fileTree('buildSrc/src') { include '**/*.java' }
+	source fileTree('build-logic/src') { include '**/*.java' }
 	classpath = files()
 	configFile = file('config/checkstyle/java.xml')
 }
@@ -129,18 +143,40 @@ def checkstyleBuildLogicTests = tasks.register('checkstyleBuildLogicTests', Chec
 	classpath = files()
 	configFile = file('config/checkstyle/java-test.xml')
 }
+def googleProfile = resources.text.fromArchiveEntry(configurations.checkstyle.filter {
+	it.name == "checkstyle-${checkstyle.toolVersion}.jar"
+}, 'google_checks.xml', 'UTF-8')
+def checkstyleGoogle = tasks.register('checkstyleGoogle', Checkstyle) {
+	group = 'verification'
+	description = 'Checks Java sources with the Google profile bundled with Checkstyle.'
+	source fileTree('build-logic/src') { include '**/*.java' }
+	source fileTree('core/src/test/resources/published-consumer') {
+		include '**/*.java'
+	}
+	source sourceSets.main.allJava, sourceSets.test.allJava
+	classpath = files()
+	config = googleProfile
+	configProperties = ['org.checkstyle.google.severity': 'error']
+}
+subprojects {
+	if (!projectDir.toPath().startsWith(rootProject.file('examples').toPath())) {
+		sourceSets.configureEach { sourceSet ->
+			checkstyleGoogle.configure { source sourceSet.allJava }
+		}
+	}
+}
 sourceSets.test.java.srcDirs = ['config/checkstyle/tests']
 dependencies {
 	constraints {
-		add('testImplementation', 'com.google.guava:guava:33.7.2-jre') {
+		add('testImplementation', 'com.google.guava:guava:33.8.0-jre') {
 			because 'Fix CVE-2026-102554 in the Checkstyle policy-test dependency.'
 		}
 	}
-	testImplementation 'com.puppycrawl.tools:checkstyle:14.3.0'
-	testImplementation files('buildSrc/build/libs/buildSrc.jar')
+	testImplementation 'com.puppycrawl.tools:checkstyle:14.4.0'
+	testImplementation 'io.github.suppierk:shoostr-build-logic'
 }
 tasks.named('check') {
-	dependsOn checkstyleBuildLogic, checkstyleBuildLogicTests
+	dependsOn checkstyleBuildLogic, checkstyleBuildLogicTests, checkstyleGoogle
 }
 tasks.named('checkstyleMain') { dependsOn checkstyleBuildLogic }
 tasks.named('checkstyleTest') { dependsOn checkstyleBuildLogicTests }
@@ -156,16 +192,7 @@ tasks.named('assemble') {
 	}
 }
 
-def frameworkModules = [
-	'http',
-	'core',
-	'test',
-	'pac4j',
-	'micrometer',
-	'opentelemetry',
-	'openapi',
-	'mcp'
-]
+def frameworkModules = frameworkModuleNames()
 def frameworkProjects = frameworkModules.collect { project(":${it}") }
 ext.publicationLibraries = frameworkModules
 apply from: 'config/gradle/publication.gradle'
@@ -186,24 +213,28 @@ tasks.register('ciBuild') {
 	}
 }
 
-configure(frameworkProjects) {
-	apply plugin: 'info.solidsoft.pitest'
-
-	pitest {
-		pitestVersion = '1.30.1'
-		junit5PluginVersion = '1.2.3'
-		targetClasses = ['io.github.suppierk.*']
-		targetTests = ['io.github.suppierk.*']
-		mutators = ['DEFAULTS']
-		threads = 2
-		outputFormats = ['HTML', 'XML']
-		timestampedReports = true
+configure(frameworkProjects) { library ->
+	// PIT is a separate diagnostic. Its plugin still configures deprecated Gradle properties.
+	library.tasks.addRule('Pattern: pitest (runs mutation testing)') { taskName ->
+		if (taskName == 'pitest') {
+			library.pluginManager.apply('info.solidsoft.pitest')
+			def pitest = library.extensions.getByName('pitest')
+			pitest.pitestVersion.set('1.30.2')
+			pitest.junit5PluginVersion.set('1.2.3')
+			pitest.targetClasses.set(['io.github.suppierk.*'])
+			pitest.targetTests.set(['io.github.suppierk.*'])
+			pitest.mutators.set(['DEFAULTS'])
+			pitest.threads.set(2)
+			pitest.outputFormats.set(['HTML', 'XML'])
+			pitest.timestampedReports.set(true)
+			library.tasks.named('pitest').get()
+		}
 	}
 }
 
 configure(sonarProjects) {
 	apply plugin: 'jacoco'
-	jacoco { toolVersion = '0.8.15' }
+	jacoco { toolVersion = '0.8.16' }
 	tasks.named('jacocoTestReport', JacocoReport) {
 		dependsOn tasks.named('test')
 		mustRunAfter tasks.withType(Test)
@@ -360,17 +391,40 @@ configure([
 		dependsOn prepareConsumerRepository
 	}
 }
-project(':core') {
-	tasks.withType(Test).configureEach {
+gradle.projectsEvaluated {
+	def core = project(':core')
+	def http = project(':http')
+	core.tasks.withType(Test).configureEach {
 		dependsOn ':http:publishMavenJavaPublicationToConsumerVerificationRepository',
 				':core:publishMavenJavaPublicationToConsumerVerificationRepository'
 		inputs.dir(consumerRepository)
-		outputs.dir(layout.buildDirectory.dir('reports/published-consumer'))
-		doFirst {
-			systemProperty 'shoostr.core.version', project.version.toString()
-			systemProperty 'shoostr.http.version', project(':http').version.toString()
-			systemProperty 'shoostr.core.jar', tasks.named('jar').get().archiveFile.get().asFile.absolutePath
-			systemProperty 'shoostr.http.jar', project(':http').tasks.named('jar').get().archiveFile.get().asFile.absolutePath
-		}
+		outputs.dir(core.layout.buildDirectory.dir('reports/published-consumer'))
+		systemProperty 'shoostr.core.version', core.version.toString()
+		systemProperty 'shoostr.http.version', http.version.toString()
+		systemProperty 'shoostr.core.jar', core.tasks.named('jar', Jar).get().archiveFile.get().asFile.absolutePath
+		systemProperty 'shoostr.http.jar', http.tasks.named('jar', Jar).get().archiveFile.get().asFile.absolutePath
 	}
+}
+
+private def registerJavaRules(targetProject, sourceSet) {
+	return targetProject.tasks.register("checkstyle${sourceSet.name.capitalize()}JavaRules", Checkstyle) {
+		description = "Checks ${sourceSet.name} sources with the shared Java rules."
+		source sourceSet.allJava
+		classpath = sourceSet.output + sourceSet.compileClasspath
+		configFile = targetProject.rootProject.file(
+				sourceSet.name == 'test' ? 'config/checkstyle/java-test.xml' : 'config/checkstyle/java.xml')
+	}
+}
+
+private List<String> frameworkModuleNames() {
+	return [
+		'http',
+		'core',
+		'test',
+		'pac4j',
+		'micrometer',
+		'opentelemetry',
+		'openapi',
+		'mcp'
+	]
 }

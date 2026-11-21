@@ -40,6 +40,7 @@ class ServerMainTest {
             server.send(
                 request -> request.path("/static/" + location),
                 HttpResponse.BodyHandlers.ofString());
+
         assertEquals(200, response.statusCode());
         assertEquals(Files.readString(directory.resolve(location)), response.body());
         assertEquals(
@@ -50,6 +51,7 @@ class ServerMainTest {
         assertTrue(response.headers().firstValue("ETag").orElseThrow().startsWith("W/\""));
         assertTrue(response.headers().firstValue("Last-Modified").isPresent());
       }
+
       assertEquals(
           "false",
           server
@@ -101,7 +103,9 @@ class ServerMainTest {
   void rejectsUnresolvableAndRegularFileRootsBeforePublishingAnApplication() throws Exception {
     assertThrows(
         IllegalArgumentException.class, () -> ServerMain.fixture(1, directory.resolve("missing")));
+
     var file = Files.writeString(directory.resolve("file.bin"), "file");
+
     assertThrows(IllegalArgumentException.class, () -> ServerMain.fixture(1, file));
   }
 

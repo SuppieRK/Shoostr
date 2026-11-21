@@ -12,6 +12,6 @@ public final class ExampleApplication {
    * @throws Exception if configuration or startup fails
    */
   public static void main(String[] args) throws Exception {
-    ServerOptionsExample.application().start();
+    ServerOptionsExample.application("0.0.0.0", 8080).start();
   }
 }

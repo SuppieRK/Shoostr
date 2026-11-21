@@ -13,7 +13,7 @@ For every tracked repository change, including documentation and benchmark fixtu
 Check available Gradle dependency and plugin updates with
 `./gradlew dependencyUpdates --reject-pre-releases --output-formatter plain,json`.
 The root task covers this build's projects and writes `build/dependencyUpdates/report.txt`
-and `build/dependencyUpdates/report.json`; the separate `buildSrc` build is excluded. Review proposed upgrades
+and `build/dependencyUpdates/report.json`. The included `build-logic` build is excluded. Review proposed upgrades
 and verify vulnerability fixes separately. Use `./gradlew buildEnvironment` to inspect
 transitive buildscript dependencies when investigating build-tool findings.
 
@@ -25,6 +25,14 @@ build or CI tooling changes select all examples. An empty selection explicitly s
 containers. Failed selection or an unexpected skipped job fails the gate. Pushes to `main`
 and manual runs check every example. All example Java tests run in the ordinary build.
 External contributions do not need a replacement pull request on a maintainer branch.
+
+Never leave instance-field writes unqualified in constructors. Use `this.field`, or
+`EnclosingClass.this.field` when writing an enclosing instance's field. This includes
+assignments, compound assignments and increments or decrements, including constructor
+lambdas. Preserve other explicit receivers. The compiler-based `verifyConstructorFieldsMain`
+and `verifyConstructorFieldsTest` tasks run through `check` for every Java project,
+including build logic, examples and benchmarks. They resolve field bindings, so local
+variables, parameters and static fields are outside this rule. There are no suppressions.
 
 The validation job runs `ciBuild` and MCP conformance. `ciBuild` retains all project
 checks and assembles libraries and benchmark projects. Example compilation remains
@@ -244,11 +252,13 @@ Use JDK annotations only in application examples. Tests may also use JUnit 5 ann
 Add short in-code comments at the steps that need explanation: scope selection, ordering,
 ownership transfers, protocol choices, and failure handling. Explain why the example takes a
 step and what changes for the caller; do not narrate obvious Java syntax or add a comment quota.
-Use the fluent `Routes` and `TypedRoutes` methods for adjacent registrations on the same scope.
+Use the fluent `Routes` and `Routes.Typed` methods for adjacent registrations on the same scope.
 Keep child callbacks and setup boundaries clear, and preserve registration order. A chain returns
 the current scope, not a builder for the last endpoint; a scope-wide setting can affect earlier routes.
 
-Show `new Shoostr()` and the application's fluent configuration in the example. Do not wrap
+Keep application construction and fluent configuration visible in the complete example class.
+Use named methods to organize setup; keep ownership and setup order apparent. Show `new Shoostr()` or its configured constructor.
+Do not wrap
 that definition in setup `try`/`catch` blocks, cleanup flags, or equivalent scaffolding, and do
 not replace it with a route-only definition. Remove catches that only rethrow an exception or
 duplicate lifecycle cleanup. Keep task-specific error handling and ordinary test
@@ -277,7 +287,7 @@ It does not claim formal ASD-STE100 compliance or enforce its complete dictionar
 | W10 — Java fluency         | Explain task-specific choices and non-obvious contracts, not assertions, standard Java syntax, or automatic resource closure.                                                                           |
 | W11 — In-code explanations | Comment meaningful choices, scope, ordering, ownership, and failure paths where the reader encounters them. Keep already-clear code concise.                                                            |
 | W12 — Fluent registration  | Chain adjacent registrations on the same route scope, preserving call order and child boundaries. Keep setup and unrelated operations separate.                                                         |
-| W13 — Application setup    | Show application construction and fluent configuration directly, without setup catch blocks, cleanup scaffolding, or route-only substitutes.                                                            |
+| W13 — Application setup    | Keep application construction and fluent configuration visible in the complete class, using named methods under the code-readability rules while preserving ownership and setup order. Omit setup catch blocks, cleanup scaffolding and route-only substitutes. |
 | W14 — Concept order        | Explain framework-specific concepts before relying on them in claims or examples. Introduce an example's purpose and needed concepts before its code; a forward link does not replace that explanation. |
 
 Review prose in context instead of treating sentence length or automated word counts as proof of clarity.
@@ -371,11 +381,11 @@ Sources checked on 2026-09-26:
 
 Generation uses Swagger Core 3.0.0 models and its Jackson 3 OpenAPI 3.1 `Json31` serializer.
 UI CSS and bundle are extracted at build time from
-[`org.webjars:swagger-ui:5.34.0`](https://repo.maven.apache.org/maven2/org/webjars/swagger-ui/5.34.0/).
-The SHA-256 `a439f1bd0d0c69667e97fac5a8cdfb3cc599ed9bdb31fbf40602c648dd2e1a63`
+[`org.webjars:swagger-ui:5.35.1`](https://repo.maven.apache.org/maven2/org/webjars/swagger-ui/5.35.1/).
+The SHA-256 `745a149abc9f1f40cc65ae242dd8825a44946063fe6d6cd84cddb7d5d7933593`
 is enforced before packaging. The WebJar is build-only; it is not published as a runtime dependency.
 No CDN or runtime download is needed. Preserve the upstream Apache LICENSE/NOTICE and
-bundle third-party notices under `META-INF/licenses/swagger-ui-5.34.0/`.
+bundle third-party notices under `META-INF/licenses/swagger-ui-5.35.1/`.
 
 ## Example container validation
 

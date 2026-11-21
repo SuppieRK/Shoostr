@@ -4,7 +4,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
+import io.github.suppierk.shoostr.RadixRoutes.Endpoint;
 import io.github.suppierk.shoostr.http.HttpMethods;
+import java.lang.reflect.Constructor;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.RecordComponent;
 import java.nio.file.Files;
@@ -13,20 +15,35 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import nl.jqno.equalsverifier.EqualsVerifier;
+import nl.jqno.equalsverifier.api.SingleTypeEqualsVerifierApi;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 class FrozenRoutingEqualityTest {
   @TempDir Path directory;
 
-  @Test
-  void plainNodeSatisfiesEqualsAndHashCodeContract() throws Exception {
-    verifyNode(RadixRoutes.class);
+  private static RadixRoutes tree(Handler handler, String... paths) {
+    return RadixRoutes.from(
+        Arrays.stream(paths)
+            .map(path -> RadixRoutes.endpoint(HttpMethods.GET, path, handler))
+            .toList());
+  }
+
+  private static Object constructRecord(Class<?> type, Object... values)
+      throws ReflectiveOperationException {
+    var signature =
+        Arrays.stream(type.getRecordComponents())
+            .map(RecordComponent::getType)
+            .toArray(Class<?>[]::new);
+    var constructor = type.getDeclaredConstructor(signature);
+    constructor.setAccessible(true);
+
+    return constructor.newInstance(values);
   }
 
   @Test
-  void specialBranchSatisfiesEqualsAndHashCodeContract() throws Exception {
-    verifyNode(Class.forName(RadixRoutes.class.getName() + "$SpecialBranchRoutes"));
+  void plainNodeSatisfiesEqualsAndHashCodeContract() throws Exception {
+    verifyNode(RadixRoutes.class);
   }
 
   @Test
@@ -56,13 +73,22 @@ class FrozenRoutingEqualityTest {
             "/items/{id:[0-9]+}",
             "/files/{*tail}",
             "/other"));
+
+    var compact = tree(handler, "/items/{id:[0-9]}/details");
+    var expanded = tree(handler, "/items/{id:[0123456789]}/details");
+    assertNotEquals(compact, expanded);
+    assertEquals(compact, tree(handler, "/items/{id:[0-9]}/details"));
+    assertEquals(expanded, tree(handler, "/items/{id:[0123456789]}/details"));
   }
 
   @Test
   void concreteNodeKindsRemainUnequalEvenWithMatchingStoredFields()
       throws ReflectiveOperationException {
     Handler handler = (request, response) -> {};
-    var special = tree(handler, "/{id:[0-9]+}");
+    var root = tree(handler, "/{id:[0-9]+}");
+    var children = RadixRoutes.class.getDeclaredField("children");
+    children.setAccessible(true);
+    var special = ((RadixRoutes[]) children.get(root))[0];
     var fields = new Object[6];
     var names = List.of("edge", "label", "endpoints", "children", "parameter", "staticFiles");
     for (int index = 0; index < names.size(); index++) {
@@ -71,13 +97,7 @@ class FrozenRoutingEqualityTest {
       fields[index] = field.get(special);
     }
     var constructor =
-        RadixRoutes.class.getDeclaredConstructor(
-            String.class,
-            char.class,
-            Map.class,
-            RadixRoutes[].class,
-            RadixRoutes.class,
-            List.class);
+        createConstructorForConcreteNodeKindsRemainUnequalEvenWithMatchingStoredFields();
     constructor.setAccessible(true);
     var plain = constructor.newInstance(fields);
 
@@ -85,24 +105,32 @@ class FrozenRoutingEqualityTest {
     assertNotEquals(special, plain);
   }
 
+  private Constructor<RadixRoutes>
+      createConstructorForConcreteNodeKindsRemainUnequalEvenWithMatchingStoredFields()
+          throws NoSuchMethodException, SecurityException {
+    return RadixRoutes.class.getDeclaredConstructor(
+        String.class, char.class, Map.class, RadixRoutes[].class, RadixRoutes.class, List.class);
+  }
+
   @Test
   void rejectsMissingFrozenNodeCollectionsBeforePublication() throws ReflectiveOperationException {
-    var constructor =
-        RadixRoutes.class.getDeclaredConstructor(
-            String.class,
-            char.class,
-            Map.class,
-            RadixRoutes[].class,
-            RadixRoutes.class,
-            List.class);
+    var constructor = createConstructorForRejectsMissingFrozenNodeCollectionsBeforePublication();
     constructor.setAccessible(true);
     for (int component : new int[] {2, 3, 5}) {
       var values = new Object[] {"", (char) 0, Map.of(), new RadixRoutes[0], null, List.of()};
       values[component] = null;
+
       var failure =
           assertThrows(InvocationTargetException.class, () -> constructor.newInstance(values));
       assertEquals(NullPointerException.class, failure.getCause().getClass());
     }
+  }
+
+  private Constructor<RadixRoutes>
+      createConstructorForRejectsMissingFrozenNodeCollectionsBeforePublication()
+          throws NoSuchMethodException, SecurityException {
+    return RadixRoutes.class.getDeclaredConstructor(
+        String.class, char.class, Map.class, RadixRoutes[].class, RadixRoutes.class, List.class);
   }
 
   private void verifyNode(Class<?> type) throws Exception {
@@ -117,12 +145,8 @@ class FrozenRoutingEqualityTest {
     try (var firstMount = new StaticFiles("/first", firstDirectory);
         var secondMount = new StaticFiles("/second", secondDirectory)) {
       var verifier =
-          EqualsVerifier.forClass(type)
-              .usingGetClass()
-              .withPrefabValues(RadixRoutes.class, first, second)
-              .withPrefabValues(RadixRoutes.Endpoint.class, firstEndpoint, secondEndpoint)
-              .withPrefabValues(StaticFiles.class, firstMount, secondMount)
-              .withNonnullFields("endpoints", "children", "staticFiles");
+          createVerifierForVerifyNode(
+              type, first, second, firstEndpoint, secondEndpoint, firstMount, secondMount);
       if (type.equals(Class.forName(RadixRoutes.class.getName() + "$ConstrainedRoutes"))) {
         var constraint = Class.forName(RadixRoutes.class.getName() + "$Constraint");
         verifier =
@@ -130,30 +154,30 @@ class FrozenRoutingEqualityTest {
                 .withRedefinedSuperclass()
                 .withPrefabValuesForField(
                     "constraint",
-                    constructRecord(constraint, "[0-9]+", 1L, 2L, 1, 10, Map.of(firstEndpoint, 1)),
-                    constructRecord(constraint, "[a-z]+", 4L, 8L, 2, 20, Map.of(secondEndpoint, 2)))
-                .withNonnullFields("endpoints", "children", "staticFiles", "constraint");
+                    constructRecord(constraint, 1L, 2L, 1, 10),
+                    constructRecord(constraint, 4L, 8L, 2, 20))
+                .withPrefabValuesForField(
+                    "ranks", Map.of(firstEndpoint, 1), Map.of(firstEndpoint, 2))
+                .withNonnullFields("endpoints", "children", "staticFiles", "constraint", "ranks");
       }
 
       verifier.verify();
     }
   }
 
-  private static RadixRoutes tree(Handler handler, String... paths) {
-    return RadixRoutes.from(
-        Arrays.stream(paths)
-            .map(path -> RadixRoutes.endpoint(HttpMethods.GET, path, handler))
-            .toList());
-  }
-
-  private static Object constructRecord(Class<?> type, Object... values)
-      throws ReflectiveOperationException {
-    var signature =
-        Arrays.stream(type.getRecordComponents())
-            .map(RecordComponent::getType)
-            .toArray(Class<?>[]::new);
-    var constructor = type.getDeclaredConstructor(signature);
-    constructor.setAccessible(true);
-    return constructor.newInstance(values);
+  private SingleTypeEqualsVerifierApi<?> createVerifierForVerifyNode(
+      Class<?> type,
+      RadixRoutes first,
+      RadixRoutes second,
+      Endpoint firstEndpoint,
+      Endpoint secondEndpoint,
+      StaticFiles firstMount,
+      StaticFiles secondMount) {
+    return EqualsVerifier.forClass(type)
+        .usingGetClass()
+        .withPrefabValues(RadixRoutes.class, first, second)
+        .withPrefabValues(RadixRoutes.Endpoint.class, firstEndpoint, secondEndpoint)
+        .withPrefabValues(StaticFiles.class, firstMount, secondMount)
+        .withNonnullFields("endpoints", "children", "staticFiles");
   }
 }

@@ -12,6 +12,8 @@ import io.github.suppierk.shoostr.openapi.OpenApiOperation;
 import io.github.suppierk.shoostr.testing.TestServer;
 import io.swagger.v3.core.util.Json31;
 import io.swagger.v3.oas.models.media.JsonSchema;
+import java.io.Closeable;
+import java.io.IOException;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.util.Set;
@@ -24,13 +26,19 @@ import org.junit.jupiter.params.provider.ValueSource;
 class OpenApiDocumentExampleTest {
   @Test
   void servesAnExplicitSchemaAndComposedOperationWithoutScanningClasses() throws Exception {
+
     try (var test = TestServer.start(OpenApiDocumentExample.application())) {
       var response = test.send(request -> request.path("/openapi.json"));
+
       assertEquals(200, response.statusCode());
+
       var document = Json31.mapper().readTree(response.body());
+
       assertEquals("3.1.1", document.path("openapi").asString());
       assertEquals("Items API", document.path("info").path("title").asString());
+
       var operation = document.path("paths").path("/api/items/{id}").path("get");
+
       assertEquals("findItem", operation.path("operationId").asString());
       assertEquals("Find an item", operation.path("summary").asString());
       assertEquals("id", operation.path("parameters").get(0).path("name").asString());
@@ -55,7 +63,9 @@ class OpenApiDocumentExampleTest {
               .path("name")
               .path("type")
               .asString());
+
       var item = test.send(request -> request.path("/api/items/42"));
+
       assertEquals(200, item.statusCode());
       assertEquals("Item 42", Json31.mapper().readTree(item.body()).path("name").asString());
     }
@@ -63,21 +73,17 @@ class OpenApiDocumentExampleTest {
 
   @Test
   void documentsAndHandlesAnExplicitJsonRequestBody() throws Exception {
+
     try (var test = TestServer.start(OpenApiDocumentExample.application())) {
-      var response =
-          test.send(
-              request ->
-                  request
-                      .method("POST")
-                      .path("/api/items")
-                      .header("Content-Type", "application/json")
-                      .body("{\"name\":\"Notebook\"}".getBytes(StandardCharsets.UTF_8)),
-              HttpResponse.BodyHandlers.ofString());
+      var response = sendResponseForDocumentsAndHandlesAnExplicitJsonRequestBody(test);
+
       assertEquals(201, response.statusCode());
       assertEquals("Notebook", Json31.mapper().readTree(response.body()).path("name").asString());
+
       var document =
           Json31.mapper().readTree(test.send(request -> request.path("/openapi.json")).body());
       var operation = document.path("paths").path("/api/items").path("post");
+
       assertTrue(operation.path("requestBody").path("required").asBoolean());
       assertEquals(
           "#/components/schemas/Item",
@@ -93,6 +99,18 @@ class OpenApiDocumentExampleTest {
     }
   }
 
+  private HttpResponse<String> sendResponseForDocumentsAndHandlesAnExplicitJsonRequestBody(
+      TestServer test) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .method("POST")
+                .path("/api/items")
+                .header("Content-Type", "application/json")
+                .body("{\"name\":\"Notebook\"}".getBytes(StandardCharsets.UTF_8)),
+        HttpResponse.BodyHandlers.ofString());
+  }
+
   @ParameterizedTest
   @ValueSource(
       strings = {
@@ -104,6 +122,7 @@ class OpenApiDocumentExampleTest {
         "{\"name\":\"first\"}{\"name\":\"second\"}"
       })
   void validatesIncomingDataInTheHandlerRatherThanRelyingOnItsSchema(String body) throws Exception {
+
     try (var test = TestServer.start(OpenApiDocumentExample.application())) {
       assertEquals(
           400,
@@ -120,12 +139,16 @@ class OpenApiDocumentExampleTest {
 
   @Test
   void keepsSelectedOperationsInTheirOwnDocument() throws Exception {
+
     try (var test = TestServer.start(OpenApiDocumentExample.application())) {
       var response = test.send(request -> request.path("/internal-openapi.json"));
+
       assertEquals(200, response.statusCode());
+
       var internal = Json31.mapper().readTree(response.body());
-      var external =
+      final var external =
           Json31.mapper().readTree(test.send(request -> request.path("/openapi.json")).body());
+
       assertEquals("Operations API", internal.path("info").path("title").asString());
       assertTrue(internal.path("paths").has("/operations/status"));
       assertFalse(internal.path("paths").has("/api/items/{id}"));
@@ -145,40 +168,52 @@ class OpenApiDocumentExampleTest {
     var invocations = new AtomicInteger();
     var retained = new AtomicReference<OpenApiOperation>();
 
-    try (var app = new Shoostr().extensions(docs)) {
-      app.routes().get("/openapi.json", docs.handler());
-      app.routes()
-          .when(
-              () -> {
-                checks.incrementAndGet();
-                return false;
-              },
-              preview ->
-                  preview.get(
-                      "/preview",
-                      (ignored, response) -> {
-                        invocations.incrementAndGet();
-                        response.text("preview");
-                      },
-                      extensions -> retained.set(extensions.with(docs).summary("Preview"))));
+    {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        var first = test.send(request -> request.path("/openapi.json"));
-        assertEquals(200, first.statusCode());
-        var document = Json31.mapper().readTree(first.body());
-        assertTrue(document.path("paths").has("/preview"));
-        assertEquals(
-            "object",
-            document.path("components").path("schemas").path("Snapshot").path("type").asString());
-        assertEquals(0, checks.get());
-        assertEquals(0, invocations.get());
-        var configuration = retained.get();
-        assertThrows(IllegalStateException.class, () -> configuration.summary("Late change"));
-        assertArrayEquals(first.body(), test.send(request -> request.path("/openapi.json")).body());
-        assertEquals(0, checks.get());
-        assertEquals(404, test.send(request -> request.path("/preview")).statusCode());
-        assertEquals(1, checks.get());
-        assertEquals(0, invocations.get());
+      try (Closeable appCleanup = app::close) {
+        app.routes().get("/openapi.json", docs.handler());
+        app.routes()
+            .when(
+                () -> {
+                  checks.incrementAndGet();
+
+                  return false;
+                },
+                preview ->
+                    preview.get(
+                        "/preview",
+                        (ignored, response) -> {
+                          invocations.incrementAndGet();
+                          response.text("preview");
+                        },
+                        lifecycle ->
+                            retained.set(lifecycle.withExtension(docs).summary("Preview"))));
+
+        try (var test = TestServer.start(app)) {
+          var first = test.send(request -> request.path("/openapi.json"));
+
+          assertEquals(200, first.statusCode());
+
+          var document = Json31.mapper().readTree(first.body());
+
+          assertTrue(document.path("paths").has("/preview"));
+          assertEquals(
+              "object",
+              document.path("components").path("schemas").path("Snapshot").path("type").asString());
+          assertEquals(0, checks.get());
+          assertEquals(0, invocations.get());
+
+          var configuration = retained.get();
+
+          assertThrows(IllegalStateException.class, () -> configuration.summary("Late change"));
+          assertArrayEquals(
+              first.body(), test.send(request -> request.path("/openapi.json")).body());
+          assertEquals(0, checks.get());
+          assertEquals(404, test.send(request -> request.path("/preview")).statusCode());
+          assertEquals(1, checks.get());
+          assertEquals(0, invocations.get());
+        }
       }
     }
   }

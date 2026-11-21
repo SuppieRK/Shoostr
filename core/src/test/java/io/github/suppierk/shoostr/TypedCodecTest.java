@@ -7,6 +7,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.suppierk.shoostr.http.MediaType;
 import io.github.suppierk.shoostr.testing.TestServer;
+import java.io.Closeable;
+import java.io.IOException;
 import java.lang.reflect.Modifier;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
@@ -20,45 +22,52 @@ class TypedCodecTest {
   void decodesConcreteRequestAndEncodesFiniteResponse() throws Exception {
     var codec = new GreetingCodec();
 
-    try (var app = new Shoostr()) {
-      app.codec(codec)
-          .routes()
-          .post(
-              "/greeting",
-              (request, response) -> {
-                var greeting = request.body(Greeting.class);
-                response
-                    .status(201)
-                    .body(MediaType.APPLICATION_JSON, new Greeting("Hello " + greeting.name()));
-              });
+    {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        var result =
-            test.send(
-                request ->
-                    request
-                        .path("/greeting")
-                        .method("POST")
-                        .body("Alice".getBytes(StandardCharsets.UTF_8)),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(201, result.statusCode());
-        assertEquals("{\"name\":\"Hello Alice\"}", result.body());
-        assertEquals("application/json", result.headers().firstValue("Content-Type").orElseThrow());
+      try (Closeable appCleanup = app::close) {
+        app.codec(codec)
+            .routes()
+            .post(
+                "/greeting",
+                (request, response) -> {
+                  var greeting = request.body(Greeting.class);
+                  response
+                      .status(201)
+                      .body(MediaType.APPLICATION_JSON, new Greeting("Hello " + greeting.name()));
+                });
+
+        try (var test = TestServer.start(app)) {
+          var result = sendResultForDecodesConcreteRequestAndEncodesFiniteResponse(test);
+
+          assertEquals(201, result.statusCode());
+          assertEquals("{\"name\":\"Hello Alice\"}", result.body());
+          assertEquals(
+              "application/json", result.headers().firstValue("Content-Type").orElseThrow());
+        }
       }
     }
+  }
+
+  private HttpResponse<String> sendResultForDecodesConcreteRequestAndEncodesFiniteResponse(
+      TestServer test) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request.path("/greeting").method("POST").body("Alice".getBytes(StandardCharsets.UTF_8)),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @Test
   void permitsOnlyFrameworkOwnedFinalTypedSubclasses() {
     assertTrue(Request.class.isSealed());
     assertTrue(Response.class.isSealed());
-    assertArrayEquals(new Class<?>[] {TypedRequest.class}, Request.class.getPermittedSubclasses());
+    assertArrayEquals(new Class<?>[] {Request.Typed.class}, Request.class.getPermittedSubclasses());
     assertArrayEquals(
-        new Class<?>[] {TypedResponse.class}, Response.class.getPermittedSubclasses());
-    assertTrue(Modifier.isFinal(TypedRequest.class.getModifiers()));
-    assertTrue(Modifier.isFinal(TypedResponse.class.getModifiers()));
-    assertEquals(0, TypedRequest.class.getConstructors().length);
-    assertEquals(0, TypedResponse.class.getConstructors().length);
+        new Class<?>[] {Response.Typed.class}, Response.class.getPermittedSubclasses());
+    assertTrue(Modifier.isFinal(Request.Typed.class.getModifiers()));
+    assertTrue(Modifier.isFinal(Response.Typed.class.getModifiers()));
+    assertEquals(0, Request.Typed.class.getConstructors().length);
+    assertEquals(0, Response.Typed.class.getConstructors().length);
   }
 
   @Test
@@ -68,38 +77,53 @@ class TypedCodecTest {
         NoSuchMethodException.class,
         () -> Response.class.getMethod("body", MediaType.class, Object.class));
 
-    try (var app = new Shoostr()) {
-      app.routes()
-          .get(
-              "/ordinary",
-              (request, response) -> {
-                assertEquals(Request.class, request.getClass());
-                assertEquals(Response.class, response.getClass());
-                response.text("ordinary");
-              });
+    {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        assertEquals(200, test.send(request -> request.path("/ordinary")).statusCode());
+      try (Closeable appCleanup1 = app::close) {
+        app.routes()
+            .get(
+                "/ordinary",
+                (request, response) -> {
+                  assertEquals(Request.class, request.getClass());
+                  assertEquals(Response.class, response.getClass());
+
+                  response.text("ordinary");
+                });
+
+        try (var test = TestServer.start(app)) {
+          assertEquals(200, test.send(request -> request.path("/ordinary")).statusCode());
+        }
       }
     }
   }
 
   @Test
   void rejectsSecondCodecConfiguration() throws Exception {
-    try (var app = new Shoostr()) {
-      app.codec(new TestCodec());
-      var second = new TestCodec();
-      assertThrows(IllegalStateException.class, () -> app.codec(second));
+    {
+      var app = new Shoostr();
+
+      try (Closeable appCleanup2 = app::close) {
+        app.codec(new TestCodec());
+        var second = new TestCodec();
+
+        assertThrows(IllegalStateException.class, () -> app.codec(second));
+      }
     }
   }
 
   @Test
   void rejectsCodecConfigurationAfterStartup() throws Exception {
-    try (var app = new Shoostr();
-        var test = TestServer.start(app)) {
-      var codec = new TestCodec();
-      assertThrows(IllegalStateException.class, () -> app.codec(codec));
-      assertEquals(404, test.send(request -> request.path("/missing")).statusCode());
+    {
+      var app = new Shoostr();
+
+      try (Closeable appCleanup3 = app::close;
+          var test = TestServer.start(app)) {
+        var codec = new TestCodec();
+
+        assertThrows(IllegalStateException.class, () -> app.codec(codec));
+        assertEquals(404, test.send(request -> request.path("/missing")).statusCode());
+      }
     }
   }
 
@@ -108,20 +132,27 @@ class TypedCodecTest {
     var app = new Shoostr();
     app.close();
     var codec = new TestCodec();
+
     assertThrows(IllegalStateException.class, () -> app.codec(codec));
   }
 
   @Test
-  @SuppressWarnings("NullAway") // Deliberate invalid input at the public configuration interface.
+  @SuppressWarnings("NullAway")
+  // Deliberate invalid input at the public configuration interface.
   void rejectsNullCodecWithoutConsumingConfiguration() throws Exception {
-    try (var app = new Shoostr()) {
-      assertThrows(NullPointerException.class, () -> app.codec(null));
-      app.codec(new TestCodec())
-          .routes()
-          .get("/valid", (ignored, response) -> response.text("valid"));
+    {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        assertEquals(200, test.send(request -> request.path("/valid")).statusCode());
+      try (Closeable appCleanup4 = app::close) {
+        assertThrows(NullPointerException.class, () -> app.codec(null));
+
+        app.codec(new TestCodec())
+            .routes()
+            .get("/valid", (ignored, response) -> response.text("valid"));
+
+        try (var test = TestServer.start(app)) {
+          assertEquals(200, test.send(request -> request.path("/valid")).statusCode());
+        }
       }
     }
   }
@@ -133,8 +164,11 @@ class TypedCodecTest {
     app.codec(codec);
     app.close();
     app.close();
+
     assertEquals(0, codec.closes);
+
     codec.close();
+
     assertEquals(1, codec.closes);
   }
 
@@ -162,6 +196,7 @@ class TypedCodecTest {
     @Override
     public byte[] write(Object value) {
       var greeting = (Greeting) value;
+
       return ("{\"name\":\"" + greeting.name() + "\"}").getBytes(StandardCharsets.UTF_8);
     }
   }

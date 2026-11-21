@@ -6,8 +6,27 @@ import org.jspecify.annotations.Nullable;
 
 /** Shared exact origin parsing for independent browser policies. */
 final class Origins {
-  /** Prevents utility-class construction. */
-  private Origins() {}
+  private static final String HTTP = "http";
+  private static final String HTTPS = "https";
+
+  /**
+   * Prevents utility-class construction.
+   *
+   * @throws UnsupportedOperationException always
+   */
+  private Origins() {
+    throw new UnsupportedOperationException("No instance creation is available");
+  }
+
+  /**
+   * Recognizes HTTP and HTTPS scheme names without requiring canonical lowercase spelling.
+   *
+   * @param scheme URI scheme, or null for a relative reference
+   * @return whether the scheme is HTTP or HTTPS, ignoring case
+   */
+  static boolean isHttpScheme(@Nullable String scheme) {
+    return HTTP.equalsIgnoreCase(scheme) || HTTPS.equalsIgnoreCase(scheme);
+  }
 
   /**
    * Compares scheme, host and effective port using only already-established proxy trust.
@@ -21,8 +40,8 @@ final class Origins {
       return false;
     }
 
-    var source = URI.create(origin);
-    var target = effectiveOrigin(url);
+    final var source = URI.create(origin);
+    final var target = effectiveOrigin(url);
     if (target == null) {
       return false;
     }
@@ -39,7 +58,7 @@ final class Origins {
    * @return origin tuple, or null if the URL has no absolute authority
    */
   static @Nullable URI effectiveOrigin(String url) {
-    int schemeEnd = url.indexOf(HttpCharacters.COLON_SIGN);
+    final var schemeEnd = url.indexOf(HttpCharacters.COLON_SIGN);
     if (schemeEnd < 0
         || url.length() < schemeEnd + 3
         || url.charAt(schemeEnd + 1) != HttpCharacters.PATH_SEPARATOR
@@ -47,9 +66,9 @@ final class Origins {
       return null;
     }
 
-    int end = url.length();
-    for (int index = schemeEnd + 3; index < url.length(); index++) {
-      char value = url.charAt(index);
+    var end = url.length();
+    for (var index = schemeEnd + 3; index < url.length(); index++) {
+      final var value = url.charAt(index);
       if (value == HttpCharacters.PATH_SEPARATOR
           || value == HttpCharacters.QUERY_SEPARATOR
           || value == HttpCharacters.FRAGMENT_SEPARATOR) {
@@ -72,7 +91,7 @@ final class Origins {
       return uri.getPort();
     }
 
-    return "https".equalsIgnoreCase(uri.getScheme()) ? 443 : 80;
+    return HTTPS.equalsIgnoreCase(uri.getScheme()) ? 443 : 80;
   }
 
   /**
@@ -87,7 +106,7 @@ final class Origins {
     }
 
     var uri = URI.create(origin);
-    if ((!"http".equals(uri.getScheme()) && !"https".equals(uri.getScheme()))
+    if ((!HTTP.equals(uri.getScheme()) && !HTTPS.equals(uri.getScheme()))
         || uri.getHost() == null
         || uri.getRawUserInfo() != null
         || !uri.getRawPath().isEmpty()

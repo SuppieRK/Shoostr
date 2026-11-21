@@ -21,11 +21,12 @@ Register shutdown callbacks while configuring the application, before it starts.
 | Method        | When it runs                                                                                                                                               |
 | ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `start`       | Called by the owner to compile routes and start the listener. Successful startup freezes registration.                                                     |
-| `close`       | Called explicitly, by try-with-resources, or by the JVM shutdown hook. Startup failures after route compilation also invoke it; repeated calls do nothing. |
+| `close`       | Called explicitly or by the JVM shutdown hook. Startup failures after route compilation also invoke it; repeated calls do nothing. |
 | `beforeClose` | Registered callbacks run in registration order at the start of the first closure, before native graceful shutdown. Use them to signal long-lived work.     |
 | `afterClose`  | Registered callbacks run in reverse registration order after framework and extension cleanup. Use them for final disposal of application-owned resources.  |
 
 Construction registers one JVM shutdown hook, even before startup; explicit closure removes it, while `start()` adds no further hook.
+`Shoostr` does not implement `Closeable` or `AutoCloseable`; keep its lifetime with the application owner. `TestServer` remains a closeable fixture that owns application shutdown in HTTP tests.
 Both shutdown callback lists run synchronously on the closing thread, including when an application closes without starting, and a closed application cannot restart.
 
 Keep signalling callbacks prompt so they do not wait for the handlers they must release.
@@ -52,7 +53,7 @@ The signal releases waiting requests while their resources remain available, and
 
 `TestServer` is the HTTP test fixture: it starts the application on an available loopback port and owns its shutdown.
 
-The startup-failure fixture installs an `Extension<Void>`: a provider with application lifecycle callbacks and no route settings. Its `beforeStart()` callback deliberately fails so the test can check cleanup after startup fails.
+The startup-failure fixture activates an `ApplicationExtension<Object>` with application lifetime callbacks. Its `beforeStart()` callback deliberately fails so the test can check cleanup after startup fails.
 
 The live request test closes the application while a handler is waiting, then verifies its response and final cleanup.
 The other tests cover normal traffic, repeated closure, callback order before startup, cleanup after startup failure, and final resource disposal when a signalling callback throws `Error`.

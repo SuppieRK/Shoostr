@@ -15,8 +15,11 @@ import java.nio.channels.ServerSocketChannel;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
+import java.util.WeakHashMap;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Consumer;
 import org.eclipse.jetty.server.Server;
 import org.eclipse.jetty.server.ServerConnector;
@@ -25,10 +28,14 @@ import org.jspecify.annotations.Nullable;
 
 /** A real HTTP fixture owning the supplied application's lifetime on loopback. */
 public final class TestServer implements Closeable {
+  private static final Map<Shoostr, ReentrantLock> STARTUP_LOCKS = new WeakHashMap<>();
+  private static final ReentrantLock STARTUP_LOCKS_GUARD = new ReentrantLock();
+
   private final Shoostr app;
   private final URI baseUri;
   private final HttpClient client;
   private final @Nullable ServerSocketChannel reservation;
+  private final ReentrantLock closeLock;
   private volatile boolean closed;
 
   /**
@@ -45,7 +52,8 @@ public final class TestServer implements Closeable {
     this.baseUri = baseUri;
     this.client = client;
     this.reservation = reservation;
-    closed = false;
+    this.closeLock = new ReentrantLock();
+    this.closed = false;
   }
 
   /**
@@ -79,7 +87,7 @@ public final class TestServer implements Closeable {
    */
   public static TestServer start(Shoostr app, Consumer<HttpClient.Builder> configureClient)
       throws Exception {
-    return start(app, 0, 0, configureClient);
+    return startFixture(app, 0, 0, configureClient);
   }
 
   /**
@@ -93,7 +101,7 @@ public final class TestServer implements Closeable {
    * @throws NullPointerException if app is null
    */
   public static TestServer startOnPort(Shoostr app, int port) throws Exception {
-    return startOnPort(app, port, ignored2 -> {});
+    return startOnPort(app, port, ignoredClientBuilder -> {});
   }
 
   /**
@@ -114,7 +122,7 @@ public final class TestServer implements Closeable {
       throw new IllegalArgumentException("Fixed test port must be between 1 and 65535");
     }
 
-    return start(app, port, port, configureClient);
+    return startFixture(app, port, port, configureClient);
   }
 
   /**
@@ -131,7 +139,7 @@ public final class TestServer implements Closeable {
    */
   public static TestServer startOnPortRange(Shoostr app, int minimum, int maximum)
       throws Exception {
-    return startOnPortRange(app, minimum, maximum, ignored3 -> {});
+    return startOnPortRange(app, minimum, maximum, ignoredClientBuilder -> {});
   }
 
   /**
@@ -156,7 +164,7 @@ public final class TestServer implements Closeable {
           "Test port range must satisfy 1 <= minimum <= maximum <= 65535");
     }
 
-    return start(app, minimum, maximum, configureClient);
+    return startFixture(app, minimum, maximum, configureClient);
   }
 
   /**
@@ -169,61 +177,48 @@ public final class TestServer implements Closeable {
    * @return started fixture
    * @throws Exception if configuration or startup fails
    */
-  // S2445: use Shoostr's own monitor to keep eligibility, registration and start atomic.
-  @SuppressWarnings({"java:S1181", "java:S2445"}) // Cleanup must also run after Error.
-  private static TestServer start(
+  @SuppressWarnings("java:S1181") // Cleanup must also run after Error.
+  private static TestServer startFixture(
       Shoostr app, int minimum, int maximum, Consumer<HttpClient.Builder> configureClient)
       throws Exception {
     Objects.requireNonNull(app);
     Objects.requireNonNull(configureClient);
-    var connectors = new ArrayList<ServerConnector>();
-    var reservation = new AtomicReference<@Nullable ServerSocketChannel>();
-    var bindingBridge = new AtomicReference<@Nullable UncheckedIOException>();
-    synchronized (app) {
+    final var connectors = new ArrayList<ServerConnector>();
+    final var reservation = new AtomicReference<@Nullable ServerSocketChannel>();
+    final var bindingBridge = new AtomicReference<@Nullable UncheckedIOException>();
+    final var lock = startupLock(app);
+    lock.lock();
+
+    try {
       // Registration rejects ineligible apps before this fixture acquires ownership.
-      app.modifyServer(
-          server ->
-              configureListeners(server, minimum, maximum, connectors, reservation, bindingBridge));
+      app.modifyServer(server ->
+          configureListeners(server, minimum, maximum, connectors, reservation, bindingBridge));
 
       HttpClient client = null;
 
       try {
-        var builder =
-            HttpClient.newBuilder()
-                .cookieHandler(new CookieManager(null, CookiePolicy.ACCEPT_ORIGINAL_SERVER))
-                .followRedirects(HttpClient.Redirect.NEVER)
-                .proxy(HttpClient.Builder.NO_PROXY)
-                .connectTimeout(Duration.ofSeconds(3));
-        configureClient.accept(builder);
-        client = builder.build();
+        client = createClient(configureClient);
+
         app.start();
-        var boundPort = app.port();
-        var secure =
-            connectors.stream()
-                .anyMatch(
-                    listener ->
-                        listener.getLocalPort() == boundPort
-                            && listener.getConnectionFactories().stream()
-                                .anyMatch(SslConnectionFactory.class::isInstance));
+        final var boundPort = app.port();
+        final var secure = usesSecureListener(connectors, boundPort);
+
         return new TestServer(
             app,
             URI.create((secure ? "https" : "http") + "://127.0.0.1:" + boundPort + "/"),
             client,
             reservation.get());
       } catch (Exception | Error failure) {
-        try (var ignored4 = reservation.get();
-            app) {
-          if (client != null) {
-            closeClient(client);
-          }
+        try {
+          closeResources(app, client, reservation.get());
         } catch (Exception | Error cleanup) {
           failure.addSuppressed(cleanup);
         }
 
-        var bridge = bindingBridge.get();
+        final var bridge = bindingBridge.get();
         if (bridge != null && bridge.equals(failure)) {
-          var original = Objects.requireNonNull(bridge.getCause());
-          for (var cleanup : failure.getSuppressed()) {
+          final var original = Objects.requireNonNull(bridge.getCause());
+          for (final var cleanup : failure.getSuppressed()) {
             original.addSuppressed(cleanup);
           }
 
@@ -232,6 +227,25 @@ public final class TestServer implements Closeable {
 
         throw failure;
       }
+    } finally {
+      lock.unlock();
+    }
+  }
+
+  /**
+   * Finds the startup lock shared by attempts for the same application. The weak keys let the
+   * registry release applications after their owners do.
+   *
+   * @param app application supplied to the fixture
+   * @return lock for this application's startup attempts
+   */
+  private static ReentrantLock startupLock(Shoostr app) {
+    STARTUP_LOCKS_GUARD.lock();
+
+    try {
+      return STARTUP_LOCKS.computeIfAbsent(app, ignoredApp -> new ReentrantLock());
+    } finally {
+      STARTUP_LOCKS_GUARD.unlock();
     }
   }
 
@@ -257,7 +271,7 @@ public final class TestServer implements Closeable {
       throw new IllegalArgumentException("Fixed/range test ports require exactly one listener");
     }
 
-    for (var connector : server.getConnectors()) {
+    for (final var connector : server.getConnectors()) {
       if (!(connector instanceof ServerConnector listener) || listener.getLocalPort() > 0) {
         throw new IllegalArgumentException("TestServer requires unbound ServerConnector listeners");
       }
@@ -265,7 +279,7 @@ public final class TestServer implements Closeable {
       connectors.add(listener);
     }
 
-    for (var listener : connectors) {
+    for (final var listener : connectors) {
       listener.setHost("127.0.0.1");
       listener.setPort(minimum);
       listener.setInheritChannel(false);
@@ -294,108 +308,13 @@ public final class TestServer implements Closeable {
     try {
       bind(listener, minimum, maximum);
     } catch (IOException failure) {
-      var bridge = new UncheckedIOException("Could not bind requested test ports", failure);
+      final var bridge = new UncheckedIOException("Could not bind requested test ports", failure);
       bindingBridge.set(bridge);
       throw bridge;
     } finally {
       if (listener.getTransport() instanceof ServerSocketChannel channel) {
         reservation.set(channel);
       }
-    }
-  }
-
-  /**
-   * Sends one configured request and consumes its response as exact bytes, including error bodies.
-   *
-   * @param configure synchronous request configuration callback
-   * @return ordinary JDK response with a byte-array body
-   * @throws IOException if transport fails
-   * @throws InterruptedException if the calling thread is interrupted
-   * @throws NullPointerException if configure is null
-   * @throws IllegalStateException if the fixture is closed or no path is configured
-   */
-  public HttpResponse<byte[]> send(Consumer<TestRequest> configure)
-      throws IOException, InterruptedException {
-    return send(configure, HttpResponse.BodyHandlers.ofByteArray());
-  }
-
-  /**
-   * Sends one configured request using an explicit JDK body handler. The caller must consume or
-   * close returned streams and cancel subscriptions; fixture shutdown cancels outstanding work.
-   *
-   * @param configure synchronous request configuration callback
-   * @param bodyHandler explicit response consumption strategy
-   * @param <T> response body type
-   * @return ordinary JDK response
-   * @throws IOException if transport fails
-   * @throws InterruptedException if the calling thread is interrupted
-   * @throws NullPointerException if an argument is null
-   * @throws IllegalStateException if the fixture is closed or no path is configured
-   */
-  public <T> HttpResponse<T> send(
-      Consumer<TestRequest> configure, HttpResponse.BodyHandler<T> bodyHandler)
-      throws IOException, InterruptedException {
-    Objects.requireNonNull(configure);
-    Objects.requireNonNull(bodyHandler);
-    var request = new TestRequest(baseUri());
-    HttpRequest outgoing;
-
-    try {
-      configure.accept(request);
-      outgoing = request.build();
-    } finally {
-      request.finish();
-    }
-
-    return client.send(outgoing, bodyHandler);
-  }
-
-  /**
-   * Returns the actual loopback origin for browser debugging or independently owned native clients.
-   * Ordinary requests use {@link #send(Consumer)} instead of assembling URLs.
-   *
-   * @return base HTTP or HTTPS URI with a trailing slash
-   * @throws IllegalStateException if the server is closed
-   */
-  public URI baseUri() {
-    if (closed) {
-      throw new IllegalStateException("TestServer is closed");
-    }
-
-    app.port();
-    return baseUri;
-  }
-
-  /**
-   * Makes owned-client termination independently observable by the harness's lifetime tests.
-   *
-   * @return fixture-owned client while running
-   * @throws IllegalStateException if the fixture is closed
-   */
-  HttpClient httpClient() {
-    baseUri();
-    return client;
-  }
-
-  /**
-   * Cancels owned client work, then stops the application and releases its listener. Safe to call
-   * repeatedly. Waits at most three seconds for client termination, not indefinitely for a body.
-   * Application shutdown retains its native drain timeout and reports stop failures; it does not
-   * promise to finish caller-owned work or an uncooperative handler.
-   *
-   * @throws IOException if the application cannot stop cleanly
-   */
-  @Override
-  public synchronized void close() throws IOException {
-    if (closed) {
-      return;
-    }
-
-    closed = true;
-
-    try (var ignored5 = reservation;
-        app) {
-      closeClient(client);
     }
   }
 
@@ -411,7 +330,7 @@ public final class TestServer implements Closeable {
   private static void bind(ServerConnector listener, int minimum, int maximum) throws IOException {
     IOException firstFailure = null;
 
-    for (int port = minimum; port <= maximum; port++) {
+    for (var port = minimum; port <= maximum; port++) {
       listener.setPort(port);
 
       try {
@@ -448,6 +367,47 @@ public final class TestServer implements Closeable {
   }
 
   /**
+   * Determines the scheme from the connector that owns the bound port.
+   *
+   * @param connectors configured listener identities
+   * @param boundPort port selected during startup
+   * @return whether the bound connector supplies TLS
+   */
+  private static boolean usesSecureListener(List<ServerConnector> connectors, int boundPort) {
+    return connectors.stream()
+        .anyMatch(listener ->
+            listener.getLocalPort() == boundPort
+                && listener.getConnectionFactories().stream()
+                    .anyMatch(SslConnectionFactory.class::isInstance));
+  }
+
+  /**
+   * Creates the owned client inside the application's startup rollback scope.
+   *
+   * @param configureClient caller customization applied after fixture defaults
+   * @return the client immediately retained by the fixture's cleanup owner
+   */
+  private static HttpClient createClient(Consumer<HttpClient.Builder> configureClient) {
+    final var builder = clientProperties();
+    configureClient.accept(builder);
+
+    return builder.build();
+  }
+
+  /**
+   * Configures the isolated client defaults before caller customization.
+   *
+   * @return builder carrying the fixture transport and cookie policy
+   */
+  private static HttpClient.Builder clientProperties() {
+    return HttpClient.newBuilder()
+        .cookieHandler(new CookieManager(null, CookiePolicy.ACCEPT_ORIGINAL_SERVER))
+        .followRedirects(HttpClient.Redirect.NEVER)
+        .proxy(HttpClient.Builder.NO_PROXY)
+        .connectTimeout(Duration.ofSeconds(3));
+  }
+
+  /**
    * Cancels active exchanges before bounded shutdown so an unread body cannot stall cleanup.
    *
    * @param client owned JDK client
@@ -465,6 +425,125 @@ public final class TestServer implements Closeable {
     } catch (InterruptedException interrupted) {
       Thread.currentThread().interrupt();
       throw new IOException("Interrupted while closing HTTP test client", interrupted);
+    }
+  }
+
+  /**
+   * Sends one configured request and consumes its response as exact bytes, including error bodies.
+   *
+   * @param configure synchronous request configuration callback
+   * @return ordinary JDK response with a byte-array body
+   * @throws IOException if transport fails
+   * @throws InterruptedException if the calling thread is interrupted
+   * @throws NullPointerException if configure is null
+   * @throws IllegalStateException if the fixture is closed or no path is configured
+   */
+  public HttpResponse<byte[]> send(Consumer<TestRequest> configure)
+      throws IOException, InterruptedException {
+    return send(configure, HttpResponse.BodyHandlers.ofByteArray());
+  }
+
+  /**
+   * Sends one configured request using an explicit JDK body handler. The caller must consume or
+   * close returned streams and cancel subscriptions; fixture shutdown cancels outstanding work.
+   *
+   * @param configure synchronous request configuration callback
+   * @param bodyHandler explicit response consumption strategy
+   * @param <T> response body type
+   * @return ordinary JDK response
+   * @throws IOException if transport fails
+   * @throws InterruptedException if the calling thread is interrupted
+   * @throws NullPointerException if an argument is null
+   * @throws IllegalStateException if the fixture is closed or no path is configured
+   */
+  public <T> HttpResponse<T> send(
+      Consumer<TestRequest> configure, HttpResponse.BodyHandler<T> bodyHandler)
+      throws IOException, InterruptedException {
+    Objects.requireNonNull(configure);
+    Objects.requireNonNull(bodyHandler);
+    final var request = new TestRequest(baseUri());
+    HttpRequest outgoing;
+
+    try {
+      configure.accept(request);
+      outgoing = request.build();
+    } finally {
+      request.finish();
+    }
+
+    return client.send(outgoing, bodyHandler);
+  }
+
+  /**
+   * Returns the actual loopback origin for browser debugging or independently owned native clients.
+   * Ordinary requests use {@link #send(Consumer)} instead of assembling URLs.
+   *
+   * @return base HTTP or HTTPS URI with a trailing slash
+   * @throws IllegalStateException if the server is closed
+   */
+  public URI baseUri() {
+    if (closed) {
+      throw new IllegalStateException("TestServer is closed");
+    }
+
+    app.port();
+
+    return baseUri;
+  }
+
+  /**
+   * Makes owned-client termination independently observable by the harness's lifetime tests.
+   *
+   * @return fixture-owned client while running
+   * @throws IllegalStateException if the fixture is closed
+   */
+  HttpClient httpClient() {
+    baseUri();
+
+    return client;
+  }
+
+  /**
+   * Cancels owned client work, then stops the application and releases its listener. Safe to call
+   * repeatedly. Waits at most three seconds for client termination, not indefinitely for a body.
+   * Application shutdown retains its native drain timeout and reports stop failures; it does not
+   * promise to finish caller-owned work or an uncooperative handler.
+   *
+   * @throws IOException if the application cannot stop cleanly
+   */
+  @Override
+  public void close() throws IOException {
+    closeLock.lock();
+
+    try {
+      if (closed) {
+        return;
+      }
+
+      closed = true;
+
+      closeResources(app, client, reservation);
+    } finally {
+      closeLock.unlock();
+    }
+  }
+
+  /**
+   * Closes resources in ownership order after failed startup or normal fixture use.
+   *
+   * @param app owned application
+   * @param client owned client, or null if creation failed
+   * @param reservation listener reservation, or null if none was acquired
+   * @throws IOException if an owned resource cannot be closed cleanly
+   */
+  private static void closeResources(
+      Shoostr app, @Nullable HttpClient client, @Nullable ServerSocketChannel reservation)
+      throws IOException {
+    try (reservation;
+        Closeable application = app::close) {
+      if (client != null) {
+        closeClient(client);
+      }
     }
   }
 }

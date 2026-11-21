@@ -6,6 +6,7 @@ import io.github.suppierk.shoostr.RouteInfo;
 import io.github.suppierk.shoostr.Shoostr;
 import io.github.suppierk.shoostr.http.HttpMethods;
 import io.github.suppierk.shoostr.testing.TestServer;
+import java.io.Closeable;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -18,31 +19,35 @@ class RouteInfoTest {
     var conditions = new AtomicInteger();
     var facts = new ArrayList<RouteInfo>();
 
-    try (var app = new Shoostr()) {
-      app.routes(
-          routes ->
-              routes.path(
-                  "/api",
-                  group -> {
-                    group.get("/public", (ignored, ignored2) -> {});
-                    group.when(
-                        () -> conditions.incrementAndGet() > 0,
-                        conditional -> conditional.get("/private", (ignored3, ignored4) -> {}));
-                  },
-                  e -> {
-                    Consumer<RouteInfo> collect = facts::add;
-                    e.onRoute(collect);
-                  }));
+    {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        assertEquals(
-            List.of(
-                new RouteInfo(HttpMethods.GET, "/api/public", false),
-                new RouteInfo(HttpMethods.GET, "/api/private", true)),
-            facts);
-        assertEquals(0, conditions.get());
-        assertEquals(200, test.send(request -> request.path("/api/private")).statusCode());
-        assertEquals(1, conditions.get());
+      try (Closeable appCleanup = app::close) {
+        app.routes(routes ->
+            routes.path(
+                "/api",
+                group -> {
+                  group.get("/public", (ignored, ignoredResponse) -> {});
+                  group.when(
+                      () -> conditions.incrementAndGet() > 0,
+                      conditional ->
+                          conditional.get("/private", (ignoredRequest, ignoredResponse) -> {}));
+                },
+                lifecycle -> {
+                  Consumer<RouteInfo> collect = facts::add;
+                  lifecycle.onRoute(collect);
+                }));
+
+        try (var test = TestServer.start(app)) {
+          assertEquals(
+              List.of(
+                  new RouteInfo(HttpMethods.GET, "/api/public", false),
+                  new RouteInfo(HttpMethods.GET, "/api/private", true)),
+              facts);
+          assertEquals(0, conditions.get());
+          assertEquals(200, test.send(request -> request.path("/api/private")).statusCode());
+          assertEquals(1, conditions.get());
+        }
       }
     }
   }

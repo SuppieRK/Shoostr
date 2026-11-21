@@ -35,7 +35,7 @@ Jetty owns the upgraded session and releases its transport resources when the co
 The native factory performs its Origin check before returning the listener, following the same admission rule as [managed WebSockets](../managed/).
 HTTP CORS and CSRF do not protect this handshake; authenticate private endpoints separately, because neither Origin nor a negotiated subprotocol establishes identity.
 
-`http2()` also enables negotiated HTTP/2 extended CONNECT for registered WebSocket routes, while HTTP/1.1 GET upgrades remain available.
+Setting `options.setHttp2(true)` before application construction also enables negotiated HTTP/2 extended CONNECT for registered WebSocket routes, while HTTP/1.1 GET upgrades remain available.
 Only extended CONNECT with the `websocket` protocol enters that handshake path; ordinary CONNECT requests do not become WebSockets.
 The routing key remains GET for both transports, but a selected HTTP/2 request reports CONNECT through the public request and outcome APIs.
 

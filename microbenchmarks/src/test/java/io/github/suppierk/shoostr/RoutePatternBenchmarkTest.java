@@ -14,6 +14,33 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
 class RoutePatternBenchmarkTest {
+  private static Stream<Arguments> cases() {
+    return Stream.of(1, 100, 1000)
+        .flatMap(groups ->
+            Stream.of(
+                    "literal",
+                    "oneParameter",
+                    "twoParameters",
+                    "encodedParameter",
+                    "precedence",
+                    "fallback",
+                    "notFound",
+                    "wrongMethod",
+                    "catchAllNoRead",
+                    "catchAllRead",
+                    "catchAllFallback",
+                    "catchAllWrongMethod",
+                    "catchAllMiss",
+                    "regexNoRead",
+                    "regexRead",
+                    "regexFallback",
+                    "regexWrongMethod",
+                    "regexMiss")
+                .flatMap(workload ->
+                    Stream.of("reused", "fresh")
+                        .map(input -> Arguments.of(groups, workload, input))));
+  }
+
   @ParameterizedTest
   @MethodSource("cases")
   void everyQueryHasTheIntendedRouteAndDecodedValues(int groups, String workload, String input) {
@@ -22,6 +49,7 @@ class RoutePatternBenchmarkTest {
     fixture.workload = workload;
     fixture.input = input;
     fixture.setup();
+
     for (String path : fixture.paths) {
       var endpoint = fixture.router.match(path, fixture.method);
       if ("wrongMethod".equals(workload)
@@ -40,57 +68,39 @@ class RoutePatternBenchmarkTest {
             fixture.router.allowedMethods(path));
       } else {
         assertNotNull(endpoint);
+
         var segments = path.split("/");
         int group = Integer.parseInt(segments[3]);
         String patternSuffix =
-            switch (workload) {
-              case "literal" -> "/latest";
-              case "precedence" -> "/shadowed";
-              case "twoParameters" -> "/{id}/items/{itemId}";
-              case "fallback", "regexFallback" -> "/{id}/events";
-              case "catchAllNoRead", "catchAllRead", "catchAllFallback" -> "/{*tail}";
-              case "regexNoRead", "regexRead" -> "/{numericId:[0-9]+}";
-              default -> "/{id}";
-            };
+            createPatternSuffixForEveryQueryHasTheIntendedRouteAndDecodedValues(workload);
+
         assertEquals(
             "/api/resources/" + group + "/orders" + patternSuffix, endpoint.routePattern());
-        for (int i = 0; i < fixture.parameterNames.length; i++) {
+
+        for (int parameterIndex = 0;
+            parameterIndex < fixture.parameterNames.length;
+            parameterIndex++) {
           String value =
               "catchAllRead".equals(workload)
                   ? path.substring(path.indexOf("/orders/") + "/orders/".length())
-                  : URLDecoder.decode(segments[5 + i * 2], StandardCharsets.UTF_8);
-          assertEquals(value, endpoint.parameter(path, fixture.parameterNames[i]));
+                  : URLDecoder.decode(segments[5 + parameterIndex * 2], StandardCharsets.UTF_8);
+
+          assertEquals(value, endpoint.parameter(path, fixture.parameterNames[parameterIndex]));
         }
       }
     }
   }
 
-  private static Stream<Arguments> cases() {
-    return Stream.of(1, 100, 1000)
-        .flatMap(
-            groups ->
-                Stream.of(
-                        "literal",
-                        "oneParameter",
-                        "twoParameters",
-                        "encodedParameter",
-                        "precedence",
-                        "fallback",
-                        "notFound",
-                        "wrongMethod",
-                        "catchAllNoRead",
-                        "catchAllRead",
-                        "catchAllFallback",
-                        "catchAllWrongMethod",
-                        "catchAllMiss",
-                        "regexNoRead",
-                        "regexRead",
-                        "regexFallback",
-                        "regexWrongMethod",
-                        "regexMiss")
-                    .flatMap(
-                        workload ->
-                            Stream.of("reused", "fresh")
-                                .map(input -> Arguments.of(groups, workload, input))));
+  private String createPatternSuffixForEveryQueryHasTheIntendedRouteAndDecodedValues(
+      String workload) {
+    return switch (workload) {
+      case "literal" -> "/latest";
+      case "precedence" -> "/shadowed";
+      case "twoParameters" -> "/{id}/items/{itemId}";
+      case "fallback", "regexFallback" -> "/{id}/events";
+      case "catchAllNoRead", "catchAllRead", "catchAllFallback" -> "/{*tail}";
+      case "regexNoRead", "regexRead" -> "/{numericId:[0-9]+}";
+      default -> "/{id}";
+    };
   }
 }

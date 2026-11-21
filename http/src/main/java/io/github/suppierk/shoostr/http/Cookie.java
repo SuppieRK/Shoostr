@@ -77,6 +77,31 @@ public record Cookie(
   }
 
   /**
+   * Requires cookie octets rather than silently encoding arbitrary application strings.
+   *
+   * @param value proposed cookie value
+   */
+  private static void validateValue(String value) {
+    final var quoted =
+        value.length() >= 2
+            && value.charAt(0) == HttpCharacters.DOUBLE_QUOTE
+            && value.charAt(value.length() - 1) == HttpCharacters.DOUBLE_QUOTE;
+    final var end = quoted ? value.length() - 1 : value.length();
+    for (var index = quoted ? 1 : 0; index < end; index++) {
+      final var character = value.charAt(index);
+      if (character < HttpCharacters.EXCLAMATION_MARK
+          || character > HttpCharacters.TILDE
+          || character == HttpCharacters.DOUBLE_QUOTE
+          || character == HttpCharacters.COMMA_SIGN
+          || character == HttpCharacters.SEMICOLON_SIGN
+          || character == HttpCharacters.BACKSLASH) {
+        throw new IllegalArgumentException(
+            "Invalid cookie value; encode application data explicitly");
+      }
+    }
+  }
+
+  /**
    * Validates a root-relative ASCII cookie path.
    *
    * @param path cookie path
@@ -89,9 +114,11 @@ public record Cookie(
           "Cookie path must be root-relative without trailing whitespace");
     }
 
-    for (int index = 0; index < path.length(); index++) {
-      char character = path.charAt(index);
-      if (character < 0x20 || character > 0x7e || character == HttpCharacters.SEMICOLON_SIGN) {
+    for (var index = 0; index < path.length(); index++) {
+      final var character = path.charAt(index);
+      if (character < HttpCharacters.SPACE
+          || character > HttpCharacters.TILDE
+          || character == HttpCharacters.SEMICOLON_SIGN) {
         throw new IllegalArgumentException("Invalid cookie path");
       }
     }
@@ -108,7 +135,7 @@ public record Cookie(
       return null;
     }
 
-    var normalized =
+    final var normalized =
         (domain.startsWith(HttpCharacters.DOT_STRING) ? domain.substring(1) : domain)
             .toLowerCase(Locale.ROOT);
     if (normalized.length() > 253 || !validDomain(normalized)) {
@@ -116,6 +143,43 @@ public record Cookie(
     }
 
     return normalized;
+  }
+
+  /**
+   * Checks DNS labels in linear time, with the same ASCII and length rules as the domain syntax.
+   *
+   * @param value normalized domain
+   * @return whether every label is valid
+   */
+  private static boolean validDomain(String value) {
+    var labelStart = 0;
+    for (var index = 0; index <= value.length(); index++) {
+      if (index < value.length() && value.charAt(index) != HttpCharacters.DOT) {
+        final var character = value.charAt(index);
+        if (!asciiLetterOrDigit(character) && character != HttpCharacters.DASH) {
+          return false;
+        }
+
+        continue;
+      }
+
+      final var labelLength = index - labelStart;
+      if (labelLength < 1
+          || labelLength > 63
+          || !asciiLetterOrDigit(value.charAt(labelStart))
+          || !asciiLetterOrDigit(value.charAt(index - 1))) {
+        return false;
+      }
+
+      labelStart = index + 1;
+    }
+
+    return true;
+  }
+
+  /** Returns whether a character is an ASCII lowercase letter or decimal digit. */
+  private static boolean asciiLetterOrDigit(char character) {
+    return (character >= 'a' && character <= 'z') || (character >= '0' && character <= '9');
   }
 
   /**
@@ -133,8 +197,8 @@ public record Cookie(
       @Nullable String domain,
       boolean secure,
       @Nullable SameSite sameSite) {
-    boolean hostPrefix = name.regionMatches(true, 0, HOST_PREFIX, 0, HOST_PREFIX.length());
-    boolean securePrefix = name.regionMatches(true, 0, SECURE_PREFIX, 0, SECURE_PREFIX.length());
+    final var hostPrefix = name.regionMatches(true, 0, HOST_PREFIX, 0, HOST_PREFIX.length());
+    final var securePrefix = name.regionMatches(true, 0, SECURE_PREFIX, 0, SECURE_PREFIX.length());
     if (!secure && (sameSite == SameSite.NONE || hostPrefix || securePrefix)) {
       throw new IllegalArgumentException("Cookie policy requires Secure");
     }
@@ -155,7 +219,7 @@ public record Cookie(
       return null;
     }
 
-    var normalized = expires.truncatedTo(ChronoUnit.SECONDS);
+    final var normalized = expires.truncatedTo(ChronoUnit.SECONDS);
     if (normalized.isBefore(MIN_EXPIRY) || normalized.isAfter(MAX_EXPIRY)) {
       throw new IllegalArgumentException("Cookie expiry must be within years 1601 through 9999");
     }
@@ -182,12 +246,7 @@ public record Cookie(
    * @return field value without the header name
    */
   public String headerValue() {
-    var header =
-        new StringBuilder(name)
-            .append(HttpCharacters.EQUALS_SIGN)
-            .append(value)
-            .append("; Path=")
-            .append(path);
+    final var header = cookieHeader();
     if (domain != null) {
       header.append("; Domain=").append(domain);
     }
@@ -213,6 +272,19 @@ public record Cookie(
     }
 
     return header.toString();
+  }
+
+  /**
+   * Starts the cookie field with its name, value and configured attributes.
+   *
+   * @return mutable header text for the remaining attributes
+   */
+  private StringBuilder cookieHeader() {
+    return new StringBuilder(name)
+        .append(HttpCharacters.EQUALS_SIGN)
+        .append(value)
+        .append("; Path=")
+        .append(path);
   }
 
   /**
@@ -292,68 +364,6 @@ public record Cookie(
    */
   public Cookie expired() {
     return new Cookie(name, "", path, domain, 0, secure, httpOnly, sameSite, Instant.EPOCH);
-  }
-
-  /**
-   * Checks DNS labels in linear time, with the same ASCII and length rules as the domain syntax.
-   *
-   * @param value normalized domain
-   * @return whether every label is valid
-   */
-  private static boolean validDomain(String value) {
-    int labelStart = 0;
-    for (int index = 0; index <= value.length(); index++) {
-      if (index < value.length() && value.charAt(index) != HttpCharacters.DOT) {
-        char character = value.charAt(index);
-        if (!asciiLetterOrDigit(character) && character != HttpCharacters.DASH) {
-          return false;
-        }
-
-        continue;
-      }
-
-      int labelLength = index - labelStart;
-      if (labelLength < 1
-          || labelLength > 63
-          || !asciiLetterOrDigit(value.charAt(labelStart))
-          || !asciiLetterOrDigit(value.charAt(index - 1))) {
-        return false;
-      }
-
-      labelStart = index + 1;
-    }
-
-    return true;
-  }
-
-  /** Returns whether a character is an ASCII lowercase letter or decimal digit. */
-  private static boolean asciiLetterOrDigit(char character) {
-    return (character >= 'a' && character <= 'z') || (character >= '0' && character <= '9');
-  }
-
-  /**
-   * Requires cookie octets rather than silently encoding arbitrary application strings.
-   *
-   * @param value proposed cookie value
-   */
-  private static void validateValue(String value) {
-    boolean quoted =
-        value.length() >= 2
-            && value.charAt(0) == HttpCharacters.DOUBLE_QUOTE
-            && value.charAt(value.length() - 1) == HttpCharacters.DOUBLE_QUOTE;
-    int end = quoted ? value.length() - 1 : value.length();
-    for (int index = quoted ? 1 : 0; index < end; index++) {
-      char character = value.charAt(index);
-      if (character < 0x21
-          || character > 0x7e
-          || character == HttpCharacters.DOUBLE_QUOTE
-          || character == HttpCharacters.COMMA_SIGN
-          || character == HttpCharacters.SEMICOLON_SIGN
-          || character == HttpCharacters.BACKSLASH) {
-        throw new IllegalArgumentException(
-            "Invalid cookie value; encode application data explicitly");
-      }
-    }
   }
 
   /** Browser cross-site cookie policy; omission leaves the browser's default in effect. */

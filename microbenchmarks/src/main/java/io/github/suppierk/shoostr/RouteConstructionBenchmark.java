@@ -24,13 +24,18 @@ import org.openjdk.jmh.annotations.Warmup;
     value = 3,
     jvmArgsAppend = {"-Xms512m", "-Xmx512m", "-XX:+UseG1GC"})
 public class RouteConstructionBenchmark {
+  /** Number of routes registered by the fixture. */
   @Param({"5", "50", "500", "5000"})
   public int routeCount;
 
+  /** Path shape shared by the registered routes. */
   @Param({"shared"})
   public String shape;
 
   private List<RadixRoutes.Endpoint> registrations;
+
+  /** Creates a benchmark state for JMH. */
+  public RouteConstructionBenchmark() {}
 
   /**
    * Sorts registrations and constructs a complete immutable radix tree.

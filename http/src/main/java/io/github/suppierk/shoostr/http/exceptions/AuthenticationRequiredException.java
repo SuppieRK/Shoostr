@@ -1,5 +1,6 @@
 package io.github.suppierk.shoostr.http.exceptions;
 
+import io.github.suppierk.shoostr.http.HttpCharacters;
 import java.io.Serial;
 import java.util.Objects;
 
@@ -24,7 +25,10 @@ public final class AuthenticationRequiredException extends UnauthorizedException
   public AuthenticationRequiredException(String challenge) {
     final var value = Objects.requireNonNull(challenge);
     if (value.isBlank()
-        || value.chars().anyMatch(character -> character < 0x20 || character > 0x7e)) {
+        || value
+            .chars()
+            .anyMatch(character ->
+                character < HttpCharacters.SPACE || character > HttpCharacters.TILDE)) {
       throw new IllegalArgumentException("Invalid authentication challenge");
     }
 

@@ -14,11 +14,11 @@ import test from '../../../../../examples/12-lifecycle/src/test/java/io/github/s
 
 A request hook is a callback at a named point in HTTP processing, such as after route matching or before the handler. Application hooks apply across the application; local hooks apply to a selected route or group.
 
-Local configuration is supplied through `Extensions`, a built-in scope-configuration object. Its `lifecycle()` collector registers those callbacks without requiring an installed provider. A terminal observer instead receives `RequestOutcome`, a detached summary after application finalization and transport termination.
+Local configuration is supplied through `Lifecycle`, a built-in scope-configuration object. Register callbacks directly on it without creating an extension. A terminal observer instead receives `RequestOutcome`, a detached summary after application finalization and transport termination.
 
 This task follows one request through its phases and then examines what remains available at completion. Callback timing determines whether you may read or change a live request or response.
 
-Register application hooks on `Shoostr` before startup. For a route or group, register local hooks through the scope configuration's `lifecycle()` collector. These callbacks configure that scope's request handling directly.
+Register application hooks on `Shoostr` before startup. For a route or group, register local hooks directly on the supplied `Lifecycle`. These callbacks configure that scope's request handling.
 Each method registers a callback for the corresponding request phase:
 
 | Method                                         | When it runs                                                                                                                          |

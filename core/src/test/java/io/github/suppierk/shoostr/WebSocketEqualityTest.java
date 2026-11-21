@@ -6,7 +6,9 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.suppierk.shoostr.testing.TestServer;
+import java.io.Closeable;
 import java.net.URI;
+import java.net.URISyntaxException;
 import java.net.http.HttpClient;
 import java.net.http.WebSocket;
 import java.nio.charset.StandardCharsets;
@@ -16,11 +18,13 @@ import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
 import java.util.concurrent.FutureTask;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.locks.ReentrantLock;
 import nl.jqno.equalsverifier.EqualsVerifier;
 import nl.jqno.equalsverifier.Warning;
@@ -30,97 +34,6 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
 class WebSocketEqualityTest {
-  @ParameterizedTest
-  @ValueSource(booleans = {false, true})
-  void identifiesSeparateConnectionsAndRetainsHashesThroughMessagesAndClose(boolean typed)
-      throws Exception {
-    var opened = new LinkedBlockingQueue<WebSocketConnection>();
-    var closed = new LinkedBlockingQueue<WebSocketConnection>();
-    var hashes = new ConcurrentHashMap<Object, Integer>();
-    var connections = new ArrayList<WebSocketConnection>();
-    var clients = new ArrayList<WebSocket>();
-
-    try (var app = new Shoostr();
-        var client = HttpClient.newHttpClient();
-        var firstExecutor = Executors.newSingleThreadExecutor();
-        var secondExecutor = Executors.newSingleThreadExecutor()) {
-      if (typed) {
-        app.codec(codec("configured"));
-      }
-
-      app.routes()
-          .websocket(
-              "/socket",
-              socket ->
-                  socket
-                      .onOpen(
-                          connection -> {
-                            hashes.put(connection, connection.hashCode());
-                            var listener = listener(connection);
-                            hashes.put(listener, listener.hashCode());
-                            opened.add(connection);
-                          })
-                      .onText((connection, text) -> connection.send("echo:" + text))
-                      .onClose((connection, code, reason) -> closed.add(connection)));
-
-      try (var server = TestServer.start(app)) {
-        try {
-          for (int index = 0; index < 2; index++) {
-            var messages = new LinkedBlockingQueue<String>();
-            var nativeClient =
-                client
-                    .newWebSocketBuilder()
-                    .buildAsync(
-                        new URI("ws", server.baseUri().getRawAuthority(), "/socket", null, null),
-                        new WebSocket.Listener() {
-                          @Override
-                          public CompletionStage<?> onText(
-                              WebSocket socket, CharSequence text, boolean last) {
-                            messages.add(text.toString());
-                            return WebSocket.Listener.super.onText(socket, text, last);
-                          }
-                        })
-                    .get(3, TimeUnit.SECONDS);
-            clients.add(nativeClient);
-            var connection = opened.poll(3, TimeUnit.SECONDS);
-            assertNotNull(connection);
-            connections.add(connection);
-            nativeClient.sendText("same", true).get(3, TimeUnit.SECONDS);
-            assertEquals("echo:same", messages.poll(3, TimeUnit.SECONDS));
-          }
-          assertNotEquals(connections.get(0), connections.get(1));
-          if (typed) {
-            verifier(TypedWebSocketConnection.class, connections, firstExecutor, secondExecutor)
-                .verify();
-          } else {
-            verifier(WebSocketConnection.class, connections, firstExecutor, secondExecutor)
-                .withRedefinedSubclass(TypedWebSocketConnection.class)
-                .verify();
-          }
-
-          verifier(ManagedWebSocket.class, connections, firstExecutor, secondExecutor).verify();
-          verifier(WebSocketRuntime.class, connections, firstExecutor, secondExecutor).verify();
-          for (var nativeClient : clients) {
-            nativeClient.sendClose(WebSocket.NORMAL_CLOSURE, "done").get(3, TimeUnit.SECONDS);
-            var connection = closed.poll(3, TimeUnit.SECONDS);
-            assertNotNull(connection);
-          }
-        } finally {
-          clients.forEach(WebSocket::abort);
-        }
-      }
-    }
-
-    var retained = new HashSet<>(hashes.keySet());
-    for (var entry : hashes.entrySet()) {
-      assertEquals(entry.getKey(), entry.getKey());
-      assertEquals(entry.getValue().intValue(), entry.getKey().hashCode());
-      assertTrue(retained.remove(entry.getKey()));
-    }
-    assertTrue(retained.isEmpty());
-    assertTrue(closed.isEmpty());
-  }
-
   private static <T> SingleTypeEqualsVerifierApi<T> verifier(
       Class<T> type,
       List<WebSocketConnection> connections,
@@ -162,6 +75,7 @@ class WebSocketEqualityTest {
       throws ReflectiveOperationException {
     var field = WebSocketConnection.class.getDeclaredField("listener");
     field.setAccessible(true);
+
     return (ManagedWebSocket) field.get(connection);
   }
 
@@ -169,6 +83,7 @@ class WebSocketEqualityTest {
       throws ReflectiveOperationException {
     var field = WebSocketConnection.class.getDeclaredField("session");
     field.setAccessible(true);
+
     return (Session) field.get(connection);
   }
 
@@ -184,5 +99,111 @@ class WebSocketEqualityTest {
         return (marker + value).getBytes(StandardCharsets.UTF_8);
       }
     };
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void identifiesSeparateConnectionsAndRetainsHashesThroughMessagesAndClose(boolean typed)
+      throws Exception {
+    var opened = new LinkedBlockingQueue<WebSocketConnection>();
+    var closed = new LinkedBlockingQueue<WebSocketConnection>();
+    var hashes = new ConcurrentHashMap<Object, Integer>();
+    var connections = new ArrayList<WebSocketConnection>();
+    var clients = new ArrayList<WebSocket>();
+
+    {
+      var app = new Shoostr();
+
+      try (Closeable appCleanup = app::close;
+          var client = HttpClient.newHttpClient();
+          var firstExecutor = Executors.newSingleThreadExecutor();
+          var secondExecutor = Executors.newSingleThreadExecutor()) {
+        if (typed) {
+          app.codec(codec("configured"));
+        }
+
+        app.routes()
+            .websocket(
+                "/socket",
+                socket ->
+                    socket
+                        .onOpen(connection -> {
+                          hashes.put(connection, connection.hashCode());
+                          var listener = listener(connection);
+                          hashes.put(listener, listener.hashCode());
+                          opened.add(connection);
+                        })
+                        .onText((connection, text) -> connection.send("echo:" + text))
+                        .onClose((connection, code, reason) -> closed.add(connection)));
+
+        try (var server = TestServer.start(app)) {
+          try {
+            for (int index = 0; index < 2; index++) {
+              var messages = new LinkedBlockingQueue<String>();
+              var nativeClient = createNativeClientForConnectionIdentity(client, server, messages);
+              clients.add(nativeClient);
+              var connection = opened.poll(3, TimeUnit.SECONDS);
+
+              assertNotNull(connection);
+
+              connections.add(connection);
+              nativeClient.sendText("same", true).get(3, TimeUnit.SECONDS);
+
+              assertEquals("echo:same", messages.poll(3, TimeUnit.SECONDS));
+            }
+
+            assertNotEquals(connections.get(0), connections.get(1));
+
+            if (typed) {
+              verifier(WebSocketConnection.Typed.class, connections, firstExecutor, secondExecutor)
+                  .verify();
+            } else {
+              verifier(WebSocketConnection.class, connections, firstExecutor, secondExecutor)
+                  .withRedefinedSubclass(WebSocketConnection.Typed.class)
+                  .verify();
+            }
+
+            verifier(ManagedWebSocket.class, connections, firstExecutor, secondExecutor).verify();
+            verifier(WebSocketRuntime.class, connections, firstExecutor, secondExecutor).verify();
+            for (var nativeClient : clients) {
+              nativeClient.sendClose(WebSocket.NORMAL_CLOSURE, "done").get(3, TimeUnit.SECONDS);
+              var connection = closed.poll(3, TimeUnit.SECONDS);
+
+              assertNotNull(connection);
+            }
+          } finally {
+            clients.forEach(WebSocket::abort);
+          }
+        }
+      }
+    }
+
+    var retained = new HashSet<>(hashes.keySet());
+    for (var entry : hashes.entrySet()) {
+      assertEquals(entry.getKey(), entry.getKey());
+      assertEquals(entry.getValue().intValue(), entry.getKey().hashCode());
+      assertTrue(retained.remove(entry.getKey()));
+    }
+
+    assertTrue(retained.isEmpty());
+    assertTrue(closed.isEmpty());
+  }
+
+  private WebSocket createNativeClientForConnectionIdentity(
+      HttpClient client, TestServer server, LinkedBlockingQueue<String> messages)
+      throws InterruptedException, ExecutionException, TimeoutException, URISyntaxException {
+    return client
+        .newWebSocketBuilder()
+        .buildAsync(
+            new URI("ws", server.baseUri().getRawAuthority(), "/socket", null, null),
+            new WebSocket.Listener() {
+              @Override
+              public CompletionStage<?> onText(WebSocket socket, CharSequence text, boolean last) {
+                messages.add(text.toString());
+
+                return WebSocket.Listener.super.onText(socket, text, last);
+              }
+            })
+        .get(3, TimeUnit.SECONDS);
   }
 }

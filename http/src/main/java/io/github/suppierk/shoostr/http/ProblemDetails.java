@@ -60,6 +60,18 @@ public final class ProblemDetails {
   }
 
   /**
+   * Checks that a supplied number is in HTTP's status code range.
+   *
+   * @param status supplied status
+   * @throws IllegalArgumentException if status is outside 100 through 599
+   */
+  private static void validateStatus(int status) {
+    if (status < 100 || status > 599) {
+      throw new IllegalArgumentException("HTTP status must be between 100 and 599");
+    }
+  }
+
+  /**
    * Returns the supplied type; absent type implicitly means about:blank under RFC 9457.
    *
    * @return type identifier, or null if absent
@@ -122,7 +134,7 @@ public final class ProblemDetails {
    * @return fresh mutable top-level map
    */
   public Map<String, @Nullable Object> toMap() {
-    var result = new LinkedHashMap<String, @Nullable Object>();
+    final var result = new LinkedHashMap<String, @Nullable Object>();
     if (type != null) {
       result.put("type", type.toASCIIString());
     }
@@ -144,6 +156,7 @@ public final class ProblemDetails {
     }
 
     result.putAll(extensions);
+
     return result;
   }
 
@@ -174,79 +187,14 @@ public final class ProblemDetails {
     return Objects.hash(type, title, status, detail, instance, extensions);
   }
 
-  /**
-   * Copies map values and list elements recursively, leaving other objects and keys untouched.
-   *
-   * @param value supplied extension value
-   * @param ancestors containers on the current traversal path
-   * @return structurally copied value, or the original non-container reference
-   * @throws IllegalArgumentException if map/list values contain a cycle or map entries collapse
-   *     under ordinary key equality
-   */
-  private static @Nullable Object copyValue(@Nullable Object value, Set<Object> ancestors) {
-    if (value instanceof Map<?, ?> map) {
-      enterContainer(map, ancestors);
-
-      try {
-        var copy = new LinkedHashMap<@Nullable Object, @Nullable Object>();
-        map.forEach((key, nested) -> copy.put(key, copyValue(nested, ancestors)));
-        if (copy.size() != map.size()) {
-          throw new IllegalArgumentException(
-              "Custom member map keys must not collapse when copied");
-        }
-
-        return Collections.unmodifiableMap(copy);
-      } finally {
-        ancestors.remove(map);
-      }
-    }
-
-    if (value instanceof List<?> list) {
-      enterContainer(list, ancestors);
-
-      try {
-        return list.stream().map(nested -> copyValue(nested, ancestors)).toList();
-      } finally {
-        ancestors.remove(list);
-      }
-    }
-
-    return value;
-  }
-
-  /**
-   * Rejects repeated identities on one traversal path without rejecting shared acyclic values.
-   *
-   * @param container container being entered
-   * @param ancestors containers on the current path
-   * @throws IllegalArgumentException if the container is already an ancestor
-   */
-  private static void enterContainer(Object container, Set<Object> ancestors) {
-    if (!ancestors.add(container)) {
-      throw new IllegalArgumentException("Custom member map/list values must not contain cycles");
-    }
-  }
-
-  /**
-   * Checks that a supplied number is in HTTP's status code range.
-   *
-   * @param status supplied status
-   * @throws IllegalArgumentException if status is outside 100 through 599
-   */
-  private static void validateStatus(int status) {
-    if (status < 100 || status > 599) {
-      throw new IllegalArgumentException("HTTP status must be between 100 and 599");
-    }
-  }
-
   /** Builds problem data without selecting a response status or encoder. */
   public static final class Builder {
+    private final Map<String, @Nullable Object> extensions;
     private @Nullable URI type;
     private @Nullable String title;
     private @Nullable Integer status;
     private @Nullable String detail;
     private @Nullable URI instance;
-    private final Map<String, @Nullable Object> extensions;
 
     /** Starts with every member absent. */
     private Builder() {
@@ -256,6 +204,59 @@ public final class ProblemDetails {
       this.detail = null;
       this.instance = null;
       this.extensions = new LinkedHashMap<>();
+    }
+
+    /**
+     * Copies map values and list elements recursively, leaving other objects and keys untouched.
+     *
+     * @param value supplied extension value
+     * @param ancestors containers on the current traversal path
+     * @return structurally copied value, or the original non-container reference
+     * @throws IllegalArgumentException if map/list values contain a cycle or map entries collapse
+     *     under ordinary key equality
+     */
+    private static @Nullable Object copyValue(@Nullable Object value, Set<Object> ancestors) {
+      if (value instanceof Map<?, ?> map) {
+        enterContainer(map, ancestors);
+
+        try {
+          final var copy = new LinkedHashMap<@Nullable Object, @Nullable Object>();
+          map.forEach((key, nested) -> copy.put(key, copyValue(nested, ancestors)));
+          if (copy.size() != map.size()) {
+            throw new IllegalArgumentException(
+                "Custom member map keys must not collapse when copied");
+          }
+
+          return Collections.unmodifiableMap(copy);
+        } finally {
+          ancestors.remove(map);
+        }
+      }
+
+      if (value instanceof List<?> list) {
+        enterContainer(list, ancestors);
+
+        try {
+          return list.stream().map(nested -> copyValue(nested, ancestors)).toList();
+        } finally {
+          ancestors.remove(list);
+        }
+      }
+
+      return value;
+    }
+
+    /**
+     * Rejects repeated identities on one traversal path without rejecting shared acyclic values.
+     *
+     * @param container container being entered
+     * @param ancestors containers on the current path
+     * @throws IllegalArgumentException if the container is already an ancestor
+     */
+    private static void enterContainer(Object container, Set<Object> ancestors) {
+      if (!ancestors.add(container)) {
+        throw new IllegalArgumentException("Custom member map/list values must not contain cycles");
+      }
     }
 
     /**
@@ -337,7 +338,7 @@ public final class ProblemDetails {
         throw new IllegalArgumentException("Custom member must not replace a standard member");
       }
 
-      var copy = copyValue(value, Collections.newSetFromMap(new IdentityHashMap<>()));
+      final var copy = copyValue(value, Collections.newSetFromMap(new IdentityHashMap<>()));
       extensions.put(name, copy);
       return this;
     }

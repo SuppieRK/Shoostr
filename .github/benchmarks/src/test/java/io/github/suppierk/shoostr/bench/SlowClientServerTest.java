@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.io.IOException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.Socket;
@@ -14,6 +15,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Predicate;
 import org.junit.jupiter.api.Test;
@@ -22,7 +24,7 @@ import org.junit.jupiter.api.Timeout;
 @Timeout(15)
 class SlowClientServerTest {
   @Test
-  void servesHealthyRequestsWhileABodyIsIncompleteAndRecoversAfterItsClientDisconnects()
+  void servesHealthyRequestsWhileBodyIsIncompleteAndRecoversAfterItsClientDisconnects()
       throws Exception {
     try (var server = new SlowClientServer(0);
         var client = HttpClient.newHttpClient()) {
@@ -48,6 +50,7 @@ class SlowClientServerTest {
                     && state.contains("\"completed\":0"));
 
         var healthy = get(client, server.port(), "/healthy");
+
         assertEquals(200, healthy.statusCode());
         assertEquals("healthy", healthy.body());
       }
@@ -61,6 +64,7 @@ class SlowClientServerTest {
                   && state.contains("\"connections\":1")
                   && state.contains("\"admitted\":1")
                   && state.contains("\"completed\":1"));
+
       assertEquals("healthy", get(client, server.port(), "/healthy").body());
     }
   }
@@ -70,12 +74,7 @@ class SlowClientServerTest {
     try (var client = HttpClient.newHttpClient();
         var server = new SlowClientServer(0)) {
       server.start();
-      var blocked =
-          client.sendAsync(
-              HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + server.port() + "/blocked"))
-                  .timeout(Duration.ofSeconds(10))
-                  .build(),
-              HttpResponse.BodyHandlers.ofString());
+      var blocked = sendBlockedRequest(client, server);
 
       try {
         awaitState(
@@ -83,29 +82,43 @@ class SlowClientServerTest {
             server.port(),
             state ->
                 state.contains("\"active_blocked\":1") && state.contains("\"active_exchanges\":1"));
+
         assertFalse(blocked.isDone());
+
         var release =
-            client.send(
-                HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + server.port() + "/release"))
-                    .timeout(Duration.ofSeconds(1))
-                    .POST(HttpRequest.BodyPublishers.noBody())
-                    .build(),
-                HttpResponse.BodyHandlers.ofString());
+            sendReleaseRequestForReleasesBlockedWorkAndRecoversWithoutRestartingTheListener(
+                client, server);
+
         assertEquals(200, release.statusCode());
         assertEquals("released", release.body());
+
         var response = blocked.get(1, TimeUnit.SECONDS);
+
         assertEquals(200, response.statusCode());
         assertEquals("released", response.body());
+
         awaitState(
             client,
             server.port(),
             state ->
                 state.contains("\"active_blocked\":0") && state.contains("\"active_exchanges\":0"));
+
         assertEquals("healthy", get(client, server.port(), "/healthy").body());
       } finally {
         blocked.cancel(true);
       }
     }
+  }
+
+  private HttpResponse<String>
+      sendReleaseRequestForReleasesBlockedWorkAndRecoversWithoutRestartingTheListener(
+          HttpClient client, SlowClientServer server) throws IOException, InterruptedException {
+    return client.send(
+        HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + server.port() + "/release"))
+            .timeout(Duration.ofSeconds(1))
+            .POST(HttpRequest.BodyPublishers.noBody())
+            .build(),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @Test
@@ -115,14 +128,11 @@ class SlowClientServerTest {
       server.start();
       for (var cycle = 0; cycle < 2; cycle++) {
         var armed = post(client, server.port(), "/arm");
+
         assertEquals(200, armed.statusCode());
         assertEquals("armed", armed.body());
-        var blocked =
-            client.sendAsync(
-                HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + server.port() + "/blocked"))
-                    .timeout(Duration.ofSeconds(10))
-                    .build(),
-                HttpResponse.BodyHandlers.ofString());
+
+        var blocked = sendBlockedRequest(client, server);
 
         try {
           awaitState(
@@ -131,13 +141,17 @@ class SlowClientServerTest {
               state ->
                   state.contains("\"active_blocked\":1")
                       && state.contains("\"active_exchanges\":1"));
+
           assertEquals(409, post(client, server.port(), "/arm").statusCode());
           assertFalse(blocked.isDone());
           assertEquals("released", post(client, server.port(), "/release").body());
           assertEquals("released", post(client, server.port(), "/release").body());
+
           var response = blocked.get(1, TimeUnit.SECONDS);
+
           assertEquals(200, response.statusCode());
           assertEquals("released", response.body());
+
           awaitState(
               client,
               server.port(),
@@ -153,12 +167,22 @@ class SlowClientServerTest {
     }
   }
 
+  private CompletableFuture<HttpResponse<String>> sendBlockedRequest(
+      HttpClient client, SlowClientServer server) {
+    return client.sendAsync(
+        HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + server.port() + "/blocked"))
+            .timeout(Duration.ofSeconds(10))
+            .build(),
+        HttpResponse.BodyHandlers.ofString());
+  }
+
   @Test
-  void reportsEffectiveDefaultProtectionsWithoutInstallingARatePolicy() throws Exception {
+  void reportsEffectiveDefaultProtectionsWithoutInstallingRatePolicy() throws Exception {
     try (var client = HttpClient.newHttpClient();
         var server = new SlowClientServer(0)) {
       server.start();
       var result = get(client, server.port(), "/configuration");
+
       assertEquals(200, result.statusCode());
       assertTrue(result.body().contains("connector_idle_timeout_ms=[30000]"));
       assertTrue(result.body().contains("max_request_bytes=1048576"));
@@ -176,7 +200,9 @@ class SlowClientServerTest {
         .until(
             () -> {
               var response = get(client, port, "/state");
+
               assertEquals(200, response.statusCode());
+
               return response.body();
             },
             expected);

@@ -31,7 +31,7 @@ public final class JsonCodecExample {
                 routes
                     .exception(
                         BadRequestException.class,
-                        (ignored, ignored2, response) ->
+                        (ignored, ignoredRequest, response) ->
                             response
                                 .status(400)
                                 // Error bytes bypass the codec, which only supports the User class.
@@ -48,8 +48,9 @@ public final class JsonCodecExample {
                                 .body(MediaType.APPLICATION_JSON, request.body(User.class)))
                     .get(
                         "/help",
-                        (ignored3, response) ->
+                        (ignoredTypedRequest, response) ->
                             response.text("Send a JSON object with a nonblank name")));
+
     return app;
   }
 
@@ -82,7 +83,7 @@ public final class JsonCodecExample {
     /** Configures the mapper before concurrent use. */
     private UserCodec() {
       // Configure the shared mapper once before concurrent handlers can use it.
-      mapper = new ObjectMapper().enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
+      this.mapper = new ObjectMapper().enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
     }
 
     /**
@@ -105,7 +106,6 @@ public final class JsonCodecExample {
       JsonNode tree;
 
       // Classify recognized input errors as 400; unexpected I/O failures remain server failures.
-
       try {
         tree = mapper.readTree(source);
       } catch (JsonProcessingException failure) {

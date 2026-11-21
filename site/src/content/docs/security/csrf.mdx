@@ -14,11 +14,11 @@ import test from '../../../../../examples/14-security/src/test/java/io/github/su
 
 Cross-Site Request Forgery (CSRF) protection checks that a browser's state-changing request carries proof associated with its session. This is relevant when the browser sends authentication cookies automatically; the session cookie alone is not that proof.
 
-A native HTTP session stores state across requests. The installed `Csrf` provider adds the proof check to selected routes, using the built-in `Extensions` scope-configuration object to choose that provider. This task establishes the session dependency before protecting cookie-backed writes.
+A native HTTP session stores state across requests. The `Csrf` provider adds the proof check to selected routes, using the built-in `Lifecycle` scope-configuration object to choose that instance. This task establishes the session dependency before protecting cookie-backed writes.
 
 The example uses `BadRequestException` for application input that must receive `400`; the CSRF provider separately decides whether the proof permits a write.
 
-Enable [native sessions](../sessions/), register one `Csrf` provider and select it with `extensions.with(csrf)` on the relevant browser routes. Application defaults must be selected before routes are registered. Use `without(csrf)` only for deliberate exclusions. Inheritance deduplicates the selected owner; even after exclusion, a child cannot replace it with a different instance. Startup fails for a protected endpoint without sessions instead of silently enabling session management.
+Enable [native sessions](../sessions/), create one `Csrf` provider and select it with `lifecycle.withExtension(csrf)` on the relevant browser routes. Shared setup is automatic. For application defaults, use `app.withExtension(csrf)` before routes are registered. Use `lifecycle.withoutExtension(csrf)` only for deliberate exclusions. Inheritance deduplicates the selected owner; even after exclusion, a child cannot replace it with a different instance. Startup fails for a protected endpoint without sessions instead of silently enabling session management.
 
 Deliver `csrf.token(request)` in a response body or page, then submit that value through exactly one `X-CSRF-Token` header or `_csrf` form field on unsafe requests.
 The expected random token stays in the native session, bound to its current identifier; Shoostr does not issue a separate CSRF cookie.
@@ -29,6 +29,13 @@ Do not submit both proof channels, even with the same value.
 The default source policy requires the target origin, using `Referer` only when `Origin` is absent; missing, ambiguous or foreign source information is rejected.
 For cross-origin scripts, configure additional exact origins through `Csrf.builder().trustedOrigins(...)` and a separate [CORS policy](../cors/).
 The builder accepts required-first varargs or a set, and `build()` validates the origin policy before it can be installed.
+
+`Csrf` is also a mutable JavaBean for configuration loaders, with a public no-argument constructor and `trustedOrigins` getters and setters.
+An omitted or null value keeps the same-origin default without additional trusted origins.
+Selecting the extension copies its settings, so later edits to the source do not change application defaults or registered routes.
+Customize a selected copy through `app.withExtension(csrf, selected -> selected.setTrustedOrigins(origins))` or `lifecycle.withExtension(csrf).setTrustedOrigins(origins)` during registration.
+Selected copies stop accepting changes when registration finishes; the original source object remains mutable.
+Configure your chosen loader in the application.
 
 | Operation                  | Token behavior                                                                                                                                      |
 | -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |

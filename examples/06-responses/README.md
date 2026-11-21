@@ -11,7 +11,8 @@ docker compose -f examples/06-responses/compose.yaml up --build -d
 
 Startup is asynchronous. Check diagnostics with `docker compose -f examples/06-responses/compose.yaml logs -f app`.
 Open `http://127.0.0.1:8080/message`. Expect café.
-Retry the request if the listener is not ready yet. Set `APP_PORT=8081` before the command if port 8080 is occupied, and use that port in requests.
+Retry the request if the listener is not ready yet. Set `APP_PORT=8081` before the command if port 8080 is occupied, and
+use that port in requests.
 Compose exposes the app on host loopback. These credentials and unauthenticated fixtures
 are for trusted local development. Direct Java runs use the default wildcard listener.
 
@@ -35,9 +36,15 @@ container validation is described in [CONTRIBUTING](../../CONTRIBUTING.md#exampl
 
 Each response recipe has a compiled factory and a live HTTP test:
 
-- Text, bytes and empty responses: [example](src/main/java/io/github/suppierk/shoostr/example/responses/ResponseBodyExample.java) and [test](src/test/java/io/github/suppierk/shoostr/example/responses/ResponseBodyExampleTest.java).
-- Response headers: [example](src/main/java/io/github/suppierk/shoostr/example/responses/ResponseHeadersExample.java) and [test](src/test/java/io/github/suppierk/shoostr/example/responses/ResponseHeadersExampleTest.java).
-- Cookies and deletion: [example](src/main/java/io/github/suppierk/shoostr/example/responses/ResponseCookiesExample.java) and [test](src/test/java/io/github/suppierk/shoostr/example/responses/ResponseCookiesExampleTest.java).
-- Redirects: [example](src/main/java/io/github/suppierk/shoostr/example/responses/RedirectExample.java) and [test](src/test/java/io/github/suppierk/shoostr/example/responses/RedirectExampleTest.java).
+- Text, bytes and empty
+  responses: [example](src/main/java/io/github/suppierk/shoostr/example/responses/ResponseBodyExample.java)
+  and [test](src/test/java/io/github/suppierk/shoostr/example/responses/ResponseBodyExampleTest.java).
+- Response headers: [example](src/main/java/io/github/suppierk/shoostr/example/responses/ResponseHeadersExample.java)
+  and [test](src/test/java/io/github/suppierk/shoostr/example/responses/ResponseHeadersExampleTest.java).
+- Cookies and
+  deletion: [example](src/main/java/io/github/suppierk/shoostr/example/responses/ResponseCookiesExample.java)
+  and [test](src/test/java/io/github/suppierk/shoostr/example/responses/ResponseCookiesExampleTest.java).
+- Redirects: [example](src/main/java/io/github/suppierk/shoostr/example/responses/RedirectExample.java)
+  and [test](src/test/java/io/github/suppierk/shoostr/example/responses/RedirectExampleTest.java).
 
 Run `./gradlew :responses-example:test` from the repository root with Java 21.

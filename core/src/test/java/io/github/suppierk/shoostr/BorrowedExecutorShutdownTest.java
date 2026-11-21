@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.suppierk.shoostr.testing.TestServer;
+import java.io.Closeable;
 import java.io.IOException;
 import java.net.http.HttpResponse;
 import java.time.Duration;
@@ -14,8 +15,11 @@ import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ForkJoinPool;
+import java.util.concurrent.ForkJoinTask;
+import java.util.concurrent.Future;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.Semaphore;
@@ -40,101 +44,123 @@ class BorrowedExecutorShutdownTest {
 
     try (var workers =
             new ThreadPoolExecutor(2, 2, 0, TimeUnit.SECONDS, new LinkedBlockingQueue<>());
-        var drivers = Executors.newVirtualThreadPerTaskExecutor();
-        var first =
-            new Shoostr()
-                .modifyServer(
-                    nativeServer ->
-                        ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
+        var drivers = Executors.newVirtualThreadPerTaskExecutor()) {
+      var first =
+          new Shoostr()
+              .modifyServer(
+                  nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
+
+      try (Closeable firstCleanup = first::close) {
         var second =
             new Shoostr()
                 .modifyServer(
-                    nativeServer ->
-                        ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0))) {
-      first.modifyServer(server -> server.setStopTimeout(0));
-      first.afterRequest(
-          outcome -> {
+                    nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
+
+        try (Closeable secondCleanup = second::close) {
+          first.modifyServer(server -> server.setStopTimeout(0));
+          first.afterRequest(outcome -> {
             if ("/queued".equals(outcome.routePattern())) {
               queuedOutcome.complete(outcome);
             } else {
               activeOutcome.complete(outcome);
             }
           });
-      first
-          .routes()
-          .get(
-              "/active",
-              workers,
-              (ignored, ignored2) -> {
-                entered.countDown();
+          first
+              .routes()
+              .get(
+                  "/active",
+                  workers,
+                  (ignored, ignoredResponse) -> {
+                    entered.countDown();
 
-                try {
-                  if (!releaseActive.await(10, TimeUnit.SECONDS)) {
-                    throw new IllegalStateException("Active handler was not released");
-                  }
-                } catch (InterruptedException failure) {
-                  activeInterrupted.set(true);
-                  throw failure;
-                }
-              })
-          .get("/queued", workers, (ignored3, ignored4) -> queuedInvoked.set(true));
-      second.routes().get("/second", workers, (ignored5, response) -> response.text("second"));
+                    try {
+                      if (!releaseActive.await(10, TimeUnit.SECONDS)) {
+                        throw new IllegalStateException("Active handler was not released");
+                      }
+                    } catch (InterruptedException failure) {
+                      activeInterrupted.set(true);
+                      throw failure;
+                    }
+                  })
+              .get(
+                  "/queued", workers, (ignoredRequest, ignoredResponse) -> queuedInvoked.set(true));
+          second
+              .routes()
+              .get("/second", workers, (ignoredRequest, response) -> response.text("second"));
 
-      try (var firstTest = TestServer.start(first);
-          var secondTest = TestServer.start(second)) {
-        var active = drivers.submit(() -> firstTest.send(request -> request.path("/active")));
+          try (var firstTest = TestServer.start(first);
+              var secondTest = TestServer.start(second)) {
+            var active = drivers.submit(() -> firstTest.send(request -> request.path("/active")));
 
-        try {
-          assertTrue(entered.await(5, TimeUnit.SECONDS));
-          var unrelated =
-              workers.submit(
-                  () -> {
-                    blockerEntered.countDown();
-                    return releaseBlocker.await(10, TimeUnit.SECONDS);
-                  });
-          assertTrue(blockerEntered.await(5, TimeUnit.SECONDS));
-          var queued = drivers.submit(() -> firstTest.send(request -> request.path("/queued")));
-          await().atMost(Duration.ofSeconds(5)).until(() -> workers.getQueue().size() == 1);
-          var otherApp =
-              drivers.submit(
-                  () ->
-                      secondTest.send(
-                          request -> request.path("/second"),
-                          HttpResponse.BodyHandlers.ofString()));
-          await().atMost(Duration.ofSeconds(5)).until(() -> workers.getQueue().size() == 2);
-          first.close();
-          assertInstanceOf(
-              RejectedExecutionException.class,
-              queuedOutcome.get(5, TimeUnit.SECONDS).applicationFailure());
-          assertFalse(queuedInvoked.get());
-          assertFalse(activeInterrupted.get());
-          assertFalse(activeOutcome.isDone());
-          assertFalse(workers.isShutdown());
-          assertFalse(unrelated.isDone());
-          releaseBlocker.countDown();
-          assertTrue(unrelated.get(5, TimeUnit.SECONDS));
-          assertEquals("second", otherApp.get(5, TimeUnit.SECONDS).body());
-          assertEquals("usable", workers.submit(() -> "usable").get(5, TimeUnit.SECONDS));
-          assertFalse(queuedInvoked.get());
-          releaseActive.countDown();
-          assertEquals("/active", activeOutcome.get(5, TimeUnit.SECONDS).routePattern());
-          for (var sent : List.of(active, queued)) {
             try {
-              sent.get(5, TimeUnit.SECONDS);
-            } catch (ExecutionException failure) {
-              assertInstanceOf(IOException.class, failure.getCause());
+              assertTrue(entered.await(5, TimeUnit.SECONDS));
+
+              final var unrelated =
+                  submitBlockedUnrelatedTask(workers, blockerEntered, releaseBlocker);
+
+              assertTrue(blockerEntered.await(5, TimeUnit.SECONDS));
+
+              final var queued =
+                  drivers.submit(() -> firstTest.send(request -> request.path("/queued")));
+              await().atMost(Duration.ofSeconds(5)).until(() -> workers.getQueue().size() == 1);
+              final var otherApp = submitSecondApplicationRequest(drivers, secondTest);
+              await().atMost(Duration.ofSeconds(5)).until(() -> workers.getQueue().size() == 2);
+              first.close();
+
+              assertInstanceOf(
+                  RejectedExecutionException.class,
+                  queuedOutcome.get(5, TimeUnit.SECONDS).applicationFailure());
+              assertFalse(queuedInvoked.get());
+              assertFalse(activeInterrupted.get());
+              assertFalse(activeOutcome.isDone());
+              assertFalse(workers.isShutdown());
+              assertFalse(unrelated.isDone());
+
+              releaseBlocker.countDown();
+
+              assertTrue(unrelated.get(5, TimeUnit.SECONDS));
+              assertEquals("second", otherApp.get(5, TimeUnit.SECONDS).body());
+              assertEquals("usable", workers.submit(() -> "usable").get(5, TimeUnit.SECONDS));
+              assertFalse(queuedInvoked.get());
+
+              releaseActive.countDown();
+
+              assertEquals("/active", activeOutcome.get(5, TimeUnit.SECONDS).routePattern());
+
+              for (var sent : List.of(active, queued)) {
+                try {
+                  sent.get(5, TimeUnit.SECONDS);
+                } catch (ExecutionException failure) {
+                  assertInstanceOf(IOException.class, failure.getCause());
+                }
+              }
+            } finally {
+              releaseActive.countDown();
+              releaseBlocker.countDown();
             }
           }
-        } finally {
-          releaseActive.countDown();
-          releaseBlocker.countDown();
         }
       }
     }
   }
 
+  private Future<Boolean> submitBlockedUnrelatedTask(
+      ThreadPoolExecutor workers, CountDownLatch blockerEntered, CountDownLatch releaseBlocker) {
+    return workers.submit(() -> {
+      blockerEntered.countDown();
+
+      return releaseBlocker.await(10, TimeUnit.SECONDS);
+    });
+  }
+
+  private Future<HttpResponse<String>> submitSecondApplicationRequest(
+      ExecutorService drivers, TestServer secondTest) {
+    return drivers.submit(() ->
+        secondTest.send(request -> request.path("/second"), HttpResponse.BodyHandlers.ofString()));
+  }
+
   @Test
-  void cancelsARegisteredExchangeWhenCloseWinsBeforeExecutorSubmissionReturns() throws Exception {
+  void cancelsRegisteredExchangeWhenCloseWinsBeforeExecutorSubmissionReturns() throws Exception {
     var submitting = new CountDownLatch(1);
     var releaseSubmission = new Semaphore(0);
     var firstSubmission = new AtomicBoolean(true);
@@ -143,59 +169,70 @@ class BorrowedExecutorShutdownTest {
     var completions = new AtomicInteger();
 
     try (var workers =
-            new ThreadPoolExecutor(1, 1, 0, TimeUnit.SECONDS, new LinkedBlockingQueue<>()) {
-              @Override
-              public void execute(Runnable command) {
-                if (firstSubmission.compareAndSet(true, false)) {
-                  submitting.countDown();
+            openWorkersForCancelsRegisteredExchangeWhenCloseWinsBeforeExecutorSubmissionReturns(
+                firstSubmission, submitting, releaseSubmission);
+        var driver = Executors.newVirtualThreadPerTaskExecutor()) {
+      var app =
+          new Shoostr()
+              .modifyServer(
+                  nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
 
-                  releaseSubmission.acquireUninterruptibly();
-                }
+      try (Closeable appCleanup = app::close) {
+        app.modifyServer(server -> server.setStopTimeout(0));
+        app.afterRequest(outcome -> {
+          completions.incrementAndGet();
+          completed.complete(outcome);
+        });
+        app.routes()
+            .get("/racing", workers, (ignoredRequest, ignoredResponse) -> invoked.set(true));
 
-                super.execute(command);
-              }
-            };
-        var driver = Executors.newVirtualThreadPerTaskExecutor();
-        var app =
-            new Shoostr()
-                .modifyServer(
-                    nativeServer ->
-                        ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0))) {
-      app.modifyServer(server -> server.setStopTimeout(0));
-      app.afterRequest(
-          outcome -> {
-            completions.incrementAndGet();
-            completed.complete(outcome);
-          });
-      app.routes().get("/racing", workers, (ignored6, ignored7) -> invoked.set(true));
+        try (var test = TestServer.start(app)) {
+          final var sent = driver.submit(() -> test.send(request -> request.path("/racing")));
 
-      try (var test = TestServer.start(app)) {
-        var sent = driver.submit(() -> test.send(request -> request.path("/racing")));
+          try {
+            assertTrue(submitting.await(5, TimeUnit.SECONDS));
 
-        try {
-          assertTrue(submitting.await(5, TimeUnit.SECONDS));
-          app.close();
+            app.close();
+
+            assertFalse(invoked.get());
+          } finally {
+            releaseSubmission.release();
+          }
+
+          assertEquals("usable", workers.submit(() -> "usable").get(5, TimeUnit.SECONDS));
           assertFalse(invoked.get());
+          assertInstanceOf(
+              RejectedExecutionException.class,
+              completed.get(5, TimeUnit.SECONDS).applicationFailure());
+          assertEquals(1, completions.get());
+
+          try {
+            sent.get(5, TimeUnit.SECONDS);
+          } catch (ExecutionException failure) {
+            assertInstanceOf(IOException.class, failure.getCause());
+          }
         } finally {
           releaseSubmission.release();
         }
-
-        assertEquals("usable", workers.submit(() -> "usable").get(5, TimeUnit.SECONDS));
-        assertFalse(invoked.get());
-        assertInstanceOf(
-            RejectedExecutionException.class,
-            completed.get(5, TimeUnit.SECONDS).applicationFailure());
-        assertEquals(1, completions.get());
-
-        try {
-          sent.get(5, TimeUnit.SECONDS);
-        } catch (ExecutionException failure) {
-          assertInstanceOf(IOException.class, failure.getCause());
-        }
-      } finally {
-        releaseSubmission.release();
       }
     }
+  }
+
+  private ThreadPoolExecutor
+      openWorkersForCancelsRegisteredExchangeWhenCloseWinsBeforeExecutorSubmissionReturns(
+          AtomicBoolean firstSubmission, CountDownLatch submitting, Semaphore releaseSubmission) {
+    return new ThreadPoolExecutor(1, 1, 0, TimeUnit.SECONDS, new LinkedBlockingQueue<>()) {
+      @Override
+      public void execute(Runnable command) {
+        if (firstSubmission.compareAndSet(true, false)) {
+          submitting.countDown();
+
+          releaseSubmission.acquireUninterruptibly();
+        }
+
+        super.execute(command);
+      }
+    };
   }
 
   @Test
@@ -208,67 +245,70 @@ class BorrowedExecutorShutdownTest {
     var completions = new AtomicInteger();
 
     try (var workers = Executors.newSingleThreadExecutor();
-        var driver = Executors.newVirtualThreadPerTaskExecutor();
-        var app =
-            new Shoostr()
-                .modifyServer(
-                    nativeServer ->
-                        ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0))) {
-      app.modifyServer(server -> server.setStopTimeout(0));
-      app.afterRequest(
-          outcome -> {
-            completions.incrementAndGet();
-            finished.complete(outcome);
-          });
-      app.routes()
-          .get(
-              "/active",
-              workers,
-              (request, ignored8) -> {
-                entered.countDown();
+        var driver = Executors.newVirtualThreadPerTaskExecutor()) {
+      var app =
+          new Shoostr()
+              .modifyServer(
+                  nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
 
-                try {
-                  if (!release.await(10, TimeUnit.SECONDS)) {
-                    throw new IllegalStateException("Handler was not released");
+      try (Closeable appCleanup1 = app::close) {
+        app.modifyServer(server -> server.setStopTimeout(0));
+        app.afterRequest(outcome -> {
+          completions.incrementAndGet();
+          finished.complete(outcome);
+        });
+        app.routes()
+            .get(
+                "/active",
+                workers,
+                (request, ignoredResponse) -> {
+                  entered.countDown();
+
+                  try {
+                    if (!release.await(10, TimeUnit.SECONDS)) {
+                      throw new IllegalStateException("Handler was not released");
+                    }
+
+                    liveAfterClose.complete(request.routePattern().orElseThrow());
+                  } catch (InterruptedException failure) {
+                    interrupted.set(true);
+                    throw failure;
                   }
+                });
 
-                  liveAfterClose.complete(request.routePattern().orElseThrow());
-                } catch (InterruptedException failure) {
-                  interrupted.set(true);
-                  throw failure;
-                }
-              });
+        try (var test = TestServer.start(app)) {
+          final var sent = driver.submit(() -> test.send(request -> request.path("/active")));
 
-      try (var test = TestServer.start(app)) {
-        var sent = driver.submit(() -> test.send(request -> request.path("/active")));
+          try {
+            assertTrue(entered.await(5, TimeUnit.SECONDS));
 
-        try {
-          assertTrue(entered.await(5, TimeUnit.SECONDS));
-          app.close();
-          assertFalse(interrupted.get());
-          assertFalse(workers.isShutdown());
-          assertFalse(finished.isDone());
+            app.close();
+
+            assertFalse(interrupted.get());
+            assertFalse(workers.isShutdown());
+            assertFalse(finished.isDone());
+          } finally {
+            release.countDown();
+          }
+
+          assertEquals("/active", liveAfterClose.get(5, TimeUnit.SECONDS));
+          assertEquals("/active", finished.get(5, TimeUnit.SECONDS).routePattern());
+          assertEquals(1, completions.get());
+
+          try {
+            sent.get(5, TimeUnit.SECONDS);
+          } catch (ExecutionException failure) {
+            assertInstanceOf(IOException.class, failure.getCause());
+          }
         } finally {
           release.countDown();
         }
-
-        assertEquals("/active", liveAfterClose.get(5, TimeUnit.SECONDS));
-        assertEquals("/active", finished.get(5, TimeUnit.SECONDS).routePattern());
-        assertEquals(1, completions.get());
-
-        try {
-          sent.get(5, TimeUnit.SECONDS);
-        } catch (ExecutionException failure) {
-          assertInstanceOf(IOException.class, failure.getCause());
-        }
-      } finally {
-        release.countDown();
       }
     }
   }
 
   @Test
-  void doesNotInterruptUnrelatedWorkHelpedByARunningForkJoinHandler() throws Exception {
+  void doesNotInterruptUnrelatedWorkHelpedByRunningForkJoinHandler() throws Exception {
     var entered = new CountDownLatch(1);
     var allowHelping = new CountDownLatch(1);
     var helped = new CountDownLatch(1);
@@ -279,68 +319,86 @@ class BorrowedExecutorShutdownTest {
     var completed = new CompletableFuture<RequestOutcome>();
 
     try (var workers = new ForkJoinPool(1);
-        var driver = Executors.newVirtualThreadPerTaskExecutor();
-        var app =
-            new Shoostr()
-                .modifyServer(
-                    nativeServer ->
-                        ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0))) {
-      app.modifyServer(server -> server.setStopTimeout(0));
-      app.afterRequest(completed::complete);
-      app.routes()
-          .get(
-              "/help",
-              workers,
-              (ignored9, ignored10) -> {
-                handlerThread.complete(Thread.currentThread());
-                entered.countDown();
-                if (!allowHelping.await(5, TimeUnit.SECONDS)) {
-                  throw new IllegalStateException("Helping was not enabled");
-                }
+        var driver = Executors.newVirtualThreadPerTaskExecutor()) {
+      var app =
+          new Shoostr()
+              .modifyServer(
+                  nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
 
-                assertTrue(workers.awaitQuiescence(10, TimeUnit.SECONDS));
-              });
+      try (Closeable appCleanup2 = app::close) {
+        app.modifyServer(server -> server.setStopTimeout(0));
+        app.afterRequest(completed::complete);
+        app.routes()
+            .get(
+                "/help",
+                workers,
+                (ignoredRequest, ignoredResponse) -> {
+                  handlerThread.complete(Thread.currentThread());
+                  entered.countDown();
+                  if (!allowHelping.await(5, TimeUnit.SECONDS)) {
+                    throw new IllegalStateException("Helping was not enabled");
+                  }
 
-      try (var test = TestServer.start(app)) {
-        var sent = driver.submit(() -> test.send(request -> request.path("/help")));
+                  assertTrue(workers.awaitQuiescence(10, TimeUnit.SECONDS));
+                });
 
-        try {
-          assertTrue(entered.await(5, TimeUnit.SECONDS));
-          var unrelated =
-              workers.submit(
-                  () -> {
-                    helpedThread.complete(Thread.currentThread());
-                    helped.countDown();
-
-                    try {
-                      return release.await(10, TimeUnit.SECONDS);
-                    } catch (InterruptedException failure) {
-                      interrupted.set(true);
-                      throw failure;
-                    }
-                  });
-          allowHelping.countDown();
-          assertTrue(helped.await(5, TimeUnit.SECONDS));
-          assertEquals(
-              handlerThread.get(5, TimeUnit.SECONDS), helpedThread.get(5, TimeUnit.SECONDS));
-          app.close();
-          assertFalse(interrupted.get());
-          assertFalse(unrelated.isDone());
-          release.countDown();
-          assertTrue(unrelated.get(5, TimeUnit.SECONDS));
-          assertEquals("/help", completed.get(5, TimeUnit.SECONDS).routePattern());
-          assertEquals("usable", workers.submit(() -> "usable").get(5, TimeUnit.SECONDS));
+        try (var test = TestServer.start(app)) {
+          var sent = driver.submit(() -> test.send(request -> request.path("/help")));
 
           try {
-            sent.get(5, TimeUnit.SECONDS);
-          } catch (ExecutionException failure) {
-            assertInstanceOf(IOException.class, failure.getCause());
+            assertTrue(entered.await(5, TimeUnit.SECONDS));
+
+            final var unrelated =
+                submitUnrelatedForDoesNotInterruptUnrelatedWorkHelpedByRunningForkJoinHandler(
+                    workers, helpedThread, helped, release, interrupted);
+            allowHelping.countDown();
+
+            assertTrue(helped.await(5, TimeUnit.SECONDS));
+            assertEquals(
+                handlerThread.get(5, TimeUnit.SECONDS), helpedThread.get(5, TimeUnit.SECONDS));
+
+            app.close();
+
+            assertFalse(interrupted.get());
+            assertFalse(unrelated.isDone());
+
+            release.countDown();
+
+            assertTrue(unrelated.get(5, TimeUnit.SECONDS));
+            assertEquals("/help", completed.get(5, TimeUnit.SECONDS).routePattern());
+            assertEquals("usable", workers.submit(() -> "usable").get(5, TimeUnit.SECONDS));
+
+            try {
+              sent.get(5, TimeUnit.SECONDS);
+            } catch (ExecutionException failure) {
+              assertInstanceOf(IOException.class, failure.getCause());
+            }
+          } finally {
+            allowHelping.countDown();
+            release.countDown();
           }
-        } finally {
-          allowHelping.countDown();
-          release.countDown();
         }
       }
     }
+  }
+
+  private ForkJoinTask<Boolean>
+      submitUnrelatedForDoesNotInterruptUnrelatedWorkHelpedByRunningForkJoinHandler(
+          ForkJoinPool workers,
+          CompletableFuture<Thread> helpedThread,
+          CountDownLatch helped,
+          CountDownLatch release,
+          AtomicBoolean interrupted) {
+    return workers.submit(() -> {
+      helpedThread.complete(Thread.currentThread());
+      helped.countDown();
+
+      try {
+        return release.await(10, TimeUnit.SECONDS);
+      } catch (InterruptedException failure) {
+        interrupted.set(true);
+        throw failure;
+      }
+    });
   }
 }

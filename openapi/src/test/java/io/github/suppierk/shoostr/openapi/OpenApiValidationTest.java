@@ -12,6 +12,8 @@ import io.swagger.v3.oas.models.parameters.Parameter;
 import io.swagger.v3.oas.models.parameters.RequestBody;
 import io.swagger.v3.oas.models.responses.ApiResponse;
 import io.swagger.v3.oas.models.security.SecurityScheme;
+import java.io.Closeable;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Stream;
@@ -23,28 +25,62 @@ import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 class OpenApiValidationTest {
+  @Test
+  void rejectsInvalidMediaTypesBeforeMissingSchemas() throws Exception {
+    var app = new Shoostr();
+
+    try (Closeable appCleanup = app::close) {
+      app.withExtension(
+          new OpenApi("API", "1"),
+          operation -> {
+            assertThrows(
+                IllegalArgumentException.class,
+                () -> operation.requestBody("Body", "invalid", null, true));
+            assertThrows(
+                IllegalArgumentException.class,
+                () -> operation.response(200, "Body", "invalid", null));
+          });
+    }
+  }
+
+  private static Stream<Arguments> schemaDictionaryEntries() {
+    return Stream.of("patternProperties", "dependentSchemas")
+        .flatMap(keyword ->
+            Stream.of("example", "default", "x-name").map(entry -> Arguments.of(keyword, entry)));
+  }
+
   @ParameterizedTest
   @MethodSource("schemaDictionaryEntries")
-  void rejectsMissingReferencesWithinSchemaDictionaries(String keyword, String entry)
+  void reportsTheFirstMissingReferenceInSchemaDictionaryOrder(String keyword, String entry)
       throws Exception {
     var schema = new JsonSchema();
     schema.setTypes(Set.of("object"));
     var missing = new JsonSchema().$ref("#/components/schemas/Missing");
+    var entries = new LinkedHashMap<>(Map.of(entry, missing));
+    entries.put("a-later", new JsonSchema().$ref("#/components/schemas/Later"));
     if ("patternProperties".equals(keyword)) {
-      schema.setPatternProperties(Map.of(entry, missing));
+      schema.setPatternProperties(entries);
     } else {
-      schema.setDependentSchemas(Map.of(entry, missing));
+      schema.setDependentSchemas(entries);
     }
 
     var docs = new OpenApi("API", "1");
     docs.schema("Container", schema);
 
-    try (var app =
-        new Shoostr()
-            .modifyServer(
-                nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0))) {
-      app.extensions(docs);
-      assertThrows(IllegalArgumentException.class, app::start);
+    {
+      var app =
+          new Shoostr()
+              .modifyServer(
+                  nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
+
+      try (Closeable appCleanup = app::close) {
+        app.withExtension(docs);
+
+        var failure = assertThrows(IllegalArgumentException.class, app::start);
+
+        assertEquals(
+            "Unknown local OpenAPI reference: #/components/schemas/Missing", failure.getMessage());
+      }
     }
   }
 
@@ -58,14 +94,21 @@ class OpenApiValidationTest {
 
     var docs = new OpenApi("API", "1");
 
-    try (var app = new Shoostr()) {
-      app.extensions(docs);
-      var routes = app.routes();
-      assertThrows(
-          IllegalArgumentException.class,
-          () ->
-              routes.post(
-                  "/users", (ignored, ignored2) -> {}, e -> e.with(docs).requestBody(body)));
+    {
+      var app = new Shoostr();
+
+      try (Closeable appCleanup1 = app::close) {
+
+        var routes = app.routes();
+
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                routes.post(
+                    "/users",
+                    (ignored, ignoredResponse) -> {},
+                    lifecycle -> lifecycle.withExtension(docs).requestBody(body)));
+      }
     }
   }
 
@@ -87,17 +130,21 @@ class OpenApiValidationTest {
 
     var docs = new OpenApi("API", "1");
 
-    try (var app =
-        new Shoostr()
-            .modifyServer(
-                nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0))) {
-      app.extensions(docs)
-          .routes()
-          .get(
-              "/users/{id:[0-9]+}",
-              (ignored3, ignored4) -> {},
-              e -> e.with(docs).parameter(parameter));
-      assertThrows(IllegalArgumentException.class, app::start);
+    {
+      var app =
+          new Shoostr()
+              .modifyServer(
+                  nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
+
+      try (Closeable appCleanup2 = app::close) {
+        app.routes()
+            .get(
+                "/users/{id:[0-9]+}",
+                (ignoredRequest, ignoredResponse) -> {},
+                lifecycle -> lifecycle.withExtension(docs).parameter(parameter));
+
+        assertThrows(IllegalArgumentException.class, app::start);
+      }
     }
   }
 
@@ -106,14 +153,21 @@ class OpenApiValidationTest {
     var docs = new OpenApi("API", "1");
     var parameter = new Parameter().name("page").in("query");
 
-    try (var app = new Shoostr()) {
-      app.extensions(docs);
-      var routes = app.routes();
-      assertThrows(
-          IllegalArgumentException.class,
-          () ->
-              routes.get(
-                  "/users", (ignored5, ignored6) -> {}, e -> e.with(docs).parameter(parameter)));
+    {
+      var app = new Shoostr();
+
+      try (Closeable appCleanup3 = app::close) {
+
+        var routes = app.routes();
+
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                routes.get(
+                    "/users",
+                    (ignoredRequest, ignoredResponse) -> {},
+                    lifecycle -> lifecycle.withExtension(docs).parameter(parameter)));
+      }
     }
   }
 
@@ -121,18 +175,38 @@ class OpenApiValidationTest {
   void rejectsPublishedCatchAllRoutesInsteadOfApproximatingTheirMeaning() throws Exception {
     var docs = new OpenApi("API", "1");
 
-    try (var app =
-        new Shoostr()
-            .modifyServer(
-                nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0))) {
-      app.extensions(docs)
-          .routes(
-              routes ->
-                  routes.get(
-                      "/files/{*tail}",
-                      (ignored7, ignored8) -> {},
-                      e -> e.with(docs).summary("Files")));
-      assertThrows(IllegalArgumentException.class, app::start);
+    {
+      var app =
+          new Shoostr()
+              .modifyServer(
+                  nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
+
+      try (Closeable appCleanup4 = app::close) {
+        app.routes(routes ->
+            routes.get(
+                "/files/{*tail}",
+                (ignoredRequest, ignoredResponse) -> {},
+                lifecycle -> lifecycle.withExtension(docs).summary("Files")));
+
+        assertThrows(IllegalArgumentException.class, app::start);
+      }
+    }
+  }
+
+  @Test
+  void rejectsMissingPathDeclarationsWhenTheOperationHasNoParameters() throws Exception {
+    var docs = new OpenApi("API", "1");
+    var app = new Shoostr();
+
+    try (Closeable appCleanup = app::close) {
+      app.routes()
+          .get(
+              "/users/{id}",
+              (ignoredRequest, ignoredResponse) -> {},
+              lifecycle -> lifecycle.withExtension(docs));
+
+      var failure = assertThrows(IllegalArgumentException.class, app::start);
+      assertEquals("Missing declared path parameters: [id] on /users/{id}", failure.getMessage());
     }
   }
 
@@ -140,18 +214,22 @@ class OpenApiValidationTest {
   void rejectsPathParametersThatDoNotBelongToTheActualTemplate() throws Exception {
     var docs = new OpenApi("API", "1");
 
-    try (var app =
-        new Shoostr()
-            .modifyServer(
-                nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0))) {
-      app.extensions(docs)
-          .routes(
-              routes ->
-                  routes.get(
-                      "/users/{id}",
-                      (ignored9, ignored10) -> {},
-                      e -> e.with(docs).pathParameter("other", "Wrong parameter")));
-      assertThrows(IllegalArgumentException.class, app::start);
+    {
+      var app =
+          new Shoostr()
+              .modifyServer(
+                  nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
+
+      try (Closeable appCleanup5 = app::close) {
+        app.routes(routes ->
+            routes.get(
+                "/users/{id}",
+                (ignoredRequest, ignoredResponse) -> {},
+                lifecycle ->
+                    lifecycle.withExtension(docs).pathParameter("other", "Wrong parameter")));
+
+        assertThrows(IllegalArgumentException.class, app::start);
+      }
     }
   }
 
@@ -159,19 +237,22 @@ class OpenApiValidationTest {
   void rejectsHttpMethodsThatOpenApiCannotRepresent() throws Exception {
     var docs = new OpenApi("API", "1");
 
-    try (var app =
-        new Shoostr()
-            .modifyServer(
-                nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0))) {
-      app.extensions(docs)
-          .routes(
-              routes ->
-                  routes.route(
-                      "CONNECT",
-                      "/tunnel",
-                      (ignored11, ignored12) -> {},
-                      e -> e.with(docs).summary("Tunnel")));
-      assertThrows(IllegalArgumentException.class, app::start);
+    {
+      var app =
+          new Shoostr()
+              .modifyServer(
+                  nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
+
+      try (Closeable appCleanup6 = app::close) {
+        app.routes(routes ->
+            routes.route(
+                "CONNECT",
+                "/tunnel",
+                (ignoredRequest, ignoredResponse) -> {},
+                lifecycle -> lifecycle.withExtension(docs).summary("Tunnel")));
+
+        assertThrows(IllegalArgumentException.class, app::start);
+      }
     }
   }
 
@@ -179,6 +260,7 @@ class OpenApiValidationTest {
   void rejectsSecuritySchemesMissingTheirRequiredType() throws Exception {
     try (var docs = new OpenApi("API", "1")) {
       var scheme = new SecurityScheme();
+
       assertThrows(IllegalArgumentException.class, () -> docs.securityScheme("broken", scheme));
     }
   }
@@ -188,36 +270,46 @@ class OpenApiValidationTest {
     var docs = new OpenApi("API", "1");
     var response = new ApiResponse();
 
-    try (var app = new Shoostr()) {
-      app.extensions(docs);
-      var routes = app.routes();
-      assertThrows(
-          IllegalArgumentException.class,
-          () ->
-              routes.get(
-                  "/users",
-                  (ignored13, ignored14) -> {},
-                  e -> e.with(docs).response(200, response)));
+    {
+      var app = new Shoostr();
+
+      try (Closeable appCleanup7 = app::close) {
+
+        var routes = app.routes();
+
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                routes.get(
+                    "/users",
+                    (ignoredRequest, ignoredResponse) -> {},
+                    lifecycle -> lifecycle.withExtension(docs).response(200, response)));
+      }
     }
   }
 
   @Test
   void rejectsDuplicateExplicitOperationIdentifiersWithinOneDocument() throws Exception {
     var docs = new OpenApi("API", "1");
-    Handler shared = (ignored15, ignored16) -> {};
+    Handler shared = (ignoredRequest, ignoredResponse) -> {};
 
-    try (var app =
-        new Shoostr()
-            .modifyServer(
-                nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0))) {
-      app.extensions(docs)
-          .routes(
-              routes -> {
-                routes.get("/first", shared, e -> e.with(docs).operationId("read"));
-                routes.get("/second", shared, e -> e.with(docs).operationId("read"));
-              });
-      var failure = assertThrows(IllegalArgumentException.class, app::start);
-      assertEquals("Duplicate OpenAPI operationId: read", failure.getMessage());
+    {
+      var app =
+          new Shoostr()
+              .modifyServer(
+                  nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
+
+      try (Closeable appCleanup8 = app::close) {
+        app.routes(routes -> {
+          routes.get(
+              "/first", shared, lifecycle -> lifecycle.withExtension(docs).operationId("read"));
+          routes.get(
+              "/second", shared, lifecycle -> lifecycle.withExtension(docs).operationId("read"));
+        });
+
+        var failure = assertThrows(IllegalArgumentException.class, app::start);
+        assertEquals("Duplicate OpenAPI operationId: read", failure.getMessage());
+      }
     }
   }
 
@@ -225,54 +317,54 @@ class OpenApiValidationTest {
   void rejectsUnknownLocalSchemaReferencesBeforeListening() throws Exception {
     var docs = new OpenApi("API", "1");
 
-    try (var app =
-        new Shoostr()
-            .modifyServer(
-                nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0))) {
-      app.extensions(docs)
-          .routes(
-              routes ->
-                  routes.get(
-                      "/users",
-                      (ignored17, ignored18) -> {},
-                      e ->
-                          e.with(docs)
-                              .response(
-                                  200,
-                                  "User",
-                                  MediaType.APPLICATION_JSON,
-                                  new JsonSchema().$ref("#/components/schemas/Missing"))));
-      var failure = assertThrows(IllegalArgumentException.class, app::start);
-      assertEquals(
-          "Unknown local OpenAPI reference: #/components/schemas/Missing", failure.getMessage());
+    {
+      var app =
+          new Shoostr()
+              .modifyServer(
+                  nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
+
+      try (Closeable appCleanup9 = app::close) {
+        app.routes(routes ->
+            routes.get(
+                "/users",
+                (ignoredRequest, ignoredResponse) -> {},
+                lifecycle ->
+                    lifecycle
+                        .withExtension(docs)
+                        .response(
+                            200,
+                            "User",
+                            MediaType.APPLICATION_JSON,
+                            new JsonSchema().$ref("#/components/schemas/Missing"))));
+
+        var failure = assertThrows(IllegalArgumentException.class, app::start);
+        assertEquals(
+            "Unknown local OpenAPI reference: #/components/schemas/Missing", failure.getMessage());
+      }
     }
   }
 
-  @Test
-  void rejectsUnknownSecuritySchemesBeforeListening() throws Exception {
+  @ParameterizedTest
+  @ValueSource(strings = {"/users", "/users/{*tail}"})
+  void rejectsUnknownSecuritySchemesBeforePathValidation(String path) throws Exception {
     var docs = new OpenApi("API", "1");
 
-    try (var app =
-        new Shoostr()
-            .modifyServer(
-                nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0))) {
-      app.extensions(docs)
-          .routes(
-              routes ->
-                  routes.get(
-                      "/users",
-                      (ignored19, ignored20) -> {},
-                      e -> e.with(docs).security("missing")));
-      var failure = assertThrows(IllegalArgumentException.class, app::start);
-      assertEquals("Unknown OpenAPI security scheme: missing", failure.getMessage());
-    }
-  }
+    {
+      var app =
+          new Shoostr()
+              .modifyServer(
+                  nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
 
-  private static Stream<Arguments> schemaDictionaryEntries() {
-    return Stream.of("patternProperties", "dependentSchemas")
-        .flatMap(
-            keyword ->
-                Stream.of("example", "default", "x-name")
-                    .map(entry -> Arguments.of(keyword, entry)));
+      try (Closeable appCleanup10 = app::close) {
+        app.routes(routes ->
+            routes.get(
+                path,
+                (ignoredRequest, ignoredResponse) -> {},
+                lifecycle -> lifecycle.withExtension(docs).security("missing")));
+
+        var failure = assertThrows(IllegalArgumentException.class, app::start);
+        assertEquals("Unknown OpenAPI security scheme: missing", failure.getMessage());
+      }
+    }
   }
 }

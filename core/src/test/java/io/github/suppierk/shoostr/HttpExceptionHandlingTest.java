@@ -15,6 +15,7 @@ import io.github.suppierk.shoostr.http.exceptions.NotFoundException;
 import io.github.suppierk.shoostr.http.exceptions.ServiceUnavailableException;
 import io.github.suppierk.shoostr.testing.TestServer;
 import java.io.ByteArrayInputStream;
+import java.io.Closeable;
 import java.io.IOException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
@@ -34,266 +35,15 @@ import org.eclipse.jetty.server.ServerConnector;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 @Timeout(15)
 class HttpExceptionHandlingTest {
-  @ParameterizedTest
-  @MethodSource("httpErrors")
-  void replacesStagedOutputWithStatusAndSafeReasonPhrase(HttpException failure) throws Exception {
-    var retainedRequest = new AtomicReference<Request>();
-    var retainedResponse = new AtomicReference<Response>();
-
-    try (var app = new Shoostr()) {
-      app.routes()
-          .get(
-              "/error",
-              (request, response) -> {
-                retainedRequest.set(request);
-                retainedResponse.set(response);
-                response
-                    .status(201)
-                    .setHeader("X-Leak", "secret")
-                    .body("text/html", new byte[] {1, 2});
-                throw failure;
-              });
-
-      try (var test = TestServer.start(app)) {
-        var result =
-            test.send(
-                request -> request.path("/error").timeout(Duration.ofSeconds(5)),
-                HttpResponse.BodyHandlers.ofString());
-
-        assertEquals(failure.statusCode().value(), result.statusCode());
-        assertEquals(failure.statusCode().reasonPhrase(), result.body());
-        assertTrue(result.headers().firstValue("X-Leak").isEmpty());
-        assertEquals(
-            "text/plain; charset=utf-8", result.headers().firstValue("Content-Type").orElseThrow());
-        assertEquals(
-            result.body().getBytes(StandardCharsets.UTF_8).length,
-            result.headers().firstValueAsLong("Content-Length").orElseThrow());
-        var closedRequest = retainedRequest.get();
-        var closedResponse = retainedResponse.get();
-        assertThrows(IllegalStateException.class, closedRequest::path);
-        assertThrows(IllegalStateException.class, () -> closedResponse.text("too late"));
-      }
-    }
-  }
-
-  @Test
-  void keepsQuotedAndCrLfBearingDiagnosticsOutOfTheEntireHttpResponse() throws Exception {
-    try (var app =
-        new Shoostr()
-            .modifyServer(
-                nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0))) {
-      app.routes()
-          .get(
-              "/error",
-              (ignored, ignored2) -> {
-                throw new BadRequestException(
-                    "\"private-diagnostic\"\r\nX-Injected: secret\r\n\r\nHTTP/1.1 200 Injected");
-              });
-      app.start();
-
-      try (var socket = new Socket()) {
-        socket.setSoTimeout(3000);
-        socket.connect(
-            new InetSocketAddress(InetAddress.getAllByName("127.0.0.1")[0], app.port()), 3000);
-        socket
-            .getOutputStream()
-            .write(
-                "GET /error HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"
-                    .getBytes(StandardCharsets.US_ASCII));
-        var wire = new String(socket.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
-        assertTrue(wire.startsWith("HTTP/1.1 400 Bad Request\r\n"), wire);
-        assertFalse(wire.contains("private-diagnostic"), wire);
-        assertFalse(wire.contains("X-Injected"), wire);
-        assertFalse(wire.contains("secret"), wire);
-        assertFalse(wire.contains("200 Injected"), wire);
-        int bodyStart = wire.indexOf("\r\n\r\n");
-        assertTrue(bodyStart >= 0, wire);
-        assertEquals("Bad Request", wire.substring(bodyStart + 4));
-      }
-    }
-  }
-
-  @Test
-  void doesNotUnwrapAnHttpExceptionCause() throws Exception {
-    try (var app = new Shoostr()) {
-      app.routes()
-          .get(
-              "/error",
-              (ignored3, ignored4) -> {
-                throw new CompletionException(new NotFoundException("secret"));
-              });
-
-      try (var test = TestServer.start(app)) {
-        var result =
-            test.send(
-                request -> request.path("/error").timeout(Duration.ofSeconds(5)),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(500, result.statusCode());
-        assertEquals("Internal Server Error", result.body());
-      }
-    }
-  }
-
-  @ParameterizedTest
-  @ValueSource(booleans = {false, true})
-  void omitsReasonPhraseWhenItExceedsTheResponseLimit(boolean httpFailure) throws Exception {
-    var options = new Options(16, 1, 8, 1000, MultipartOptions.defaults());
-
-    try (var app =
-        new Shoostr(options)
-            .modifyServer(
-                listenerServer -> {
-                  var listener = (ServerConnector) listenerServer.getConnectors()[0];
-                  listener.setHost("127.0.0.1");
-                  listener.setPort(0);
-                  listener.setIdleTimeout(5000);
-                })) {
-      app.routes()
-          .get(
-              "/error",
-              (ignored5, response) -> {
-                response.text("x");
-                if (httpFailure) {
-                  throw new ServiceUnavailableException("secret");
-                }
-
-                throw new IllegalStateException("secret");
-              });
-
-      try (var test = TestServer.start(app)) {
-        var result =
-            test.send(
-                request -> request.path("/error").timeout(Duration.ofSeconds(5)),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(httpFailure ? 503 : 500, result.statusCode());
-        assertTrue(result.body().isEmpty());
-        assertEquals(0, result.headers().firstValueAsLong("Content-Length").orElseThrow());
-      }
-    }
-  }
-
-  @ParameterizedTest
-  @ValueSource(booleans = {false, true})
-  void abortsCommittedStreamsWithoutReplacingTheirStatusOrFlushingPendingData(boolean serverError)
-      throws Exception {
-    var release = new CountDownLatch(1);
-    var retainedStream = new AtomicReference<Response.Stream>();
-
-    try (var app = new Shoostr()) {
-      app.routes()
-          .get(
-              "/stream",
-              (ignored6, response) -> {
-                var stream = response.startStream("text/plain; charset=utf-8");
-                retainedStream.set(stream);
-                stream.write("partial\n");
-                stream.flush();
-                if (!release.await(5, TimeUnit.SECONDS)) {
-                  throw new IOException("test timeout");
-                }
-
-                stream.write("pending secret");
-                if (serverError) {
-                  throw new ServiceUnavailableException("secret");
-                }
-
-                throw new BadRequestException("secret");
-              });
-
-      try (var test = TestServer.start(app)) {
-
-        try {
-          var result =
-              test.send(
-                  request -> request.path("/stream").timeout(Duration.ofSeconds(5)),
-                  HttpResponse.BodyHandlers.ofInputStream());
-          assertEquals(200, result.statusCode());
-
-          try (var input = result.body()) {
-            assertEquals("partial\n", new String(input.readNBytes(8), StandardCharsets.UTF_8));
-            release.countDown();
-            var received = new StringBuilder();
-            assertThrows(
-                IOException.class,
-                () -> {
-                  int value;
-                  while ((value = input.read()) != -1) {
-                    received.append((char) value);
-                  }
-                });
-            assertEquals(
-                "", received.toString(), "No pending bytes or replacement error body may be sent");
-          }
-
-          var closedStream = retainedStream.get();
-          assertThrows(IllegalStateException.class, () -> closedStream.write("too late"));
-        } finally {
-          release.countDown();
-        }
-      }
-    }
-  }
-
-  @Test
-  void handlersCanCatchBodyLimitErrorsThroughThePublicHierarchy() throws Exception {
-    var options = new Options(4, 1024, 8, 1000, MultipartOptions.defaults());
-
-    try (var app =
-            new Shoostr(options)
-                .modifyServer(
-                    listenerServer -> {
-                      var listener = (ServerConnector) listenerServer.getConnectors()[0];
-                      listener.setHost("127.0.0.1");
-                      listener.setPort(0);
-                      listener.setIdleTimeout(5000);
-                    });
-        var client = HttpClient.newHttpClient()) {
-      app.routes()
-          .post(
-              "/body",
-              (request, response) -> {
-                assertThrows(ContentTooLargeException.class, request::bodyBytes);
-                response.status(413).text("handled by application");
-              });
-      app.start();
-      var body =
-          HttpRequest.BodyPublishers.ofInputStream(() -> new ByteArrayInputStream(new byte[5]));
-      var result =
-          client.send(request(app).POST(body).build(), HttpResponse.BodyHandlers.ofString());
-      assertEquals(413, result.statusCode());
-      assertEquals("handled by application", result.body());
-    }
-  }
-
-  @Test
-  void suppressesErrorBodyForHeadRequests() throws Exception {
-    try (var app = new Shoostr()) {
-      app.routes()
-          .head(
-              "/error",
-              (ignored7, ignored8) -> {
-                throw new NotFoundException("secret");
-              });
-
-      try (var test = TestServer.start(app)) {
-        var result =
-            test.send(
-                request -> request.path("/error").timeout(Duration.ofSeconds(5)).method("HEAD"),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(404, result.statusCode());
-        assertTrue(result.body().isEmpty());
-        assertFalse(result.headers().firstValue("Content-Type").isEmpty());
-      }
-    }
-  }
-
   private static Stream<HttpException> httpErrors() {
     var cause = new IllegalArgumentException("internal cause");
+
     return Stream.of(
         new BadRequestException("secret", cause),
         new NotFoundException(),
@@ -306,5 +56,326 @@ class HttpExceptionHandlingTest {
   private static HttpRequest.Builder request(Shoostr app) {
     return HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/body"))
         .timeout(Duration.ofSeconds(5));
+  }
+
+  @ParameterizedTest
+  @MethodSource("httpErrors")
+  void replacesStagedOutputWithStatusAndSafeReasonPhrase(HttpException failure) throws Exception {
+    var retainedRequest = new AtomicReference<Request>();
+    var retainedResponse = new AtomicReference<Response>();
+
+    {
+      var app = new Shoostr();
+
+      try (Closeable appCleanup = app::close) {
+        app.routes()
+            .get(
+                "/error",
+                (request, response) -> {
+                  retainedRequest.set(request);
+                  retainedResponse.set(response);
+                  response
+                      .status(201)
+                      .setHeader("X-Leak", "secret")
+                      .body("text/html", new byte[] {1, 2});
+                  throw failure;
+                });
+
+        try (var test = TestServer.start(app)) {
+          var result =
+              test.send(
+                  request -> request.path("/error").timeout(Duration.ofSeconds(5)),
+                  HttpResponse.BodyHandlers.ofString());
+
+          assertEquals(failure.statusCode().value(), result.statusCode());
+          assertEquals(failure.statusCode().reasonPhrase(), result.body());
+          assertTrue(result.headers().firstValue("X-Leak").isEmpty());
+          assertEquals(
+              "text/plain; charset=utf-8",
+              result.headers().firstValue("Content-Type").orElseThrow());
+          assertEquals(
+              result.body().getBytes(StandardCharsets.UTF_8).length,
+              result.headers().firstValueAsLong("Content-Length").orElseThrow());
+
+          var closedRequest = retainedRequest.get();
+          var closedResponse = retainedResponse.get();
+
+          assertThrows(IllegalStateException.class, closedRequest::path);
+          assertThrows(IllegalStateException.class, () -> closedResponse.text("too late"));
+        }
+      }
+    }
+  }
+
+  @Test
+  void keepsQuotedAndCrLfBearingDiagnosticsOutOfTheEntireHttpResponse() throws Exception {
+    {
+      var app =
+          new Shoostr()
+              .modifyServer(
+                  nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
+
+      try (Closeable appCleanup1 = app::close) {
+        app.routes()
+            .get(
+                "/error",
+                (ignored, ignoredResponse) -> {
+                  throw new BadRequestException(
+                      "\"private-diagnostic\"\r\nX-Injected: secret\r\n\r\nHTTP/1.1 200 Injected");
+                });
+        app.start();
+
+        try (var socket = new Socket()) {
+          socket.setSoTimeout(3000);
+          socket.connect(
+              new InetSocketAddress(InetAddress.getAllByName("127.0.0.1")[0], app.port()), 3000);
+          socket
+              .getOutputStream()
+              .write(
+                  "GET /error HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"
+                      .getBytes(StandardCharsets.US_ASCII));
+          var wire = new String(socket.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+
+          assertTrue(wire.startsWith("HTTP/1.1 400 Bad Request\r\n"), wire);
+          assertFalse(wire.contains("private-diagnostic"), wire);
+          assertFalse(wire.contains("X-Injected"), wire);
+          assertFalse(wire.contains("secret"), wire);
+          assertFalse(wire.contains("200 Injected"), wire);
+
+          int bodyStart = wire.indexOf("\r\n\r\n");
+
+          assertTrue(bodyStart >= 0, wire);
+          assertEquals("Bad Request", wire.substring(bodyStart + 4));
+        }
+      }
+    }
+  }
+
+  @Test
+  void doesNotUnwrapAnHttpExceptionCause() throws Exception {
+    {
+      var app = new Shoostr();
+
+      try (Closeable appCleanup2 = app::close) {
+        app.routes()
+            .get(
+                "/error",
+                (ignoredRequest, ignoredResponse) -> {
+                  throw new CompletionException(new NotFoundException("secret"));
+                });
+
+        try (var test = TestServer.start(app)) {
+          var result =
+              test.send(
+                  request -> request.path("/error").timeout(Duration.ofSeconds(5)),
+                  HttpResponse.BodyHandlers.ofString());
+
+          assertEquals(500, result.statusCode());
+          assertEquals("Internal Server Error", result.body());
+        }
+      }
+    }
+  }
+
+  @ParameterizedTest
+  @CsvSource({
+    "false, 1, ''",
+    "true, 1, ''",
+    "false, 21, Internal Server Error",
+    "true, 19, Service Unavailable"
+  })
+  void boundsDefaultReasonPhraseByResponseLimit(
+      boolean httpFailure, int maxResponseBytes, String expectedBody) throws Exception {
+    var options = new Options();
+    options.setMaxRequestBytes(16);
+    options.setMaxResponseBytes(maxResponseBytes);
+    options.setStreamBufferBytes(8);
+    options.setMaxParameters(1000);
+    options.setMultipart(new MultipartOptions());
+
+    {
+      var app = errorApplication(options);
+
+      try (Closeable appCleanup3 = app::close) {
+        app.routes()
+            .get(
+                "/error",
+                (ignoredRequest, response) -> {
+                  response.text("x");
+                  if (httpFailure) {
+                    throw new ServiceUnavailableException("secret");
+                  }
+
+                  throw new IllegalStateException("secret");
+                });
+
+        try (var test = TestServer.start(app)) {
+          var result =
+              test.send(
+                  request -> request.path("/error").timeout(Duration.ofSeconds(5)),
+                  HttpResponse.BodyHandlers.ofString());
+
+          assertEquals(httpFailure ? 503 : 500, result.statusCode());
+          assertEquals(expectedBody, result.body());
+          assertEquals(
+              expectedBody.length(),
+              result.headers().firstValueAsLong("Content-Length").orElseThrow());
+        }
+      }
+    }
+  }
+
+  private Shoostr errorApplication(Options options) {
+    return new Shoostr(options)
+        .modifyServer(listenerServer -> {
+          var listener = (ServerConnector) listenerServer.getConnectors()[0];
+          listener.setHost("127.0.0.1");
+          listener.setPort(0);
+          listener.setIdleTimeout(5000);
+        });
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void abortsCommittedStreamsWithoutReplacingTheirStatusOrFlushingPendingData(boolean serverError)
+      throws Exception {
+    var release = new CountDownLatch(1);
+    var retainedStream = new AtomicReference<Response.Stream>();
+
+    {
+      var app = new Shoostr();
+
+      try (Closeable appCleanup4 = app::close) {
+        app.routes()
+            .get(
+                "/stream",
+                (ignoredRequest, response) -> {
+                  var stream = response.startStream("text/plain; charset=utf-8");
+                  retainedStream.set(stream);
+                  stream.write("partial\n");
+                  stream.flush();
+                  if (!release.await(5, TimeUnit.SECONDS)) {
+                    throw new IOException("test timeout");
+                  }
+
+                  stream.write("pending secret");
+                  if (serverError) {
+                    throw new ServiceUnavailableException("secret");
+                  }
+
+                  throw new BadRequestException("secret");
+                });
+
+        try (var test = TestServer.start(app)) {
+
+          try {
+            var result =
+                test.send(
+                    request -> request.path("/stream").timeout(Duration.ofSeconds(5)),
+                    HttpResponse.BodyHandlers.ofInputStream());
+
+            assertEquals(200, result.statusCode());
+
+            try (var input = result.body()) {
+              assertEquals("partial\n", new String(input.readNBytes(8), StandardCharsets.UTF_8));
+
+              release.countDown();
+              var received = new StringBuilder();
+
+              assertThrows(
+                  IOException.class,
+                  () -> {
+                    int value;
+                    while ((value = input.read()) != -1) {
+                      received.append((char) value);
+                    }
+                  });
+              assertEquals(
+                  "",
+                  received.toString(),
+                  "No pending bytes or replacement error body may be sent");
+            }
+
+            var closedStream = retainedStream.get();
+
+            assertThrows(IllegalStateException.class, () -> closedStream.write("too late"));
+          } finally {
+            release.countDown();
+          }
+        }
+      }
+    }
+  }
+
+  @Test
+  void handlersCanCatchBodyLimitErrorsThroughThePublicHierarchy() throws Exception {
+    var options = new Options();
+    options.setMaxRequestBytes(4);
+    options.setMaxResponseBytes(1024);
+    options.setStreamBufferBytes(8);
+    options.setMaxParameters(1000);
+    options.setMultipart(new MultipartOptions());
+
+    {
+      var app = createAppForHandlersCanCatchBodyLimitErrorsThroughThePublicHierarchy(options);
+
+      try (Closeable appCleanup5 = app::close;
+          var client = HttpClient.newHttpClient()) {
+        app.routes()
+            .post(
+                "/body",
+                (request, response) -> {
+                  assertThrows(ContentTooLargeException.class, request::bodyBytes);
+
+                  response.status(413).text("handled by application");
+                });
+        app.start();
+        var body =
+            HttpRequest.BodyPublishers.ofInputStream(() -> new ByteArrayInputStream(new byte[5]));
+        var result =
+            client.send(request(app).POST(body).build(), HttpResponse.BodyHandlers.ofString());
+
+        assertEquals(413, result.statusCode());
+        assertEquals("handled by application", result.body());
+      }
+    }
+  }
+
+  private Shoostr createAppForHandlersCanCatchBodyLimitErrorsThroughThePublicHierarchy(
+      Options options) {
+    return new Shoostr(options)
+        .modifyServer(listenerServer -> {
+          var listener = (ServerConnector) listenerServer.getConnectors()[0];
+          listener.setHost("127.0.0.1");
+          listener.setPort(0);
+          listener.setIdleTimeout(5000);
+        });
+  }
+
+  @Test
+  void suppressesErrorBodyForHeadRequests() throws Exception {
+    {
+      var app = new Shoostr();
+
+      try (Closeable appCleanup6 = app::close) {
+        app.routes()
+            .head(
+                "/error",
+                (ignoredRequest, ignoredResponse) -> {
+                  throw new NotFoundException("secret");
+                });
+
+        try (var test = TestServer.start(app)) {
+          var result =
+              test.send(
+                  request -> request.path("/error").timeout(Duration.ofSeconds(5)).method("HEAD"),
+                  HttpResponse.BodyHandlers.ofString());
+
+          assertEquals(404, result.statusCode());
+          assertTrue(result.body().isEmpty());
+          assertFalse(result.headers().firstValue("Content-Type").isEmpty());
+        }
+      }
+    }
   }
 }

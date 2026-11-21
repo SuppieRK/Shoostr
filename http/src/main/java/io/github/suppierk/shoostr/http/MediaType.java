@@ -8,15 +8,15 @@ import org.jspecify.annotations.Nullable;
 
 /** Immutable outbound media-type name; construction does not inspect or encode payloads. */
 public final class MediaType {
-  private static final String NAME_FRAGMENT = "[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]{0,126}";
-  private static final Pattern BARE_TYPE = Pattern.compile(NAME_FRAGMENT + "/" + NAME_FRAGMENT);
-
   /** JSON media type from RFC 8259; no charset parameter is added. */
   public static final MediaType APPLICATION_JSON = of("application/json");
 
   /** URL-encoded form fields using the HTML form encoding format. */
   public static final MediaType APPLICATION_FORM_URLENCODED =
       of("application/x-www-form-urlencoded");
+
+  /** Multipart form data without a boundary parameter. */
+  public static final MediaType MULTIPART_FORM_DATA = of("multipart/form-data");
 
   /** Arbitrary binary data, as registered by RFC 2046. */
   public static final MediaType APPLICATION_OCTET_STREAM = of("application/octet-stream");
@@ -40,7 +40,7 @@ public final class MediaType {
    */
   private MediaType(String name, @Nullable Charset charset) {
     Objects.requireNonNull(name);
-    if (!BARE_TYPE.matcher(name).matches()) {
+    if (!NameSyntax.BARE_TYPE.matcher(name).matches()) {
       throw new IllegalArgumentException("Expected an RFC 6838 type/subtype name");
     }
 
@@ -48,7 +48,7 @@ public final class MediaType {
     if (charset == null) {
       this.value = this.name;
     } else {
-      var charsetName = charset.name();
+      final var charsetName = charset.name();
       if (!HttpCharacters.isValidHttpToken(charsetName)) {
         throw new IllegalArgumentException("Charset name must be an HTTP token");
       }
@@ -112,5 +112,14 @@ public final class MediaType {
   @Override
   public int hashCode() {
     return value.toLowerCase(Locale.ROOT).hashCode();
+  }
+
+  /** Initializes the pattern independently of the predefined media types. */
+  private static final class NameSyntax {
+    private static final String NAME_FRAGMENT = "[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]{0,126}";
+    private static final Pattern BARE_TYPE = Pattern.compile(NAME_FRAGMENT + "/" + NAME_FRAGMENT);
+
+    /** Prevents construction of the syntax holder. */
+    private NameSyntax() {}
   }
 }

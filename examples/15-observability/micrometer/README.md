@@ -9,9 +9,11 @@ Java and Gradle are provided by the build image. Start one example at a time:
 docker compose -f examples/15-observability/micrometer/compose.yaml up --build -d
 ```
 
-Startup is asynchronous. Check diagnostics with `docker compose -f examples/15-observability/micrometer/compose.yaml logs -f app`.
+Startup is asynchronous. Check diagnostics with
+`docker compose -f examples/15-observability/micrometer/compose.yaml logs -f app`.
 Open `http://127.0.0.1:8080/hello/Ada`. Expect Hello, Ada!; backend checks are below.
-Retry the request if the listener is not ready yet. Set `APP_PORT=8081` before the command if port 8080 is occupied, and use that port in requests.
+Retry the request if the listener is not ready yet. Set `APP_PORT=8081` before the command if port 8080 is occupied, and
+use that port in requests.
 Compose exposes the app on host loopback. These credentials and unauthenticated fixtures
 are for trusted local development. Direct Java runs use the default wildcard listener.
 
@@ -35,7 +37,8 @@ container validation is described in [CONTRIBUTING](../../../CONTRIBUTING.md#exa
 
 Maintainer backend fixture for the [request metrics recipe](../../../site/src/content/docs/observability/metrics.mdx).
 
-The recipe uses [RequestMetricsExample](src/main/java/io/github/suppierk/shoostr/example/metrics/RequestMetricsExample.java),
+The recipe
+uses [RequestMetricsExample](src/main/java/io/github/suppierk/shoostr/example/metrics/RequestMetricsExample.java),
 with complete tests in this module.
 These fixtures verify local instrumentation; the backend lane below separately
 checks actual Prometheus ingestion and Grafana queries.
@@ -44,7 +47,7 @@ One Shoostr app exports its own `/metrics`; no second metrics server or DI conta
 needed. [MetricsExample](src/main/java/io/github/suppierk/shoostr/example/metrics/MetricsExample.java)
 defines its routes inline and constructs the Prometheus registry explicitly.
 `MicrometerMetrics` borrows that caller-configured registry and enables observation
-with `allRequests()`. The example registers `app.afterClose(registry::close)` to
+with `app.withExtension(metrics)` before route registration. The example registers `app.afterClose(registry::close)` to
 release the registry after request drain and extension cleanup; the registry is
 not itself an extension. Core handles listener startup failures and JVM shutdown.
 

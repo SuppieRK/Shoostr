@@ -29,17 +29,20 @@ public final class OpenApiDocumentExample {
   public static Shoostr application() {
     var docs = new OpenApi("Items API", "1.0").tag(ITEMS_TAG, "Item operations");
     // Each instance owns its own document; route selection decides which receives an operation.
-    var internal = new OpenApi("Operations API", "1.0");
+    final var internal = new OpenApi("Operations API", "1.0");
+
     // This schema describes input; it does not install runtime validation on the handler.
     var schema = new JsonSchema();
     schema.setTypes(Set.of("object"));
     schema.addProperty("name", new JsonSchema().types(Set.of("string")));
     schema.setRequired(List.of("name"));
+
     var item = docs.schema("Item", schema);
+
     var mapper =
         Json31.mapper().rebuild().enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS).build();
+
     return new Shoostr()
-        .extensions(docs, internal)
         .routes(
             routes -> {
               // Serving a document is separate from selecting operations to describe in it.
@@ -49,9 +52,9 @@ public final class OpenApiDocumentExample {
                   .get(
                       "/operations/status",
                       (ignored, response) -> response.text("ready"),
-                      extensions ->
-                          extensions
-                              .with(internal)
+                      lifecycle ->
+                          lifecycle
+                              .withExtension(internal)
                               .summary("Operational status")
                               .response(200, "Ready", MediaType.TEXT_PLAIN))
                   .post(
@@ -63,9 +66,9 @@ public final class OpenApiDocumentExample {
                                   MediaType.APPLICATION_JSON,
                                   mapper.writeValueAsBytes(
                                       Map.of("name", itemName(mapper, request.bodyText())))),
-                      extensions ->
-                          extensions
-                              .with(docs)
+                      lifecycle ->
+                          lifecycle
+                              .withExtension(docs)
                               .summary("Create an item")
                               .operationId("createItem")
                               .tag(ITEMS_TAG)
@@ -83,9 +86,9 @@ public final class OpenApiDocumentExample {
                                           Map.of(
                                               "name",
                                               "Item " + request.pathParam("id").orElseThrow()))),
-                              extensions ->
-                                  extensions
-                                      .with(docs)
+                              lifecycle ->
+                                  lifecycle
+                                      .withExtension(docs)
                                       .summary("Find an item")
                                       .operationId("findItem")
                                       // Document the parameter explicitly, independently of the
@@ -93,7 +96,7 @@ public final class OpenApiDocumentExample {
                                       .pathParameter("id", "Numeric item identifier")
                                       .response(
                                           200, "Item found", MediaType.APPLICATION_JSON, item)),
-                      extensions -> extensions.with(docs).tag(ITEMS_TAG));
+                      lifecycle -> lifecycle.withExtension(docs).tag(ITEMS_TAG));
             });
   }
 
@@ -109,7 +112,6 @@ public final class OpenApiDocumentExample {
     JsonNode input;
 
     // These application checks enforce the input contract; publishing the schema does not.
-
     try {
       input = mapper.readTree(body);
     } catch (JacksonException failure) {

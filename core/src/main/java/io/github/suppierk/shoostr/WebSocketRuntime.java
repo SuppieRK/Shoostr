@@ -1,5 +1,8 @@
 package io.github.suppierk.shoostr;
 
+import static io.github.suppierk.shoostr.Locks.getUnderLock;
+import static io.github.suppierk.shoostr.Locks.runUnderLock;
+
 import java.io.IOException;
 import java.util.HashSet;
 import java.util.List;
@@ -7,11 +10,13 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.Executor;
 import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.locks.ReentrantLock;
 
 /** Owns managed connections without taking ownership of the shared application executor. */
 final class WebSocketRuntime {
   private final Executor executor;
   private final Set<ManagedWebSocket> connections;
+  private final ReentrantLock lifecycleLock;
   private boolean stopping;
   private boolean stopped;
 
@@ -22,7 +27,8 @@ final class WebSocketRuntime {
    */
   WebSocketRuntime(Executor executor) {
     this.executor = Objects.requireNonNull(executor);
-    connections = new HashSet<>();
+    this.connections = new HashSet<>();
+    this.lifecycleLock = new ReentrantLock();
   }
 
   /**
@@ -31,13 +37,28 @@ final class WebSocketRuntime {
    * @param connection opened adapter
    * @return whether dispatch was accepted
    */
-  synchronized boolean register(ManagedWebSocket connection) {
-    if (stopping) {
-      return false;
-    }
+  boolean register(ManagedWebSocket connection) {
+    return Boolean.TRUE.equals(
+        getUnderLock(
+            lifecycleLock,
+            () -> {
+              if (stopping) {
+                return false;
+              }
 
-    connections.add(connection);
-    return true;
+              connections.add(connection);
+
+              return true;
+            }));
+  }
+
+  /**
+   * Releases registry ownership after transport closure or rejected dispatch.
+   *
+   * @param connection terminated adapter
+   */
+  void remove(ManagedWebSocket connection) {
+    runUnderLock(lifecycleLock, () -> connections.remove(connection));
   }
 
   /**
@@ -48,27 +69,21 @@ final class WebSocketRuntime {
    *     work
    */
   void execute(Runnable task) {
-    synchronized (this) {
-      if (stopped) {
-        throw new RejectedExecutionException("Managed WebSocket dispatch is closed");
-      }
-    }
-    executor.execute(task);
-  }
+    runUnderLock(
+        lifecycleLock,
+        () -> {
+          if (stopped) {
+            throw new RejectedExecutionException("Managed WebSocket dispatch is closed");
+          }
+        });
 
-  /**
-   * Releases registry ownership after transport closure or rejected dispatch.
-   *
-   * @param connection terminated adapter
-   */
-  synchronized void remove(ManagedWebSocket connection) {
-    connections.remove(connection);
+    executor.execute(task);
   }
 
   /**
    * Rejects new connections and signals managed work before Jetty's native drain.
    *
-   * @throws IOException if signalling fails; every registered connection is still attempted
+   * @throws IOException if signaling fails; every registered connection is still attempted
    */
   void stop() throws IOException {
     signal(false);
@@ -90,18 +105,9 @@ final class WebSocketRuntime {
    * @throws IOException if any connection fails to settle
    */
   private void signal(boolean finished) throws IOException {
-    List<ManagedWebSocket> active;
-    synchronized (this) {
-      if (stopped) {
-        return;
-      }
-
-      stopping = true;
-      stopped = finished;
-      active = List.copyOf(connections);
-    }
+    final var active = prepareSignal(finished);
     IOException failure = null;
-    for (var connection : active) {
+    for (final var connection : active) {
       try {
         if (finished) {
           connection.finishStop();
@@ -119,5 +125,27 @@ final class WebSocketRuntime {
     if (failure != null) {
       throw failure;
     }
+  }
+
+  /**
+   * Updates shutdown state and snapshots connections while holding the runtime lock.
+   *
+   * @param finished whether native stop has ended and dispatch must close
+   * @return registered connections, or an empty list if dispatch has already closed
+   */
+  private List<ManagedWebSocket> prepareSignal(boolean finished) {
+    return Objects.requireNonNull(
+        getUnderLock(
+            lifecycleLock,
+            () -> {
+              if (stopped) {
+                return List.of();
+              }
+
+              stopping = true;
+              stopped = finished;
+
+              return List.copyOf(connections);
+            }));
   }
 }

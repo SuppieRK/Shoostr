@@ -16,10 +16,13 @@ import org.junit.jupiter.params.provider.ValueSource;
 class TestSourcePolicyTest {
   private static final Pattern NON_CODE =
       Pattern.compile(
-          "\"\"\"[\\s\\S]*?\"\"\"|\"(?:\\\\.|[^\"\\\\])*\"|'(?:\\\\.|[^'\\\\])*'|//[^\\r\\n]*|/\\*[\\s\\S]*?\\*/");
+          "\"\"\"[\\s\\S]*?\"\"\"|\"(?:\\\\.|[^\"\\\\])*\"|'(?:\\\\.|"
+              + "[^'\\\\])*'|//[^\\r\\n]*|/\\*[\\s\\S]*?\\*/");
   private static final Pattern LEGACY_JUNIT_IMPORT =
       Pattern.compile(
-          "(?m)^\\s*import\\s+(?:static\\s+)?(?:junit\\.framework\\.|org\\.junit\\.(?!(?:jupiter|platform)\\.))[A-Za-z0-9_.*]+\\s*;");
+          "(?m)^\\s*import\\s+(?:static\\s+)?(?:junit\\.framework"
+              + "\\.|org\\.junit\\.(?!(?:jupiter|platform)\\.))[A-Za-z0"
+              + "-9_.*]+\\s*;");
   private static final Pattern TEST_MAIN =
       Pattern.compile("^\\s*(?:(?:public|protected|private)\\s+)?static\\s+void\\s+main\\s*\\(");
   private static final Pattern DIRECT_ASSERTION_ERROR =
@@ -28,7 +31,9 @@ class TestSourcePolicyTest {
       Pattern.compile("\\b(?:Files\\.createTemp(?:File|Directory)|File\\.createTempFile)\\s*\\(");
   private static final Pattern FILE_WRITE =
       Pattern.compile(
-          "\\bFiles\\.(?:write|writeString|newOutputStream|newBufferedWriter|createFile|createDirectory|createDirectories|delete|deleteIfExists)\\s*\\(");
+          "\\bFiles\\.(?:write|writeString|newOutputStream|"
+              + "newBufferedWriter|createFile|createDirectory|"
+              + "createDirectories|delete|deleteIfExists)\\s*\\(");
 
   @ParameterizedTest
   @ValueSource(
@@ -94,19 +99,19 @@ class TestSourcePolicyTest {
         "Files.createTempFile(\n    \"unmanaged\", \".txt\");",
         "File.createTempFile(\"unmanaged\", \".txt\");"
       })
-  void rejectsTransientFilesWithoutAManagedParent(String source) {
+  void rejectsTransientFilesWithoutManagedParent(String source) {
     assertEquals(1, violations(source));
   }
 
   @Test
-  void permitsTransientFilesUnderAManagedParent() {
+  void permitsTransientFilesUnderManagedParent() {
     assertEquals(0, violations("Files.createTempFile(temporaryDirectory, \"managed\", \".txt\");"));
     assertEquals(
         0, violations("File.createTempFile(\"managed\", \".txt\", temporaryDirectory.toFile());"));
   }
 
   @Test
-  void rejectsFileTempCreationWithANullParent() {
+  void rejectsFileTempCreationWithNullParent() {
     assertEquals(1, violations("File.createTempFile(\"unmanaged\", \".txt\", null);"));
   }
 
@@ -144,6 +149,7 @@ class TestSourcePolicyTest {
     }
 
     scan(Path.of("config/checkstyle/tests"), failures);
+
     assertTrue(failures.isEmpty(), String.join("\n", failures));
   }
 
@@ -168,11 +174,11 @@ class TestSourcePolicyTest {
 
     var lines = code.lines().toList();
     var originalLines = source.lines().toList();
-    for (int index = 0; index < lines.size(); index++) {
-      if (TEST_MAIN.matcher(lines.get(index)).find()
-          && (index == 0
+    for (int lineIndex = 0; lineIndex < lines.size(); lineIndex++) {
+      if (TEST_MAIN.matcher(lines.get(lineIndex)).find()
+          && (lineIndex == 0
               || !originalLines
-                  .get(index - 1)
+                  .get(lineIndex - 1)
                   .trim()
                   .startsWith("// test-source-policy: subprocess-main"))) {
         count++;
@@ -207,6 +213,20 @@ class TestSourcePolicyTest {
     return count;
   }
 
+  private static String maskNonCode(String source) {
+    char[] masked = source.toCharArray();
+    var matches = NON_CODE.matcher(source);
+    while (matches.find()) {
+      for (int characterIndex = matches.start(); characterIndex < matches.end(); characterIndex++) {
+        if (masked[characterIndex] != '\n' && masked[characterIndex] != '\r') {
+          masked[characterIndex] = ' ';
+        }
+      }
+    }
+
+    return new String(masked);
+  }
+
   private static int firstArgument(String source, int start) {
     int argument = start;
     while (argument < source.length() && Character.isWhitespace(source.charAt(argument))) {
@@ -220,8 +240,8 @@ class TestSourcePolicyTest {
     int depth = 0;
     int commas = 0;
     int parentStart = -1;
-    for (int index = start; index < code.length(); index++) {
-      char value = code.charAt(index);
+    for (int characterIndex = start; characterIndex < code.length(); characterIndex++) {
+      char value = code.charAt(characterIndex);
       if (value == '(') {
         depth++;
       } else if (value == ')') {
@@ -230,7 +250,8 @@ class TestSourcePolicyTest {
             return false;
           }
 
-          var parent = code.substring(parentStart, index).trim();
+          var parent = code.substring(parentStart, characterIndex).trim();
+
           return !parent.isEmpty() && !"null".equals(parent);
         }
 
@@ -238,25 +259,11 @@ class TestSourcePolicyTest {
       } else if (value == ',' && depth == 0) {
         commas++;
         if (commas == 2) {
-          parentStart = index + 1;
+          parentStart = characterIndex + 1;
         }
       }
     }
 
     return false;
-  }
-
-  private static String maskNonCode(String source) {
-    char[] masked = source.toCharArray();
-    var matches = NON_CODE.matcher(source);
-    while (matches.find()) {
-      for (int index = matches.start(); index < matches.end(); index++) {
-        if (masked[index] != '\n' && masked[index] != '\r') {
-          masked[index] = ' ';
-        }
-      }
-    }
-
-    return new String(masked);
   }
 }

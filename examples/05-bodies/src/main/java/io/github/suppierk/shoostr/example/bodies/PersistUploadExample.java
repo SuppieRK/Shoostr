@@ -25,8 +25,9 @@ public final class PersistUploadExample {
   public static Shoostr application(Path directory) throws IOException {
     var storage =
         Files.createDirectories(Objects.requireNonNull(directory).toAbsolutePath().normalize());
-    var multipart = MultipartOptions.defaults().withTemporaryDirectory(storage);
-    return new Shoostr(Options.defaults().withMultipart(multipart))
+    var configuredOptions = options(storage);
+
+    return new Shoostr(configuredOptions)
         .modifyServer(
             nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0))
         .routes(
@@ -38,6 +39,7 @@ public final class PersistUploadExample {
                           request
                               .file("document")
                               .orElseThrow(() -> new BadRequestException("Missing document"));
+
                       // Generate the storage name; an uploaded filename is not a trusted path.
                       var destination = Files.createTempFile(storage, "upload-", ".bin");
 
@@ -57,5 +59,20 @@ public final class PersistUploadExample {
 
                       response.status(201).text(destination.getFileName().toString());
                     }));
+  }
+
+  /**
+   * Configures the listener and resource policy used by this application.
+   *
+   * @param storage application setting
+   * @return detached serving options
+   */
+  private static Options options(Path storage) {
+    var multipart = new MultipartOptions();
+    multipart.setTemporaryDirectory(storage);
+    var configuredOptions = new Options();
+    configuredOptions.setMultipart(multipart);
+
+    return configuredOptions;
   }
 }

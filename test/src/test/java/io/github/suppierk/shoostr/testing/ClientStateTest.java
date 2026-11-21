@@ -9,10 +9,24 @@ import org.junit.jupiter.api.Timeout;
 
 @Timeout(15)
 class ClientStateTest {
+  private static Shoostr cookieApp() {
+    var app = new Shoostr();
+    app.routes()
+        .get("/set", (ignoredRequest, response) -> response.cookie("token", "value").text("set"));
+    app.routes()
+        .get(
+            "/read",
+            (request, response) -> response.text(request.cookie("token").orElse("absent")));
+
+    return app;
+  }
+
   @Test
   void keepsCookiesAcrossRequestsWithinOneFixture() throws Exception {
+
     try (var test = TestServer.start(cookieApp())) {
       test.send(request -> request.path("/set"));
+
       assertEquals(
           "value",
           test.send(request -> request.path("/read"), HttpResponse.BodyHandlers.ofString()).body());
@@ -21,14 +35,18 @@ class ClientStateTest {
 
   @Test
   void doesNotShareCookiesWithAnotherFixtureOnTheSameHost() throws Exception {
-    try (var first = TestServer.start(cookieApp());
-        var second = TestServer.start(cookieApp())) {
-      first.send(request -> request.path("/set"));
-      assertEquals(
-          "absent",
-          second
-              .send(request -> request.path("/read"), HttpResponse.BodyHandlers.ofString())
-              .body());
+
+    try (var first = TestServer.start(cookieApp())) {
+
+      try (var second = TestServer.start(cookieApp())) {
+        first.send(request -> request.path("/set"));
+
+        assertEquals(
+            "absent",
+            second
+                .send(request -> request.path("/read"), HttpResponse.BodyHandlers.ofString())
+                .body());
+      }
     }
   }
 
@@ -40,23 +58,14 @@ class ClientStateTest {
             "/redirect",
             (ignored, response) ->
                 response.status(302).setHeader("Location", "/target").text("redirect"));
-    app.routes().get("/target", (ignored2, response) -> response.text("target"));
+    app.routes().get("/target", (ignoredRequest, response) -> response.text("target"));
 
     try (var test = TestServer.start(app)) {
       var reply =
           test.send(request -> request.path("/redirect"), HttpResponse.BodyHandlers.ofString());
+
       assertEquals(302, reply.statusCode());
       assertEquals("redirect", reply.body());
     }
-  }
-
-  private static Shoostr cookieApp() {
-    var app = new Shoostr();
-    app.routes().get("/set", (ignored3, response) -> response.cookie("token", "value").text("set"));
-    app.routes()
-        .get(
-            "/read",
-            (request, response) -> response.text(request.cookie("token").orElse("absent")));
-    return app;
   }
 }

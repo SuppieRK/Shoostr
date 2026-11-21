@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import io.github.suppierk.shoostr.http.HttpHeaders;
 import io.github.suppierk.shoostr.testing.TestServer;
+import java.io.IOException;
 import java.net.http.HttpResponse;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -12,13 +13,15 @@ import org.junit.jupiter.params.provider.ValueSource;
 
 class SseExampleTest {
   @Test
-  void sendsTheSuppliedReportAsAResultEvent() throws Exception {
+  void sendsTheSuppliedReportAsResultEvent() throws Exception {
+
     try (var test = TestServer.start(SseExample.application(() -> "Ready"))) {
       var response =
           test.send(
               request ->
                   request.path("/reports").header(HttpHeaders.ACCEPT.value(), "text/event-stream"),
               HttpResponse.BodyHandlers.ofString());
+
       assertAll(
           () -> assertEquals(200, response.statusCode()),
           () ->
@@ -29,13 +32,15 @@ class SseExampleTest {
   }
 
   @Test
-  void sendsASafeFailureEventAfterStreamingHasStarted() throws Exception {
+  void sendsSafeFailureEventAfterStreamingHasStarted() throws Exception {
+
     try (var test = TestServer.start(SseExample.application())) {
       var response =
           test.send(
               request ->
                   request.path("/reports").header(HttpHeaders.ACCEPT.value(), "text/event-stream"),
               HttpResponse.BodyHandlers.ofString());
+
       assertAll(
           () -> assertEquals(200, response.statusCode()),
           () ->
@@ -50,15 +55,11 @@ class SseExampleTest {
   }
 
   @Test
-  void handlesAFailureBeforeStreamingAsAnHttpError() throws Exception {
+  void handlesFailureBeforeStreamingAsAnHttpError() throws Exception {
+
     try (var test = TestServer.start(SseExample.application())) {
-      var response =
-          test.send(
-              request ->
-                  request
-                      .path("/unavailable")
-                      .header(HttpHeaders.ACCEPT.value(), "text/event-stream"),
-              HttpResponse.BodyHandlers.ofString());
+      var response = sendResponseForHandlesFailureBeforeStreamingAsAnHttpError(test);
+
       assertAll(
           () -> assertEquals(500, response.statusCode()),
           () -> assertEquals("Stream unavailable", response.body()),
@@ -69,33 +70,42 @@ class SseExampleTest {
     }
   }
 
+  private HttpResponse<String> sendResponseForHandlesFailureBeforeStreamingAsAnHttpError(
+      TestServer test) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request.path("/unavailable").header(HttpHeaders.ACCEPT.value(), "text/event-stream"),
+        HttpResponse.BodyHandlers.ofString());
+  }
+
   @Test
   void stopsReconnectionAfterTheFinalReplayEntry() throws Exception {
+
     try (var test = TestServer.start(SseExample.application())) {
-      var response =
-          test.send(
-              request ->
-                  request
-                      .path("/replay")
-                      .header(HttpHeaders.ACCEPT.value(), "text/event-stream")
-                      .header(HttpHeaders.LAST_EVENT_ID.value(), "3"));
+      var response = sendResponseForStopsReconnectionAfterTheFinalReplayEntry(test);
+
       assertAll(
           () -> assertEquals(204, response.statusCode()),
           () -> assertEquals(0, response.body().length));
     }
   }
 
+  private HttpResponse<byte[]> sendResponseForStopsReconnectionAfterTheFinalReplayEntry(
+      TestServer test) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/replay")
+                .header(HttpHeaders.ACCEPT.value(), "text/event-stream")
+                .header(HttpHeaders.LAST_EVENT_ID.value(), "3"));
+  }
+
   @Test
   void resumesAfterTheClientsLastEventId() throws Exception {
+
     try (var test = TestServer.start(SseExample.application())) {
-      var response =
-          test.send(
-              request ->
-                  request
-                      .path("/replay")
-                      .header(HttpHeaders.ACCEPT.value(), "text/event-stream")
-                      .header(HttpHeaders.LAST_EVENT_ID.value(), "1"),
-              HttpResponse.BodyHandlers.ofString());
+      var response = sendResponseForResumesAfterTheClientsLastEventId(test);
+
       assertAll(
           () -> assertEquals(200, response.statusCode()),
           () ->
@@ -105,18 +115,24 @@ class SseExampleTest {
     }
   }
 
+  private HttpResponse<String> sendResponseForResumesAfterTheClientsLastEventId(TestServer test)
+      throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/replay")
+                .header(HttpHeaders.ACCEPT.value(), "text/event-stream")
+                .header(HttpHeaders.LAST_EVENT_ID.value(), "1"),
+        HttpResponse.BodyHandlers.ofString());
+  }
+
   @ParameterizedTest
   @ValueSource(strings = {"abc", "-1", "4", "2147483648"})
-  void rejectsInvalidReplayCursorsBeforeStartingAStream(String cursor) throws Exception {
+  void rejectsInvalidReplayCursorsBeforeStartingStream(String cursor) throws Exception {
+
     try (var test = TestServer.start(SseExample.application())) {
-      var response =
-          test.send(
-              request ->
-                  request
-                      .path("/replay")
-                      .header(HttpHeaders.ACCEPT.value(), "text/event-stream")
-                      .header(HttpHeaders.LAST_EVENT_ID.value(), cursor),
-              HttpResponse.BodyHandlers.ofString());
+      var response = sendResponseForRejectsInvalidReplayCursorsBeforeStartingStream(test, cursor);
+
       assertAll(
           () -> assertEquals(400, response.statusCode()),
           () -> assertEquals("Bad Request", response.body()),
@@ -127,48 +143,93 @@ class SseExampleTest {
     }
   }
 
+  private HttpResponse<String> sendResponseForRejectsInvalidReplayCursorsBeforeStartingStream(
+      TestServer test, String cursor) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/replay")
+                .header(HttpHeaders.ACCEPT.value(), "text/event-stream")
+                .header(HttpHeaders.LAST_EVENT_ID.value(), cursor),
+        HttpResponse.BodyHandlers.ofString());
+  }
+
   @Test
-  void replaysAllThreeEntriesWithoutALastEventId() throws Exception {
+  void replaysAllThreeEntriesWithoutLastEventId() throws Exception {
+
     try (var test = TestServer.start(SseExample.application())) {
       var response =
           test.send(
               request ->
                   request.path("/replay").header(HttpHeaders.ACCEPT.value(), "text/event-stream"),
               HttpResponse.BodyHandlers.ofString());
+
       assertAll(
           () -> assertEquals(200, response.statusCode()),
           () ->
               assertEquals(
-                  "id: 1\nretry: 1000\ndata: Entry 1\n\nid: 2\nretry: 1000\ndata: Entry 2\n\nid: 3\nretry: 1000\ndata: Entry 3\n\n",
+                  """
+                      id: 1
+                      retry: 1000
+                      data: Entry 1
+
+                      id: 2
+                      retry: 1000
+                      data: Entry 2
+
+                      id: 3
+                      retry: 1000
+                      data: Entry 3
+
+                      """,
                   response.body()));
     }
   }
 
   @Test
   void sendsTheNamedProgressFeedWithItsMetadata() throws Exception {
+
     try (var test = TestServer.start(SseExample.application())) {
       var response =
           test.send(
               request ->
                   request.path("/progress").header(HttpHeaders.ACCEPT.value(), "text/event-stream"),
               HttpResponse.BodyHandlers.ofString());
+
       assertAll(
           () -> assertEquals(200, response.statusCode()),
           () ->
               assertEquals(
-                  ": connection ready\n\n:\n\nevent: progress\nid: 1\nretry: 2000\ndata: Preparing\ndata: Waiting\n\nevent: done\nid: 2\ndata: Complete\n\n",
+                  """
+                      : connection ready
+
+                      :
+
+                      event: progress
+                      id: 1
+                      retry: 2000
+                      data: Preparing
+                      data: Waiting
+
+                      event: done
+                      id: 2
+                      data: Complete
+
+                      """,
                   response.body()));
     }
   }
 
   @Test
   void completesAfterSendingBothUnnamedEvents() throws Exception {
+
     try (var test = TestServer.start(SseExample.application())) {
       var response =
           test.send(
               request ->
                   request.path("/events").header(HttpHeaders.ACCEPT.value(), "text/event-stream"),
               HttpResponse.BodyHandlers.ofString());
+
       assertAll(
           () -> assertEquals(200, response.statusCode()),
           () -> assertEquals("data: starting\n\ndata: complete\n\n", response.body()),
@@ -181,8 +242,10 @@ class SseExampleTest {
 
   @Test
   void servesThePlainTextEndpointList() throws Exception {
+
     try (var test = TestServer.start(SseExample.application())) {
       var response = test.send(request -> request.path("/"), HttpResponse.BodyHandlers.ofString());
+
       assertAll(
           () -> assertEquals(200, response.statusCode()),
           () ->

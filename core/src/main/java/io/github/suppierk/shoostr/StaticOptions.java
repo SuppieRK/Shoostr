@@ -33,6 +33,27 @@ public final class StaticOptions {
   }
 
   /**
+   * Restricts configured resources to simple leaf names inside their selected directory.
+   *
+   * @param fileName requested filename
+   * @return validated filename
+   * @throws IllegalArgumentException if the filename could escape or select a directory
+   */
+  private static String validFileName(String fileName) {
+    Objects.requireNonNull(fileName);
+    if (fileName.isBlank()
+        || HttpCharacters.DOT_STRING.equals(fileName)
+        || HttpCharacters.PARENT_DIRECTORY.equals(fileName)
+        || fileName.indexOf(HttpCharacters.PATH_SEPARATOR) >= 0
+        || fileName.indexOf(HttpCharacters.BACKSLASH) >= 0
+        || fileName.indexOf('\u0000') >= 0) {
+      throw new IllegalArgumentException("Expected a simple static-resource filename");
+    }
+
+    return fileName;
+  }
+
+  /**
    * Serves this filename inside an existing requested directory, including the mount root.
    *
    * @param fileName simple filename without path separators or traversal syntax
@@ -44,6 +65,15 @@ public final class StaticOptions {
   }
 
   /**
+   * Returns the configured welcome filename.
+   *
+   * @return welcome filename, or null when disabled
+   */
+  @Nullable String welcomeFile() {
+    return welcomeFile;
+  }
+
+  /**
    * Serves this filename from the mount root when a requested resource is missing.
    *
    * @param fileName simple filename without path separators or traversal syntax
@@ -52,15 +82,6 @@ public final class StaticOptions {
    */
   public StaticOptions withSpaFallback(String fileName) {
     return new StaticOptions(welcomeFile, Objects.requireNonNull(fileName));
-  }
-
-  /**
-   * Returns the configured welcome filename.
-   *
-   * @return welcome filename, or null when disabled
-   */
-  @Nullable String welcomeFile() {
-    return welcomeFile;
   }
 
   /**
@@ -93,26 +114,5 @@ public final class StaticOptions {
   @Override
   public int hashCode() {
     return Objects.hash(welcomeFile, spaFallback);
-  }
-
-  /**
-   * Restricts configured resources to simple leaf names inside their selected directory.
-   *
-   * @param fileName requested filename
-   * @return validated filename
-   * @throws IllegalArgumentException if the filename could escape or select a directory
-   */
-  private static String validFileName(String fileName) {
-    Objects.requireNonNull(fileName);
-    if (fileName.isBlank()
-        || HttpCharacters.DOT_STRING.equals(fileName)
-        || HttpCharacters.PARENT_DIRECTORY.equals(fileName)
-        || fileName.indexOf(HttpCharacters.PATH_SEPARATOR) >= 0
-        || fileName.indexOf(HttpCharacters.BACKSLASH) >= 0
-        || fileName.indexOf('\u0000') >= 0) {
-      throw new IllegalArgumentException("Expected a simple static-resource filename");
-    }
-
-    return fileName;
   }
 }

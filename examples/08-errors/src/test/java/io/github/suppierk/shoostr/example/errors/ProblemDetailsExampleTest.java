@@ -14,13 +14,17 @@ import org.junit.jupiter.api.Timeout;
 class ProblemDetailsExampleTest {
   @Test
   void returnsProblemJsonWithMatchingStatusAndSafePublicMembers() throws Exception {
+
     try (var test = TestServer.start(ProblemDetailsExample.application())) {
       var response =
           test.send(request -> request.path("/items/42"), HttpResponse.BodyHandlers.ofString());
+
       assertEquals(404, response.statusCode());
       assertEquals(
           "application/problem+json", response.headers().firstValue("Content-Type").orElseThrow());
+
       var problem = new ObjectMapper().readTree(response.body());
+
       assertEquals(6, problem.size());
       assertEquals("about:blank", problem.path("type").asText());
       assertEquals("Not Found", problem.path("title").asText());

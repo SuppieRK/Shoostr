@@ -10,6 +10,7 @@ import java.util.Objects;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Consumer;
 import org.jspecify.annotations.Nullable;
 
@@ -21,6 +22,8 @@ import org.jspecify.annotations.Nullable;
 final class McpRequestLifetime implements RequestObservation {
   private final ScheduledThreadPoolExecutor deadlines;
   private final String expiredTokenChallenge;
+  private final ReentrantLock lock;
+
   private @Nullable Instant expiresAt;
   private @Nullable ScheduledFuture<?> deadline;
   private @Nullable Thread owner;
@@ -40,6 +43,7 @@ final class McpRequestLifetime implements RequestObservation {
   McpRequestLifetime(ScheduledThreadPoolExecutor deadlines, String expiredTokenChallenge) {
     this.deadlines = Objects.requireNonNull(deadlines);
     this.expiredTokenChallenge = Objects.requireNonNull(expiredTokenChallenge);
+    this.lock = new ReentrantLock();
   }
 
   /**
@@ -50,16 +54,22 @@ final class McpRequestLifetime implements RequestObservation {
    * @throws IllegalStateException if this exchange was already armed or completed
    * @throws AuthenticationRequiredException if the token has already expired
    */
-  synchronized void arm(@Nullable Instant expiry) {
-    if (completed || owner != null) {
-      throw new IllegalStateException("The MCP HTTP lifetime cannot be armed again");
-    }
+  void arm(@Nullable Instant expiry) {
+    lock.lock();
 
-    requireFresh(expiry);
-    expiresAt = expiry;
-    owner = Thread.currentThread();
-    if (expiry != null) {
-      scheduleExpiry(Duration.between(Instant.now(), expiry));
+    try {
+      if (completed || owner != null) {
+        throw new IllegalStateException("The MCP HTTP lifetime cannot be armed again");
+      }
+
+      requireFreshUnderLock(expiry);
+      expiresAt = expiry;
+      owner = Thread.currentThread();
+      if (expiry != null) {
+        scheduleExpiry(Duration.between(Instant.now(), expiry));
+      }
+    } finally {
+      lock.unlock();
     }
   }
 
@@ -70,13 +80,19 @@ final class McpRequestLifetime implements RequestObservation {
    * @throws IllegalStateException if this handler does not own an unattached lifetime
    * @throws AuthenticationRequiredException if the token has expired
    */
-  synchronized void stream(McpStream transport) {
-    if (completed || owner != Thread.currentThread() || stream != null) {
-      throw new IllegalStateException("The MCP HTTP lifetime cannot attach this stream");
-    }
+  void stream(McpStream transport) {
+    lock.lock();
 
-    requireFresh();
-    stream = Objects.requireNonNull(transport);
+    try {
+      if (completed || owner != Thread.currentThread() || stream != null) {
+        throw new IllegalStateException("The MCP HTTP lifetime cannot attach this stream");
+      }
+
+      requireFreshUnderLock(expiresAt);
+      stream = Objects.requireNonNull(transport);
+    } finally {
+      lock.unlock();
+    }
   }
 
   /**
@@ -85,12 +101,18 @@ final class McpRequestLifetime implements RequestObservation {
    * @param authenticationResponse whether the staged status is401
    * @throws AuthenticationRequiredException if expired output is not its authentication rejection
    */
-  synchronized void beforeFlush(boolean authenticationResponse) {
-    if (authenticationResponse && expiryRejected) {
-      return;
-    }
+  void beforeFlush(boolean authenticationResponse) {
+    lock.lock();
 
-    requireFresh();
+    try {
+      if (authenticationResponse && expiryRejected) {
+        return;
+      }
+
+      requireFreshUnderLock(expiresAt);
+    } finally {
+      lock.unlock();
+    }
   }
 
   /**
@@ -99,17 +121,23 @@ final class McpRequestLifetime implements RequestObservation {
    *
    * @throws AuthenticationRequiredException if the verified deadline has elapsed
    */
-  synchronized void requireFresh() {
-    requireFresh(expiresAt);
+  void requireFresh() {
+    lock.lock();
+
+    try {
+      requireFreshUnderLock(expiresAt);
+    } finally {
+      lock.unlock();
+    }
   }
 
   /**
-   * Validates a candidate deadline before publishing admission state or writing output.
+   * Validates a candidate deadline while the caller holds the lifetime lock.
    *
    * @param expiry verified token expiry, or null for a public/non-token identity
    * @throws AuthenticationRequiredException if the verified deadline has elapsed
    */
-  private void requireFresh(@Nullable Instant expiry) {
+  private void requireFreshUnderLock(@Nullable Instant expiry) {
     if (expired || (expiry != null && !expiry.isAfter(Instant.now()))) {
       expiryRejected = true;
       clearOwnedInterruption();
@@ -132,14 +160,20 @@ final class McpRequestLifetime implements RequestObservation {
    * The admission scope closes before a handoff and therefore cannot revoke a later worker.
    */
   @Override
-  public synchronized void close() {
-    if (owner != Thread.currentThread()) {
-      return;
-    }
+  public void close() {
+    lock.lock();
 
-    owner = null;
-    stream = null;
-    clearOwnedInterruption();
+    try {
+      if (owner != Thread.currentThread()) {
+        return;
+      }
+
+      owner = null;
+      stream = null;
+      clearOwnedInterruption();
+    } finally {
+      lock.unlock();
+    }
   }
 
   /** Clears only the interruption introduced by this lifetime on its current handler. */
@@ -158,12 +192,18 @@ final class McpRequestLifetime implements RequestObservation {
    * @param completion nonblocking terminal initialization callback
    * @throws IllegalStateException if initialization ownership was already assigned or completed
    */
-  synchronized void initialization(Consumer<RequestOutcome> completion) {
-    if (completed || initialization != null) {
-      throw new IllegalStateException("The MCP initialization lifetime cannot be assigned again");
-    }
+  void initialization(Consumer<RequestOutcome> completion) {
+    lock.lock();
 
-    initialization = Objects.requireNonNull(completion);
+    try {
+      if (completed || initialization != null) {
+        throw new IllegalStateException("The MCP initialization lifetime cannot be assigned again");
+      }
+
+      initialization = Objects.requireNonNull(completion);
+    } finally {
+      lock.unlock();
+    }
   }
 
   /**
@@ -174,7 +214,9 @@ final class McpRequestLifetime implements RequestObservation {
   @Override
   public void complete(RequestOutcome outcome) {
     Consumer<RequestOutcome> terminal;
-    synchronized (this) {
+    lock.lock();
+
+    try {
       completed = true;
       if (deadline != null) {
         deadline.cancel(false);
@@ -183,33 +225,12 @@ final class McpRequestLifetime implements RequestObservation {
 
       terminal = initialization;
       initialization = null;
+    } finally {
+      lock.unlock();
     }
+
     if (terminal != null) {
       terminal.accept(outcome);
-    }
-  }
-
-  /** Rechecks the verified expiry before signaling the mailbox and interrupting its owner. */
-  private synchronized void expire() {
-    if (completed || owner == null || expiryRejected) {
-      return;
-    }
-
-    var remaining = Duration.between(Instant.now(), Objects.requireNonNull(expiresAt));
-    if (remaining.isPositive()) {
-      // Relative timer delays and wall-clock token expiry can diverge after a clock adjustment.
-      scheduleExpiry(remaining);
-      return;
-    }
-
-    expired = true;
-    if (stream != null) {
-      stream.fail(new IOException("The MCP HTTP token expired"));
-    }
-
-    if (!owner.isInterrupted()) {
-      interruptedOwner = true;
-      owner.interrupt();
     }
   }
 
@@ -226,5 +247,35 @@ final class McpRequestLifetime implements RequestObservation {
                 ? Long.MAX_VALUE
                 : remaining.toNanos(),
             TimeUnit.NANOSECONDS);
+  }
+
+  /** Rechecks the verified expiry before signaling the mailbox and interrupting its owner. */
+  private void expire() {
+    lock.lock();
+
+    try {
+      if (completed || owner == null || expiryRejected) {
+        return;
+      }
+
+      var remaining = Duration.between(Instant.now(), Objects.requireNonNull(expiresAt));
+      if (remaining.isPositive()) {
+        // Relative timer delays and wall-clock token expiry can diverge after a clock adjustment.
+        scheduleExpiry(remaining);
+        return;
+      }
+
+      expired = true;
+      if (stream != null) {
+        stream.fail(new IOException("The MCP HTTP token expired"));
+      }
+
+      if (!owner.isInterrupted()) {
+        interruptedOwner = true;
+        owner.interrupt();
+      }
+    } finally {
+      lock.unlock();
+    }
   }
 }

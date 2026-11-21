@@ -27,7 +27,9 @@ public final class SseExample {
    */
   public static void main(String[] args) throws Exception {
     var app = application();
+
     app.start();
+
     LOGGER.info("SSE examples: http://127.0.0.1:{}/", app.port());
   }
 
@@ -55,97 +57,108 @@ public final class SseExample {
    */
   public static Shoostr application(Supplier<String> report) {
     Objects.requireNonNull(report);
+
     return new Shoostr()
         // App-wide exception handling can return an HTTP error only before streaming is committed.
         .exception(
             IllegalStateException.class,
-            (ignored, ignored2, response) ->
+            (ignored, ignoredRequest, response) ->
                 response
                     .status(HttpStatusCodes.INTERNAL_SERVER_ERROR.value())
                     .text("Stream unavailable"))
         .routes(
             routes -> {
               // This plain-text page gives browser-console clients the server's own origin.
-              routes.get(
-                  "/",
-                  (ignored3, response) ->
-                      response.text(
-                          "SSE endpoints: /events, /progress, /replay, /unavailable, /reports"));
-              // Shoostr's core SSE route commits an event stream; returning finishes this finite
-              // feed.
-              routes.sse(
-                  "/events",
-                  (ignored4, response) -> {
-                    var events = response.startEventStream();
-                    events.send("starting");
-                    events.send("complete");
-                  });
-              // SseEvent is a core value type for names, IDs and retry hints, not a JSON codec.
-              routes.sse(
-                  "/progress",
-                  (ignored5, response) -> {
-                    var events = response.startEventStream();
-                    // Comments and heartbeats keep the connection active without dispatching data
-                    // events.
-                    events.comment("connection ready");
-                    events.heartbeat();
-                    events.send(
-                        SseEvent.of("Preparing\nWaiting")
-                            .withEvent("progress")
-                            .withId("1")
-                            .withRetry(Duration.ofSeconds(2)));
-                    events.send(SseEvent.of("Complete").withEvent("done").withId("2"));
-                  });
-              // This fixed three-entry feed demonstrates replay, not durable message storage.
-              routes.sse(
-                  "/replay",
-                  (request, response) -> {
-                    // Last-Event-ID comes from the reconnecting client; validate before committing
-                    // output.
-                    int last = lastEventId(request);
+              routes
+                  .get(
+                      "/",
+                      (ignoredRequest, response) ->
+                          response.text(
+                              "SSE endpoints: /events, /progress, /replay, /unavailable, /reports"))
+                  // Shoostr's core SSE route commits an event stream; returning finishes this
+                  // finite
+                  // feed.
+                  .sse(
+                      "/events",
+                      (ignoredRequest, response) -> {
+                        var events = response.startEventStream();
 
-                    // HTTP 204 tells EventSource not to reconnect after this fixed feed is
-                    // exhausted.
-                    if (last == 3) {
-                      response.status(HttpStatusCodes.NO_CONTENT.value());
-                      return;
-                    }
+                        events.send("starting");
+                        events.send("complete");
+                      })
+                  // SseEvent is a core value type for names, IDs and retry hints, not a JSON codec.
+                  .sse(
+                      "/progress",
+                      (ignoredRequest, response) -> {
+                        var events = response.startEventStream();
+                        // Comments and heartbeats keep the connection active without dispatching
+                        // data
+                        // events.
+                        events.comment("connection ready");
+                        events.heartbeat();
 
-                    var events = response.startEventStream();
-                    for (int entry = last + 1; entry <= 3; entry++) {
-                      events.send(
-                          SseEvent.of("Entry " + entry)
-                              .withId(Integer.toString(entry))
-                              .withRetry(Duration.ofSeconds(1)));
-                    }
-                  });
-              // Deliberately fail before opening a stream; the app's exception handler returns 500.
-              routes.sse(
-                  "/unavailable",
-                  (ignored6, ignored7) -> {
-                    throw new IllegalStateException("Example-only pre-stream failure details");
-                  });
-              // Once streaming starts, known business failures become events, not replacement HTTP
-              // errors.
-              routes.sse(
-                  "/reports",
-                  (ignored8, response) -> {
-                    var events = response.startEventStream();
-                    events.send(SseEvent.of("starting").withEvent("progress"));
-                    String result;
+                        events.send(
+                            SseEvent.of("Preparing\nWaiting")
+                                .withEvent("progress")
+                                .withId("1")
+                                .withRetry(Duration.ofSeconds(2)));
+                        events.send(SseEvent.of("Complete").withEvent("done").withId("2"));
+                      })
+                  // This fixed three-entry feed demonstrates replay, not durable message storage.
+                  .sse(
+                      "/replay",
+                      (request, response) -> {
+                        // Last-Event-ID comes from the reconnecting client; validate before
+                        // committing
+                        // output.
+                        int last = lastEventId(request);
 
-                    try {
-                      result = report.get();
-                    } catch (IllegalStateException failure) {
-                      LOGGER.warn("Example report failed", failure);
-                      // Do not catch IOException from send: a disconnected transport cannot receive
-                      // an error event.
-                      events.send(SseEvent.of("Report unavailable").withEvent("failure"));
-                      return;
-                    }
+                        // HTTP 204 tells EventSource not to reconnect after this fixed feed is
+                        // exhausted.
+                        if (last == 3) {
+                          response.status(HttpStatusCodes.NO_CONTENT.value());
+                          return;
+                        }
 
-                    events.send(SseEvent.of(result).withEvent("result"));
-                  });
+                        var events = response.startEventStream();
+                        for (int entry = last + 1; entry <= 3; entry++) {
+                          events.send(
+                              SseEvent.of("Entry " + entry)
+                                  .withId(Integer.toString(entry))
+                                  .withRetry(Duration.ofSeconds(1)));
+                        }
+                      })
+                  // Deliberately fail before opening a stream; the app's exception handler returns
+                  // 500.
+                  .sse(
+                      "/unavailable",
+                      (ignoredRequest, ignoredResponse) -> {
+                        throw new IllegalStateException("Example-only pre-stream failure details");
+                      })
+                  // Once streaming starts, known business failures become events, not replacement
+                  // HTTP
+                  // errors.
+                  .sse(
+                      "/reports",
+                      (ignoredRequest, response) -> {
+                        var events = response.startEventStream();
+
+                        events.send(SseEvent.of("starting").withEvent("progress"));
+                        String result;
+
+                        try {
+                          result = report.get();
+                        } catch (IllegalStateException failure) {
+                          LOGGER.warn("Example report failed", failure);
+                          // Do not catch IOException from send: a disconnected transport cannot
+                          // receive
+                          // an error event.
+                          events.send(SseEvent.of("Report unavailable").withEvent("failure"));
+                          return;
+                        }
+
+                        events.send(SseEvent.of(result).withEvent("result"));
+                      });
             });
   }
 

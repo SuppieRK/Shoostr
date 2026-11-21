@@ -10,24 +10,143 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Random;
 import java.util.Set;
+import java.util.concurrent.Executors;
+import org.eclipse.jetty.websocket.api.Session;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
 class RoutePatternTest {
-  private static final Handler HANDLER = (ignored, ignored2) -> {};
+  private static final Handler HANDLER = (ignored, ignoredResponse) -> {};
+  private static final WebSocket.Factory FACTORY =
+      (request, response, runtime) -> new Session.Listener() {};
+
+  @Test
+  @SuppressWarnings("NullAway")
+  void validatesPathBeforeCallbacksInBothEndpointFactories() {
+    assertThrows(
+        IllegalArgumentException.class, () -> RadixRoutes.endpoint(null, "relative", null));
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> RadixRoutes.websocketEndpoint("relative", null, null));
+    assertThrows(
+        NullPointerException.class,
+        () -> RadixRoutes.endpoint(HttpMethods.GET, "/items/{id}", null));
+    assertThrows(
+        NullPointerException.class,
+        () -> RadixRoutes.websocketEndpoint("/items/{id}", null, FACTORY));
+    assertThrows(
+        NullPointerException.class,
+        () -> RadixRoutes.websocketEndpoint("/items/{id}", HANDLER, null));
+  }
+
+  @Test
+  void preservesWebSocketMetadataAcrossBothRuntimeCopyOrdersAndNullNoOps() {
+    var original =
+        RadixRoutes.websocketEndpoint("/items/{id:[0-9]+}/events/{*tail}", HANDLER, FACTORY);
+    var behavior = copyBehavior();
+
+    try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+      var copied = original.withBehavior(behavior).withExecutor(executor);
+      var reversed = original.withExecutor(executor).withBehavior(behavior);
+
+      assertEquals(copied, reversed);
+      assertCopiedMetadata(copied);
+      assertSame(behavior, copied.behavior());
+      assertSame(executor, copied.executor());
+      assertNull(original.behavior());
+      assertNull(original.executor());
+      assertSame(original, original.withBehavior(null));
+      assertSame(original, original.withExecutor(null));
+      assertSame(copied, copied.withBehavior(null));
+      assertSame(copied, copied.withExecutor(null));
+
+      executor.shutdown();
+
+      assertSame(copied, copied.withBehavior(null));
+      assertSame(copied, copied.withExecutor(null));
+      assertThrows(IllegalArgumentException.class, () -> copied.withBehavior(behavior));
+      assertThrows(IllegalArgumentException.class, () -> original.withExecutor(executor));
+    }
+  }
+
+  private static EndpointBehavior copyBehavior() {
+    return new EndpointBehavior(
+        HANDLER, null, null, List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+        List.of(), Map.of(), Map.of(), List.of());
+  }
+
+  private static void assertCopiedMetadata(RadixRoutes.Endpoint endpoint) {
+    assertEquals(HttpMethods.GET, endpoint.method());
+    assertEquals("/items/{:[0-9]+}/events/{*}", endpoint.pattern());
+    assertEquals("/items/{id:[0-9]+}/events/{*tail}", endpoint.routePattern());
+    assertEquals(Map.of("id", 2, "tail", -4), endpoint.parameters());
+    assertEquals(7, endpoint.firstParameterOffset());
+    assertEquals(2, endpoint.firstParameterSegment());
+    assertSame(HANDLER, endpoint.handler());
+    assertSame(FACTORY, endpoint.websocketFactory());
+    var parameters = endpoint.parameters();
+
+    assertThrows(UnsupportedOperationException.class, () -> parameters.put("extra", 5));
+    assertEquals("42", endpoint.parameter("/items/42/events/a/b", "id"));
+    assertEquals("a/b", endpoint.parameter("/items/42/events/a/b", "tail"));
+  }
+
+  private static RadixRoutes compile(String... specs) {
+    return RadixRoutes.from(registrations(specs));
+  }
+
+  private static List<RadixRoutes.Endpoint> registrations(String... specs) {
+    var endpoints = new ArrayList<RadixRoutes.Endpoint>();
+    for (String spec : specs) {
+      var parts = spec.split(" ", 2);
+      endpoints.add(
+          RadixRoutes.endpoint(HttpMethods.httpMethod(parts[0]).orElseThrow(), parts[1], HANDLER));
+    }
+    return endpoints;
+  }
+
+  private static boolean matches(String pattern, String path) {
+    var patternSegments = pattern.split("/", -1);
+    var pathSegments = path.split("/", -1);
+    if (patternSegments.length != pathSegments.length) {
+      return false;
+    }
+
+    for (int index = 0; index < patternSegments.length; index++) {
+      if ("{}".equals(patternSegments[index])) {
+        if (pathSegments[index].isEmpty()) {
+          return false;
+        }
+      } else if (!patternSegments[index].equals(pathSegments[index])) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  private static boolean moreSpecific(String candidate, String current) {
+    var candidateSegments = candidate.split("/", -1);
+    var currentSegments = current.split("/", -1);
+    for (int index = 0; index < candidateSegments.length; index++) {
+      boolean candidateParameter = "{}".equals(candidateSegments[index]);
+      boolean currentParameter = "{}".equals(currentSegments[index]);
+      if (candidateParameter != currentParameter) {
+        return !candidateParameter;
+      }
+    }
+
+    return false;
+  }
 
   @Test
   void prefersLiteralSegmentsRegardlessOfRegistrationOrderForEachMethod() {
-    var tree =
-        compile(
-            "POST /orders/latest",
-            "GET /orders/{id}",
-            "GET /orders/latest",
-            "POST /orders/{orderId}");
+    var tree = createTreeForPrefersLiteralSegmentsRegardlessOfRegistrationOrderForEachMethod();
+
     assertEquals(
         "/orders/latest",
         Objects.requireNonNull(tree.match("/orders/latest", HttpMethods.GET)).routePattern());
@@ -44,15 +163,16 @@ class RoutePatternTest {
     assertEquals(Set.of(HttpMethods.GET, HttpMethods.POST), tree.allowedMethods("/orders/latest"));
   }
 
+  private RadixRoutes
+      createTreeForPrefersLiteralSegmentsRegardlessOfRegistrationOrderForEachMethod() {
+    return compile(
+        "POST /orders/latest", "GET /orders/{id}", "GET /orders/latest", "POST /orders/{orderId}");
+  }
+
   @Test
   void prefersLiteralSegmentsAtEachDepthAndFallsBackAfterMethodOrSuffixMismatch() {
     var tree =
-        compile(
-            "GET /a/{name}/b",
-            "GET /a/fixed/{id}",
-            "POST /a/{name}/b",
-            "GET /a/fixed/other/end",
-            "GET /a/{name}/b/end");
+        createTreeForPrefersLiteralSegmentsAtEachDepthAndFallsBackAfterMethodOrSuffixMismatch();
 
     assertEquals(
         "/a/fixed/{id}",
@@ -72,10 +192,21 @@ class RoutePatternTest {
     assertEquals(Set.of(HttpMethods.GET, HttpMethods.POST), tree.allowedMethods("/a/fixed/b"));
   }
 
+  private RadixRoutes
+      createTreeForPrefersLiteralSegmentsAtEachDepthAndFallsBackAfterMethodOrSuffixMismatch() {
+    return compile(
+        "GET /a/{name}/b",
+        "GET /a/fixed/{id}",
+        "POST /a/{name}/b",
+        "GET /a/fixed/other/end",
+        "GET /a/{name}/b/end");
+  }
+
   @Test
   void fallsBackAfterSuffixOrMethodMismatchWithoutLeakingParameterNames() {
     var tree = compile("GET /a/fixed/x", "GET /a/{name}/y", "POST /a/{other}/y");
     var endpoint = Objects.requireNonNull(tree.match("/a/fixed/y", HttpMethods.GET));
+
     assertEquals("/a/{name}/y", endpoint.routePattern());
     assertEquals("fixed", endpoint.parameter("/a/fixed/y", "name"));
     assertThrows(IllegalArgumentException.class, () -> endpoint.parameter("/a/fixed/y", "other"));
@@ -87,6 +218,7 @@ class RoutePatternTest {
   @Test
   void distinguishesEmptySegmentsTrailingSlashAndMethodFailures() {
     var tree = compile("GET /orders/{id}", "POST /orders/{id}/");
+
     assertNull(tree.match("/orders/", HttpMethods.GET));
     assertNull(tree.match("/orders//", HttpMethods.POST));
     assertNull(tree.match("/orders/1/", HttpMethods.GET));
@@ -102,6 +234,7 @@ class RoutePatternTest {
         Objects.requireNonNull(
             compile("GET /accounts/{accountId}/orders/{id}")
                 .match("/accounts/a+b/orders/%252F", HttpMethods.GET));
+
     assertEquals("a+b", endpoint.parameter("/accounts/a+b/orders/%252F", "accountId"));
     assertEquals("%2F", endpoint.parameter("/accounts/a+b/orders/%252F", "id"));
     assertEquals("café +", endpoint.parameter("/accounts/x/orders/caf%C3%A9%20+", "id"));
@@ -113,6 +246,7 @@ class RoutePatternTest {
     var tree = compile("GET " + prefix + "/{first}/fixed/{second}/");
     String path = prefix + "/a%20b/fixed/c+d/";
     var endpoint = Objects.requireNonNull(tree.match(path, HttpMethods.GET));
+
     assertEquals("a b", endpoint.parameter(path, "first"));
     assertEquals("c+d", endpoint.parameter(path, "second"));
   }
@@ -158,34 +292,42 @@ class RoutePatternTest {
     for (var method : HttpMethods.values()) {
       assertEquals(method, Objects.requireNonNull(tree.match("/a/42", method)).method());
     }
+
     assertEquals(Set.of(HttpMethods.values()), tree.allowedMethods("/a/42"));
     assertEquals(Set.of(), tree.allowedMethods("/a/42/missing"));
     assertNull(tree.match("/a/42", null));
+
     var methods = tree.allowedMethods("/a/42");
     methods.clear();
+
     assertEquals(Set.of(HttpMethods.values()), tree.allowedMethods("/a/42"));
   }
 
   @Test
   void preservesCollectedMethodsWhenAlternativeBranchesDoNotComplete() {
-    var tree =
-        compile(
-            "GET /a/fixed",
-            "POST /a/{id}",
-            "PUT /a/{id}/more",
-            "DELETE /a/fixed/more",
-            "HEAD /a/{id}/more/end");
+    var tree = createTreeForPreservesCollectedMethodsWhenAlternativeBranchesDoNotComplete();
+
     assertEquals(Set.of(HttpMethods.GET, HttpMethods.POST), tree.allowedMethods("/a/fixed"));
     assertEquals(Set.of(HttpMethods.PUT, HttpMethods.DELETE), tree.allowedMethods("/a/fixed/more"));
     assertEquals(Set.of(HttpMethods.HEAD), tree.allowedMethods("/a/fixed/more/end"));
     assertEquals(Set.of(HttpMethods.POST), tree.allowedMethods("/a/fi"));
+
     for (String missing : List.of("/a/", "/a/fixed/mo", "/a/fixed/more/")) {
       assertEquals(Set.of(), tree.allowedMethods(missing));
     }
   }
 
+  private RadixRoutes createTreeForPreservesCollectedMethodsWhenAlternativeBranchesDoNotComplete() {
+    return compile(
+        "GET /a/fixed",
+        "POST /a/{id}",
+        "PUT /a/{id}/more",
+        "DELETE /a/fixed/more",
+        "HEAD /a/{id}/more/end");
+  }
+
   @Test
-  void agreesWithALiteralFirstSegmentMatcherAcrossOverlappingPatterns() {
+  void agreesWithLiteralFirstSegmentMatcherAcrossOverlappingPatterns() {
     var specs = new ArrayList<String>();
     for (int a = 0; a < 5; a++) {
       for (int b = 0; b < 5; b++) {
@@ -214,58 +356,13 @@ class RoutePatternTest {
                 }
               }
             }
+
             assertSame(expected, tree.match(path, method), method + " " + path);
           }
+
           assertEquals(allowed, tree.allowedMethods(path));
         }
       }
     }
-  }
-
-  private static RadixRoutes compile(String... specs) {
-    return RadixRoutes.from(registrations(specs));
-  }
-
-  private static List<RadixRoutes.Endpoint> registrations(String... specs) {
-    var endpoints = new ArrayList<RadixRoutes.Endpoint>();
-    for (String spec : specs) {
-      var parts = spec.split(" ", 2);
-      endpoints.add(
-          RadixRoutes.endpoint(HttpMethods.httpMethod(parts[0]).orElseThrow(), parts[1], HANDLER));
-    }
-    return endpoints;
-  }
-
-  private static boolean matches(String pattern, String path) {
-    var patternSegments = pattern.split("/", -1);
-    var pathSegments = path.split("/", -1);
-    if (patternSegments.length != pathSegments.length) {
-      return false;
-    }
-
-    for (int i = 0; i < patternSegments.length; i++) {
-      if ("{}".equals(patternSegments[i])) {
-        if (pathSegments[i].isEmpty()) {
-          return false;
-        }
-      } else if (!patternSegments[i].equals(pathSegments[i])) {
-        return false;
-      }
-    }
-    return true;
-  }
-
-  private static boolean moreSpecific(String candidate, String current) {
-    var candidateSegments = candidate.split("/", -1);
-    var currentSegments = current.split("/", -1);
-    for (int index = 0; index < candidateSegments.length; index++) {
-      boolean candidateParameter = "{}".equals(candidateSegments[index]);
-      boolean currentParameter = "{}".equals(currentSegments[index]);
-      if (candidateParameter != currentParameter) {
-        return !candidateParameter;
-      }
-    }
-
-    return false;
   }
 }

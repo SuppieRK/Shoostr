@@ -7,6 +7,7 @@ import io.github.suppierk.shoostr.Codec;
 import io.github.suppierk.shoostr.Shoostr;
 import io.github.suppierk.shoostr.testing.TestServer;
 import io.swagger.v3.core.util.Json31;
+import java.io.Closeable;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
@@ -23,73 +24,85 @@ class OpenApiConditionalTest {
     var facts = new ArrayList<String>();
     var docs = new OpenApi("API", "1");
     var codec =
-        new Codec() {
-          @Override
-          public <T> T read(byte[] source, Class<T> type) {
-            return type.cast(new String(source, StandardCharsets.UTF_8));
-          }
+        createCodecForDocumentsNestedAndTypedConditionalBindingsWithoutEvaluatingAvailability();
 
-          @Override
-          public byte[] write(Object value) {
-            return value.toString().getBytes(StandardCharsets.UTF_8);
-          }
-        };
+    {
+      var app = new Shoostr();
 
-    try (var app = new Shoostr()) {
-      app.extensions(docs)
-          .routes(
-              routes -> {
-                routes.path(
-                    "/api",
-                    group -> {
-                      group.get("/public", (ignored, ignored2) -> {});
-                      group.when(
-                          () -> {
-                            calls.incrementAndGet();
-                            return available;
-                          },
-                          conditional ->
-                              conditional.path(
-                                  "/nested",
-                                  nested -> nested.get("/private", (ignored3, ignored4) -> {})));
+      try (Closeable appCleanup = app::close) {
+        app.routes(routes -> {
+          routes.path(
+              "/api",
+              group -> {
+                group.get("/public", (ignored, ignoredResponse) -> {});
+                group.when(
+                    () -> {
+                      calls.incrementAndGet();
+
+                      return available;
                     },
-                    e -> {
-                      e.with(docs).summary("Default");
-                      e.onRoute((method, path) -> facts.add(method.value() + " " + path));
-                    });
-                routes.get("/openapi.json", docs.handler());
+                    conditional ->
+                        conditional.path(
+                            "/nested",
+                            nested ->
+                                nested.get("/private", (ignoredRequest, ignoredResponse) -> {})));
+              },
+              lifecycle -> {
+                lifecycle.withExtension(docs).summary("Default");
+                lifecycle.onRoute((method, path) -> facts.add(method.value() + " " + path));
               });
-      app.codec(codec)
-          .routes(
-              routes ->
-                  routes.when(
-                      () -> {
-                        calls.incrementAndGet();
-                        return available;
-                      },
-                      conditional ->
-                          conditional.get(
-                              "/typed",
-                              (ignored5, ignored6) -> {},
-                              e -> e.with(docs).summary("Typed"))));
+          routes.get("/openapi.json", docs.handler());
+        });
+        app.codec(codec)
+            .routes(routes ->
+                routes.when(
+                    () -> {
+                      calls.incrementAndGet();
 
-      try (var test = TestServer.start(app)) {
-        var document =
-            Json31.mapper().readTree(test.send(request -> request.path("/openapi.json")).body());
-        assertEquals(0, calls.get());
-        assertEquals(List.of("GET /api/public", "GET /api/nested/private"), facts);
-        assertEquals(3, document.path("paths").size());
-        assertTrue(document.path("paths").has("/api/public"));
-        assertTrue(document.path("paths").has("/api/nested/private"));
-        assertTrue(document.path("paths").has("/typed"));
-        test.send(request -> request.path("/openapi.json"));
-        assertEquals(0, calls.get());
-        assertEquals(
-            available ? 200 : 404,
-            test.send(request -> request.path("/api/nested/private")).statusCode());
-        assertEquals(
-            available ? 200 : 404, test.send(request -> request.path("/typed")).statusCode());
+                      return available;
+                    },
+                    conditional ->
+                        conditional.get(
+                            "/typed",
+                            (ignoredTypedRequest, ignoredTypedResponse) -> {},
+                            lifecycle -> lifecycle.withExtension(docs).summary("Typed"))));
+
+        try (var test = TestServer.start(app)) {
+          var document =
+              Json31.mapper().readTree(test.send(request -> request.path("/openapi.json")).body());
+
+          assertEquals(0, calls.get());
+          assertEquals(List.of("GET /api/public", "GET /api/nested/private"), facts);
+          assertEquals(3, document.path("paths").size());
+          assertTrue(document.path("paths").has("/api/public"));
+          assertTrue(document.path("paths").has("/api/nested/private"));
+          assertTrue(document.path("paths").has("/typed"));
+
+          test.send(request -> request.path("/openapi.json"));
+
+          assertEquals(0, calls.get());
+          assertEquals(
+              available ? 200 : 404,
+              test.send(request -> request.path("/api/nested/private")).statusCode());
+          assertEquals(
+              available ? 200 : 404, test.send(request -> request.path("/typed")).statusCode());
+        }
       }
     }
+  }
+
+  private Codec
+      createCodecForDocumentsNestedAndTypedConditionalBindingsWithoutEvaluatingAvailability() {
+    return new Codec() {
+      @Override
+      public <T> T read(byte[] source, Class<T> type) {
+        return type.cast(new String(source, StandardCharsets.UTF_8));
+      }
+
+      @Override
+      public byte[] write(Object value) {
+        return value.toString().getBytes(StandardCharsets.UTF_8);
+      }
+    };
   }
 }

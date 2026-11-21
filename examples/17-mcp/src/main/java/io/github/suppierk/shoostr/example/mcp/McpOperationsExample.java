@@ -2,11 +2,13 @@ package io.github.suppierk.shoostr.example.mcp;
 
 import io.github.resilience4j.bulkhead.Bulkhead;
 import io.github.resilience4j.bulkhead.BulkheadFullException;
+import io.github.suppierk.shoostr.Options;
 import io.github.suppierk.shoostr.Shoostr;
 import io.github.suppierk.shoostr.mcp.Mcp;
 import io.github.suppierk.shoostr.mcp.McpHttpSecurity;
 import io.github.suppierk.shoostr.mcp.McpIdentity;
 import io.modelcontextprotocol.common.McpTransportContext;
+import io.modelcontextprotocol.server.McpAsyncServer;
 import io.modelcontextprotocol.server.McpServer;
 import io.modelcontextprotocol.server.McpServerFeatures;
 import io.modelcontextprotocol.server.McpSyncServerExchange;
@@ -36,56 +38,79 @@ public final class McpOperationsExample {
     Objects.requireNonNull(readStatus);
     Objects.requireNonNull(bulkhead);
     Objects.requireNonNull(callbacks);
-    var mcp =
-        Mcp.async(
-            new McpHttpSecurity(
-                Set.of(),
-                ignored -> new McpIdentity("public", McpTransportContext.EMPTY, null),
-                (identity, message) -> {}),
-            transport ->
-                McpServer.async(transport)
-                    .capabilities(McpSchema.ServerCapabilities.builder().tools(false).build())
-                    .tools(
-                        McpServerFeatures.AsyncToolSpecification.builder()
-                            .tool(
-                                McpSchema.Tool.builder("status", Map.of("type", "object")).build())
-                            .callHandler(
-                                (exchange, request) ->
-                                    Mono.fromCallable(
-                                            // The library releases its permit after the callable
-                                            // actually exits.
-                                            Bulkhead.decorateCallable(
-                                                bulkhead,
-                                                () -> {
-                                                  new McpSyncServerExchange(exchange).ping();
-                                                  return readStatus.call();
-                                                }))
-                                        // Only the blocking tool runs here; protocol replies use
-                                        // their existing path.
-                                        .subscribeOn(callbacks)
-                                        .map(
-                                            value ->
-                                                McpSchema.CallToolResult.builder()
-                                                    .addTextContent(value)
-                                                    .build())
-                                        .onErrorResume(
-                                            BulkheadFullException.class,
-                                            failure ->
-                                                Mono.just(
-                                                    McpSchema.CallToolResult.builder()
-                                                        .isError(true)
-                                                        .addTextContent("Status is busy")
-                                                        .build())))
-                            .build())
-                    .build());
-    return new Shoostr()
-        // Idle HTTP streams release virtual-thread carriers; callback execution is independent.
-        .virtualThreads()
-        .extensions(mcp)
+    var mcp = mcpServer(bulkhead, readStatus, callbacks);
+    var configuredOptions = options();
+
+    return new Shoostr(configuredOptions)
         .routes(
             routes ->
                 routes
                     .path("/mcp", mcp::routes)
                     .get("/health", (request, response) -> response.text("healthy")));
+  }
+
+  /**
+   * Configures the native MCP server and binds it to the HTTP transport.
+   *
+   * @param bulkhead application-owned concurrency limiter
+   * @param readStatus blocking application operation
+   * @param callbacks application-owned callback scheduler
+   * @return MCP extension owned by its application
+   */
+  private static Mcp<McpAsyncServer> mcpServer(
+      Bulkhead bulkhead, Callable<String> readStatus, Scheduler callbacks) {
+    return Mcp.async(
+        new McpHttpSecurity(
+            Set.of(),
+            ignored -> new McpIdentity("public", McpTransportContext.EMPTY, null),
+            (identity, message) -> {}),
+        transport ->
+            McpServer.async(transport)
+                .capabilities(McpSchema.ServerCapabilities.builder().tools(false).build())
+                .tools(
+                    McpServerFeatures.AsyncToolSpecification.builder()
+                        .tool(McpSchema.Tool.builder("status", Map.of("type", "object")).build())
+                        .callHandler(
+                            (exchange, request) ->
+                                Mono.fromCallable(
+                                        // The library releases its permit after the callable
+                                        // actually exits.
+                                        Bulkhead.decorateCallable(
+                                            bulkhead,
+                                            () -> {
+                                              new McpSyncServerExchange(exchange).ping();
+
+                                              return readStatus.call();
+                                            }))
+                                    // Only the blocking tool runs here; protocol replies use
+                                    // their existing path.
+                                    .subscribeOn(callbacks)
+                                    .map(
+                                        value ->
+                                            McpSchema.CallToolResult.builder()
+                                                .addTextContent(value)
+                                                .build())
+                                    .onErrorResume(
+                                        BulkheadFullException.class,
+                                        failure ->
+                                            Mono.just(
+                                                McpSchema.CallToolResult.builder()
+                                                    .isError(true)
+                                                    .addTextContent("Status is busy")
+                                                    .build())))
+                        .build())
+                .build());
+  }
+
+  /**
+   * Configures the listener and resource policy used by this application.
+   *
+   * @return detached serving options
+   */
+  private static Options options() {
+    var configuredOptions = new Options();
+    configuredOptions.setVirtualThreads(true);
+
+    return configuredOptions;
   }
 }

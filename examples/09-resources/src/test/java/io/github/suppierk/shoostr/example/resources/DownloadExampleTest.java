@@ -17,7 +17,7 @@ class DownloadExampleTest {
   @TempDir Path directory;
 
   @Test
-  void downloadsTheReportToAFileWithAsciiAndUtf8AttachmentFilenames() throws Exception {
+  void downloadsTheReportToFileWithAsciiAndUtf8AttachmentFilenames() throws Exception {
     var report =
         Files.writeString(directory.resolve("report.csv"), "name\nAda\n", StandardCharsets.UTF_8);
     var downloaded = directory.resolve("downloaded.csv");
@@ -27,6 +27,7 @@ class DownloadExampleTest {
       var response =
           test.send(
               request -> request.path("/download"), HttpResponse.BodyHandlers.ofFile(downloaded));
+
       assertEquals(200, response.statusCode());
       assertEquals(downloaded, response.body());
       assertEquals(
@@ -51,9 +52,11 @@ class DownloadExampleTest {
       var response =
           test.send(
               request -> request.path(path).method(method), HttpResponse.BodyHandlers.ofString());
+
       assertEquals(200, response.statusCode());
       assertEquals("HEAD".equals(method) ? "" : "name\nAda\n", response.body());
       assertEquals("9", response.headers().firstValue("Content-Length").orElseThrow());
+
       if ("/download".equals(path)) {
         assertTrue(
             response

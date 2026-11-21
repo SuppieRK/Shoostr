@@ -47,26 +47,28 @@ import org.openjdk.jmh.annotations.Warmup;
 @Threads(1)
 public class SchedulingBenchmark {
   private static final byte[] PAYLOAD = "Hello, World!".getBytes(StandardCharsets.UTF_8);
+  private final LinkedBlockingQueue<Exchange> pending;
+  private final Options options;
 
+  /** Execution pool used to dispatch the request. */
   @Param({"queued-platform", "queued-virtual"})
   public String pool;
 
+  /** Number of queued requests in each submission batch. */
   @Param({"1", "32", "4096"})
   public int batchSize;
 
-  private final LinkedBlockingQueue<Exchange> pending;
-  private final Options options;
+  Exchange[] exchanges;
   private @Nullable ExecutorService virtualThreads;
   private QueuedThreadPool nativePool;
   private CountDownLatch finished;
   private volatile @Nullable Throwable failure;
   private AdaptiveExecutionStrategy strategy;
-  Exchange[] exchanges;
 
   /** Creates the common producer queue and framework options outside timing. */
   public SchedulingBenchmark() {
-    pending = new LinkedBlockingQueue<>();
-    options = Options.defaults();
+    this.pending = new LinkedBlockingQueue<>();
+    this.options = new Options();
   }
 
   /**
@@ -136,22 +138,6 @@ public class SchedulingBenchmark {
   }
 
   /**
-   * Waits for ready work on the pool's producer thread, without adding per-batch dispatch tasks.
-   *
-   * @return the next exchange, or null when shutdown interrupts the readiness wait
-   */
-  private @Nullable Runnable produce() {
-    try {
-      var exchange = pending.take();
-      exchange.producedVirtually = Thread.currentThread().isVirtual();
-      return exchange;
-    } catch (InterruptedException ignored) {
-      Thread.currentThread().interrupt();
-      return null;
-    }
-  }
-
-  /**
    * Stops Jetty and the owned virtual executor, including after a failed measurement.
    *
    * @throws Exception if lifecycle cleanup fails
@@ -179,6 +165,24 @@ public class SchedulingBenchmark {
     }
   }
 
+  /**
+   * Waits for ready work on the pool's producer thread, without adding per-batch dispatch tasks.
+   *
+   * @return the next exchange, or null when shutdown interrupts the readiness wait
+   */
+  private @Nullable Runnable produce() {
+    try {
+      var exchange = pending.take();
+      exchange.producedVirtually = Thread.currentThread().isVirtual();
+
+      return exchange;
+    } catch (InterruptedException ignored) {
+      Thread.currentThread().interrupt();
+
+      return null;
+    }
+  }
+
   /** One reusable native transport fixture; every task constructs a fresh Shoostr request pair. */
   final class Exchange implements Runnable {
     private final HttpFields.Mutable headers;
@@ -194,26 +198,28 @@ public class SchedulingBenchmark {
 
     /** Creates transport proxies outside timing; neither proxy performs socket or parser work. */
     private Exchange() {
-      headers = HttpFields.build();
-      submitted = ByteBuffer.allocate(0);
-      inbound =
+      this.headers = HttpFields.build();
+      this.submitted = ByteBuffer.allocate(0);
+
+      this.inbound =
           (Request)
               Proxy.newProxyInstance(
                   getClass().getClassLoader(),
                   new Class<?>[] {Request.class},
-                  (ignored2, method, ignored3) ->
+                  (ignoredObject, method, ignoredObjectValues) ->
                       switch (method.getName()) {
                         case "getMethod" -> "GET";
                         case "getHeaders" -> HttpFields.EMPTY;
                         case "consumeAvailable" -> true;
                         default -> throw new UnsupportedOperationException(method.getName());
                       });
-      sink =
+
+      this.sink =
           (Response)
               Proxy.newProxyInstance(
                   getClass().getClassLoader(),
                   new Class<?>[] {Response.class},
-                  (ignored4, method, arguments) ->
+                  (ignoredObject, method, arguments) ->
                       switch (method.getName()) {
                         case "getStatus" -> 200;
                         case "getHeaders" -> headers;
@@ -223,14 +229,18 @@ public class SchedulingBenchmark {
                             throw new IllegalStateException("Expected a terminal finite write");
                           }
 
-                          writes++;
-                          submitted = (ByteBuffer) arguments[1];
+                          this.writes++;
+                          this.submitted = (ByteBuffer) arguments[1];
+
                           ((Callback) arguments[2]).succeeded();
                           yield null;
                         }
                         default -> throw new UnsupportedOperationException(method.getName());
                       });
-      completion = Callback.from(() -> completions++, thrown -> failure = thrown);
+
+      this.completion =
+          Callback.from(
+              () -> this.completions++, thrown -> SchedulingBenchmark.this.failure = thrown);
     }
 
     /**
@@ -246,10 +256,12 @@ public class SchedulingBenchmark {
         completions = 0;
         invocations++;
         virtual = Thread.currentThread().isVirtual();
+
         var request = io.github.suppierk.shoostr.Request.create(inbound, sink, options, completion);
 
         try {
           request.response().body("text/plain;charset=utf-8", PAYLOAD);
+
           request.response().complete();
         } finally {
           request.finish();

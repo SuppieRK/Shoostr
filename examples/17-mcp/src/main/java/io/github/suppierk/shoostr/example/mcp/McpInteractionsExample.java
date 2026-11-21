@@ -8,9 +8,13 @@ import io.github.suppierk.shoostr.mcp.McpIdentity;
 import io.modelcontextprotocol.common.McpTransportContext;
 import io.modelcontextprotocol.server.McpServer;
 import io.modelcontextprotocol.server.McpServerFeatures;
+import io.modelcontextprotocol.server.McpSyncServer;
 import io.modelcontextprotocol.server.McpSyncServerExchange;
 import io.modelcontextprotocol.spec.McpSchema;
+import io.modelcontextprotocol.spec.McpSchema.CreateMessageResult;
+import io.modelcontextprotocol.spec.McpSchema.ElicitResult;
 import java.time.Duration;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -35,48 +39,10 @@ public final class McpInteractionsExample {
         new McpHttpSecurity(
             Set.of("https://client.example"),
             ignored -> new McpIdentity("public-status", McpTransportContext.EMPTY, null),
-            (ignored2, ignored3) -> {});
-    var mcp =
-        Mcp.sync(
-            security,
-            transport ->
-                McpServer.sync(transport)
-                    .serverInfo("shoostr-interactions", "1.0")
-                    .requestTimeout(Duration.ofMinutes(2))
-                    .capabilities(
-                        McpSchema.ServerCapabilities.builder()
-                            .tools(false)
-                            .logging()
-                            // Resource subscriptions are advertised separately from catalog
-                            // changes.
-                            .resources(true, false)
-                            .build())
-                    .tools(
-                        McpServerFeatures.SyncToolSpecification.builder()
-                            .tool(
-                                McpSchema.Tool.builder("prepare-summary", Map.of("type", "object"))
-                                    .description(
-                                        "Ask the client to summarize the current public status")
-                                    .build())
-                            .callHandler(
-                                (exchange, request) -> summarize(exchange, request, status.get()))
-                            .build())
-                    .resources(
-                        new McpServerFeatures.SyncResourceSpecification(
-                            McpSchema.Resource.builder("status://current", "Public service status")
-                                .mimeType("text/plain")
-                                .build(),
-                            (ignored4, request) ->
-                                McpSchema.ReadResourceResult.builder(
-                                        List.of(
-                                            McpSchema.TextResourceContents.builder(
-                                                    request.uri(), status.get())
-                                                .mimeType("text/plain")
-                                                .build()))
-                                    .build()))
-                    .build());
+            (ignoredMcpIdentity, ignoredJsonRpcMessage) -> {});
+    var mcp = mcpServer(security, status);
+
     return new Shoostr()
-        .extensions(mcp)
         .routes(
             routes ->
                 routes
@@ -94,13 +60,64 @@ public final class McpInteractionsExample {
                           }
 
                           status.set(value);
+
                           // Notify subscribers after the change; they re-read the resource for its
                           // content.
                           mcp.server()
                               .notifyResourcesUpdated(
                                   new McpSchema.ResourcesUpdatedNotification("status://current"));
+
                           response.status(204);
                         }));
+  }
+
+  /**
+   * Configures the native MCP server and binds it to the HTTP transport.
+   *
+   * @param security HTTP authentication or authorization policy
+   * @param status detached current application status
+   * @return MCP extension owned by its application
+   */
+  private static Mcp<McpSyncServer> mcpServer(
+      McpHttpSecurity security, AtomicReference<String> status) {
+    return Mcp.sync(
+        security,
+        transport ->
+            McpServer.sync(transport)
+                .serverInfo("shoostr-interactions", "1.0")
+                .requestTimeout(Duration.ofMinutes(2))
+                .capabilities(
+                    McpSchema.ServerCapabilities.builder()
+                        .tools(false)
+                        .logging()
+                        // Resource subscriptions are advertised separately from catalog
+                        // changes.
+                        .resources(true, false)
+                        .build())
+                .tools(
+                    McpServerFeatures.SyncToolSpecification.builder()
+                        .tool(
+                            McpSchema.Tool.builder("prepare-summary", Map.of("type", "object"))
+                                .description(
+                                    "Ask the client to summarize the current public status")
+                                .build())
+                        .callHandler(
+                            (exchange, request) -> summarize(exchange, request, status.get()))
+                        .build())
+                .resources(
+                    new McpServerFeatures.SyncResourceSpecification(
+                        McpSchema.Resource.builder("status://current", "Public service status")
+                            .mimeType("text/plain")
+                            .build(),
+                        (ignoredMcpSyncServerExchange, request) ->
+                            McpSchema.ReadResourceResult.builder(
+                                    List.of(
+                                        McpSchema.TextResourceContents.builder(
+                                                request.uri(), status.get())
+                                            .mimeType("text/plain")
+                                            .build()))
+                                .build()))
+                .build());
   }
 
   /**
@@ -128,21 +145,10 @@ public final class McpInteractionsExample {
                 McpSchema.LoggingLevel.INFO, "Preparing a status summary")
             .build());
     progress(exchange, request, 0.0);
+
     // Ask this client for a nonsecret audience choice before requesting text generation.
-    var answer =
-        exchange.createElicitation(
-            McpSchema.ElicitFormRequest.builder(
-                    "Choose an audience for the status summary.",
-                    Map.of(
-                        "type",
-                        "object",
-                        "properties",
-                        Map.of(
-                            AUDIENCE_FIELD,
-                            Map.of("type", "string", "enum", List.of("developers", "operators"))),
-                        "required",
-                        List.of(AUDIENCE_FIELD)))
-                .build());
+    var answer = elicitSummaryAudience(exchange);
+
     // Decline and cancel are normal choices, not permission to continue with generation.
     switch (answer.action()) {
       case DECLINE -> {
@@ -158,6 +164,7 @@ public final class McpInteractionsExample {
         // Continue below to validate the accepted content before using it.
       }
     }
+
     // Treat even accepted form content as untrusted input before using the selected audience.
     var content = answer.content();
     if (content == null
@@ -167,19 +174,9 @@ public final class McpInteractionsExample {
     }
 
     progress(exchange, request, 0.5);
+
     // Sampling delegates generation to the initiating client, not to a server-selected model.
-    var sampled =
-        exchange.createMessage(
-            McpSchema.CreateMessageRequest.builder(
-                    List.of(
-                        McpSchema.SamplingMessage.builder(
-                                McpSchema.Role.USER,
-                                McpSchema.TextContent.builder(
-                                        "Summarize status '" + status + "' for " + audience + ".")
-                                    .build())
-                            .build()),
-                    128)
-                .build());
+    var sampled = sampleSummary(exchange, status, audience);
     if (!(sampled.content() instanceof McpSchema.TextContent text) || text.text().isBlank()) {
       return result("Client returned no text summary", true);
     }
@@ -189,7 +186,61 @@ public final class McpInteractionsExample {
         McpSchema.LoggingMessageNotification.builder(
                 McpSchema.LoggingLevel.INFO, "Prepared a status summary")
             .build());
+
     return result("Client-generated summary: " + text.text(), false);
+  }
+
+  /**
+   * Requests the client's choices before creating a summary.
+   *
+   * @param exchange current native MCP exchange
+   * @return client elicitation result
+   */
+  private static ElicitResult elicitSummaryAudience(McpSyncServerExchange exchange) {
+    return exchange.createElicitation(
+        McpSchema.ElicitFormRequest.builder(
+                "Choose an audience for the status summary.", audienceFormSchema())
+            .build());
+  }
+
+  /**
+   * Builds the audience form schema requested from the MCP client.
+   *
+   * @return an immutable map of configured entries
+   */
+  private static Map<String, Object> audienceFormSchema() {
+    var entries = new LinkedHashMap<String, Object>();
+    entries.put("type", "object");
+    entries.put(
+        "properties",
+        Map.of(
+            AUDIENCE_FIELD, Map.of("type", "string", "enum", List.of("developers", "operators"))));
+    entries.put("required", List.of(AUDIENCE_FIELD));
+
+    return Map.copyOf(entries);
+  }
+
+  /**
+   * Requests a client-generated summary using the selected status and audience.
+   *
+   * @param exchange current native MCP exchange
+   * @param status detached current application status
+   * @param audience selected summary audience
+   * @return client sampling result
+   */
+  private static CreateMessageResult sampleSummary(
+      McpSyncServerExchange exchange, String status, String audience) {
+    return exchange.createMessage(
+        McpSchema.CreateMessageRequest.builder(
+                List.of(
+                    McpSchema.SamplingMessage.builder(
+                            McpSchema.Role.USER,
+                            McpSchema.TextContent.builder(
+                                    "Summarize status '" + status + "' for " + audience + ".")
+                                .build())
+                        .build()),
+                128)
+            .build());
   }
 
   /**

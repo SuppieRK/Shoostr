@@ -2,22 +2,6 @@
 
 # Sourced by the campaign and its tests. Only the JVM enters the memory cgroup;
 # /usr/bin/time, zrk, jcmd and artifact processing remain outside it.
-select_cpus() {
-  local permitted=$1 requested=$2 first last cpu range
-  local -a ranges cpus=()
-  [[ "$requested" =~ ^[1-9][0-9]{0,3}$ ]] || { echo 'JVM_CPUS must be a positive integer' >&2; return 2; }
-  IFS=, read -ra ranges <<< "$permitted"
-  for range in "${ranges[@]}"; do
-    first=${range%-*}
-    last=${range##*-}
-    for ((cpu=first; cpu<=last; cpu++)); do cpus+=("$cpu"); done
-  done
-  (( requested < ${#cpus[@]} )) || { echo 'JVM_CPUS must leave at least one permitted CPU for zrk' >&2; return 2; }
-  server_cpus=$(IFS=,; echo "${cpus[*]:0:requested}")
-  client_cpus=$(IFS=,; echo "${cpus[*]:requested}")
-  export server_cpus client_cpus
-}
-
 configure_resources() {
   jvm_cpus=${JVM_CPUS:-1}
   jvm_memory_mib=${JVM_MEMORY_MIB:-1024}
@@ -28,9 +12,27 @@ configure_resources() {
   local available_mib permitted
   available_mib=$(awk '/^MemTotal:/ {print int($2/1024)}' /proc/meminfo)
   (( jvm_memory_mib <= available_mib )) || { echo 'JVM_MEMORY_MIB exceeds host RAM' >&2; return 2; }
+
   permitted=$(awk '/^Cpus_allowed_list:/ {print $2}' "/proc/$$/status")
   select_cpus "$permitted" "$jvm_cpus" || return
   jvm_memory_bytes=$((jvm_memory_mib * 1024 * 1024))
+}
+
+select_cpus() {
+  local permitted=$1 requested=$2 first last cpu range
+  local -a ranges cpus=()
+  [[ "$requested" =~ ^[1-9][0-9]{0,3}$ ]] || { echo 'JVM_CPUS must be a positive integer' >&2; return 2; }
+
+  IFS=, read -ra ranges <<< "$permitted"
+  for range in "${ranges[@]}"; do
+    first=${range%-*}
+    last=${range##*-}
+    for ((cpu=first; cpu<=last; cpu++)); do cpus+=("$cpu"); done
+  done
+  (( requested < ${#cpus[@]} )) || { echo 'JVM_CPUS must leave at least one permitted CPU for zrk' >&2; return 2; }
+  server_cpus=$(IFS=,; echo "${cpus[*]:0:requested}")
+  client_cpus=$(IFS=,; echo "${cpus[*]:requested}")
+  export server_cpus client_cpus
 }
 
 create_server_cgroup() {

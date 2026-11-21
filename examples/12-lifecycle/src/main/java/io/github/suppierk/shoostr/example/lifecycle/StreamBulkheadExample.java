@@ -2,6 +2,7 @@ package io.github.suppierk.shoostr.example.lifecycle;
 
 import io.github.resilience4j.bulkhead.Bulkhead;
 import io.github.resilience4j.bulkhead.BulkheadFullException;
+import io.github.suppierk.shoostr.Options;
 import io.github.suppierk.shoostr.Shoostr;
 import java.util.Objects;
 import java.util.concurrent.Callable;
@@ -24,8 +25,9 @@ public final class StreamBulkheadExample {
   public static Shoostr application(Bulkhead streams, Callable<String> next) {
     Objects.requireNonNull(streams);
     Objects.requireNonNull(next);
-    return new Shoostr()
-        .virtualThreads()
+    var configuredOptions = options();
+
+    return new Shoostr(configuredOptions)
         .exception(
             BulkheadFullException.class,
             (failure, request, response) -> response.status(503).text("Stream capacity is busy"))
@@ -37,16 +39,17 @@ public final class StreamBulkheadExample {
                         "/events",
                         (request, response) -> {
                           var output = response.startEventStream();
+
                           output.send("ready");
                           output.send(next.call());
                         },
-                        extensions ->
-                            extensions
-                                .lifecycle()
+                        lifecycle ->
+                            lifecycle
                                 .observe(
                                     request -> {
                                       var acquired = new AtomicBoolean();
                                       request.attribute(ADMISSION, acquired);
+
                                       // Completion includes the final framework write, beyond
                                       // handler return.
                                       return outcome -> {
@@ -65,5 +68,17 @@ public final class StreamBulkheadExample {
                                       streams.acquirePermission();
                                       acquired.set(true);
                                     })));
+  }
+
+  /**
+   * Configures the listener and resource policy used by this application.
+   *
+   * @return detached serving options
+   */
+  private static Options options() {
+    var configuredOptions = new Options();
+    configuredOptions.setVirtualThreads(true);
+
+    return configuredOptions;
   }
 }

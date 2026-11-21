@@ -19,6 +19,11 @@ import org.junit.jupiter.api.io.TempDir;
 class UploadEqualityTest {
   @TempDir Path directory;
 
+  private static MultiPart.Part part(String name, String text) {
+    return new MultiPart.ByteBufferPart(
+        "file", name, HttpFields.EMPTY, ByteBuffer.wrap(text.getBytes(StandardCharsets.UTF_8)));
+  }
+
   @Test
   void identifiesEachRequestScopedUploadInstance() {
     EqualsVerifier.forClass(Upload.class)
@@ -34,7 +39,8 @@ class UploadEqualityTest {
     var upload = new Upload(part("same.txt", "payload"), () -> {});
     var other = new Upload(part("same.txt", "payload"), () -> {});
     var uploads = new HashSet<Upload>();
-    var initialHash = upload.hashCode();
+    final var initialHash = upload.hashCode();
+
     assertTrue(uploads.add(upload));
     assertTrue(uploads.add(other));
     assertNotEquals(upload, other);
@@ -47,6 +53,7 @@ class UploadEqualityTest {
       }
 
       var target = directory.resolve("saved.txt");
+
       assertEquals(target, upload.persistTo(target));
       assertEquals("payload", Files.readString(target));
     } finally {
@@ -58,10 +65,5 @@ class UploadEqualityTest {
     assertTrue(uploads.remove(upload));
     assertTrue(uploads.remove(other));
     assertTrue(uploads.isEmpty());
-  }
-
-  private static MultiPart.Part part(String name, String text) {
-    return new MultiPart.ByteBufferPart(
-        "file", name, HttpFields.EMPTY, ByteBuffer.wrap(text.getBytes(StandardCharsets.UTF_8)));
   }
 }

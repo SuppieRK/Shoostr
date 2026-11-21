@@ -17,14 +17,15 @@ class TestServerTest {
   void startsIsolatedServersOnEphemeralPortsAndStopsThemAtScopeExit() throws Exception {
     TestServer first;
     var firstApp = new Shoostr();
-    firstApp.routes().get("/id", (ignored, res) -> res.text("one"));
+    firstApp.routes().get("/id", (ignored, response) -> response.text("one"));
     var secondApp = new Shoostr();
-    secondApp.routes().get("/id", (ignored2, res) -> res.text("two"));
+    secondApp.routes().get("/id", (ignoredRequest, response) -> response.text("two"));
 
     try (var running = TestServer.start(firstApp);
         var second = TestServer.start(secondApp);
         var client = HttpClient.newHttpClient()) {
       first = running;
+
       assertNotEquals(running.baseUri().getPort(), second.baseUri().getPort());
       assertEquals(
           "one",
@@ -48,30 +49,31 @@ class TestServerTest {
   @Test
   void closesAppWhenConfigurationFails() {
     var app = new Shoostr();
-    app.modifyServer(
-        ignored3 -> {
-          throw new IllegalArgumentException("invalid fixture configuration");
-        });
+    app.modifyServer(ignoredServer -> {
+      throw new IllegalArgumentException("invalid fixture configuration");
+    });
+
     assertThrows(IllegalArgumentException.class, () -> TestServer.start(app));
+
     var routes = app.routes();
+
     assertThrows(
         IllegalStateException.class,
-        () -> routes.get("/later", (ignored4, res) -> res.text("late")));
+        () -> routes.get("/later", (ignoredRequest, response) -> response.text("late")));
   }
 
   @Test
   void reportsNativeStopFailuresThroughClose() throws Exception {
     var app = new Shoostr();
-    app.modifyServer(
-        jetty ->
-            jetty.addBean(
-                new AbstractLifeCycle() {
-                  @Override
-                  protected void doStop() throws Exception {
-                    throw new IOException("forced native stop failure");
-                  }
-                }));
-    app.routes().get("/", (ignored5, response) -> response.text("ready"));
+    app.modifyServer(jetty ->
+        jetty.addBean(
+            new AbstractLifeCycle() {
+              @Override
+              protected void doStop() throws Exception {
+                throw new IOException("forced native stop failure");
+              }
+            }));
+    app.routes().get("/", (ignoredRequest, response) -> response.text("ready"));
     var server = TestServer.start(app);
 
     var failure = assertThrows(IOException.class, server::close);

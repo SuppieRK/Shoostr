@@ -50,6 +50,18 @@ public record SseEvent(
   }
 
   /**
+   * Rejects characters that would terminate or corrupt a single-line metadata field.
+   *
+   * @param value optional metadata value
+   */
+  private static void validateLineField(@Nullable String value) {
+    if (value != null
+        && (value.indexOf('\r') >= 0 || value.indexOf('\n') >= 0 || value.indexOf('\0') >= 0)) {
+      throw new IllegalArgumentException("Event metadata must occupy one line");
+    }
+  }
+
+  /**
    * Sets the named event type.
    *
    * @param name event type
@@ -77,17 +89,5 @@ public record SseEvent(
    */
   public SseEvent withRetry(Duration value) {
     return new SseEvent(data, event, id, Objects.requireNonNull(value));
-  }
-
-  /**
-   * Rejects characters that would terminate or corrupt a single-line metadata field.
-   *
-   * @param value optional metadata value
-   */
-  private static void validateLineField(@Nullable String value) {
-    if (value != null
-        && (value.indexOf('\r') >= 0 || value.indexOf('\n') >= 0 || value.indexOf('\0') >= 0)) {
-      throw new IllegalArgumentException("Event metadata must occupy one line");
-    }
   }
 }

@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import io.github.suppierk.shoostr.http.MediaType;
 import io.github.suppierk.shoostr.testing.TestServer;
+import java.io.Closeable;
 import java.net.http.HttpResponse;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -23,45 +24,55 @@ class TypedCodecLifetimeTest {
   @Test
   void rejectsCompletedTypedAccessOnOriginalHandlerThreadBeforeCallingCodec() throws Exception {
     var codec = new CountingCodec();
-    var savedRequest = new AtomicReference<TypedRequest>();
-    var savedResponse = new AtomicReference<TypedResponse>();
+    var savedRequest = new AtomicReference<Request.Typed>();
+    var savedResponse = new AtomicReference<Response.Typed>();
     var handlerThread = new AtomicReference<Thread>();
 
-    try (var executor = Executors.newSingleThreadExecutor();
-        var app = new Shoostr()) {
-      app.codec(codec)
-          .routes()
-          .get(
-              "/retain",
-              executor,
-              (request, response) -> {
-                savedRequest.set(request);
-                savedResponse.set(response);
-                handlerThread.set(Thread.currentThread());
-                response.text("retained");
-              });
+    try (var executor = Executors.newSingleThreadExecutor()) {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        assertEquals(200, test.send(request -> request.path("/retain")).statusCode());
-        var retainedRequest = savedRequest.get();
-        var retainedResponse = savedResponse.get();
-        var originalThread = handlerThread.get();
-        executor
-            .submit(
-                () -> {
-                  assertSame(originalThread, Thread.currentThread());
-                  assertThrows(
-                      IllegalStateException.class, () -> retainedRequest.body(String.class));
-                  assertThrows(
-                      IllegalStateException.class,
-                      () -> retainedResponse.body("application/json", "late"));
-                  assertThrows(
-                      IllegalStateException.class,
-                      () -> retainedResponse.body(MediaType.APPLICATION_JSON, "late"));
-                })
-            .get(5, TimeUnit.SECONDS);
-        assertEquals(0, codec.reads.get());
-        assertEquals(0, codec.writes.get());
+      try (Closeable appCleanup = app::close) {
+        app.codec(codec)
+            .routes()
+            .get(
+                "/retain",
+                executor,
+                (request, response) -> {
+                  savedRequest.set(request);
+                  savedResponse.set(response);
+                  handlerThread.set(Thread.currentThread());
+                  response.text("retained");
+                });
+
+        try (var test = TestServer.start(app)) {
+          assertEquals(200, test.send(request -> request.path("/retain")).statusCode());
+
+          var retainedRequest = savedRequest.get();
+          var retainedResponse = savedResponse.get();
+          var originalThread = handlerThread.get();
+          executor
+              .submit(() -> {
+                assertSame(originalThread, Thread.currentThread());
+                assertThrows(IllegalStateException.class, retainedResponse::status);
+                assertThrows(
+                    IllegalStateException.class, () -> retainedResponse.header("Content-Type"));
+                assertThrows(
+                    IllegalStateException.class, () -> retainedResponse.headers("Content-Type"));
+                assertThrows(IllegalStateException.class, retainedResponse::headerMap);
+                assertThrows(IllegalStateException.class, retainedResponse::isCommitted);
+                assertThrows(IllegalStateException.class, () -> retainedRequest.body(String.class));
+                assertThrows(
+                    IllegalStateException.class,
+                    () -> retainedResponse.body("application/json", "late"));
+                assertThrows(
+                    IllegalStateException.class,
+                    () -> retainedResponse.body(MediaType.APPLICATION_JSON, "late"));
+              })
+              .get(5, TimeUnit.SECONDS);
+
+          assertEquals(0, codec.reads.get());
+          assertEquals(0, codec.writes.get());
+        }
       }
     }
   }
@@ -70,30 +81,31 @@ class TypedCodecLifetimeTest {
   void rejectsChildThreadAccessBeforeCallingCodec() throws Exception {
     var codec = new CountingCodec();
 
-    try (var children = Executors.newVirtualThreadPerTaskExecutor();
-        var app = new Shoostr()) {
-      app.codec(codec)
-          .routes()
-          .get(
-              "/child",
-              (request, response) -> {
-                children
-                    .submit(
-                        () -> {
-                          assertThrows(
-                              IllegalStateException.class, () -> request.body(String.class));
-                          assertThrows(
-                              IllegalStateException.class,
-                              () -> response.body("application/json", "child"));
-                        })
-                    .get();
-                response.text("guarded");
-              });
+    try (var children = Executors.newVirtualThreadPerTaskExecutor()) {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        assertEquals(200, test.send(request -> request.path("/child")).statusCode());
-        assertEquals(0, codec.reads.get());
-        assertEquals(0, codec.writes.get());
+      try (Closeable appCleanup1 = app::close) {
+        app.codec(codec)
+            .routes()
+            .get(
+                "/child",
+                (request, response) -> {
+                  children
+                      .submit(() -> {
+                        assertThrows(IllegalStateException.class, () -> request.body(String.class));
+                        assertThrows(
+                            IllegalStateException.class,
+                            () -> response.body("application/json", "child"));
+                      })
+                      .get();
+                  response.text("guarded");
+                });
+
+        try (var test = TestServer.start(app)) {
+          assertEquals(200, test.send(request -> request.path("/child")).statusCode());
+          assertEquals(0, codec.reads.get());
+          assertEquals(0, codec.writes.get());
+        }
       }
     }
   }
@@ -102,23 +114,29 @@ class TypedCodecLifetimeTest {
   void rejectsEncodingAfterStreamStartsBeforeCallingCodec() throws Exception {
     var codec = new CountingCodec();
 
-    try (var app = new Shoostr()) {
-      app.codec(codec)
-          .routes()
-          .get(
-              "/stream",
-              (ignored, response) -> {
-                response.startStream("text/plain").write("streamed");
-                assertThrows(
-                    IllegalStateException.class,
-                    () -> response.body(MediaType.APPLICATION_JSON, "late"));
-              });
+    {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        var result =
-            test.send(request -> request.path("/stream"), HttpResponse.BodyHandlers.ofString());
-        assertEquals("streamed", result.body());
-        assertEquals(0, codec.writes.get());
+      try (Closeable appCleanup2 = app::close) {
+        app.codec(codec)
+            .routes()
+            .get(
+                "/stream",
+                (ignored, response) -> {
+                  response.startStream("text/plain").write("streamed");
+
+                  assertThrows(
+                      IllegalStateException.class,
+                      () -> response.body(MediaType.APPLICATION_JSON, "late"));
+                });
+
+        try (var test = TestServer.start(app)) {
+          var result =
+              test.send(request -> request.path("/stream"), HttpResponse.BodyHandlers.ofString());
+
+          assertEquals("streamed", result.body());
+          assertEquals(0, codec.writes.get());
+        }
       }
     }
   }
@@ -130,22 +148,28 @@ class TypedCodecLifetimeTest {
     Files.writeString(file, "file body");
     var codec = new CountingCodec();
 
-    try (var app = new Shoostr()) {
-      app.codec(codec)
-          .routes()
-          .get(
-              "/file",
-              (ignored2, response) -> {
-                response.file(file, "text/plain");
-                assertThrows(
-                    IllegalStateException.class, () -> response.body("application/json", "late"));
-              });
+    {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        var result =
-            test.send(request -> request.path("/file"), HttpResponse.BodyHandlers.ofString());
-        assertEquals("file body", result.body());
-        assertEquals(0, codec.writes.get());
+      try (Closeable appCleanup3 = app::close) {
+        app.codec(codec)
+            .routes()
+            .get(
+                "/file",
+                (ignoredTypedRequest, response) -> {
+                  response.file(file, "text/plain");
+
+                  assertThrows(
+                      IllegalStateException.class, () -> response.body("application/json", "late"));
+                });
+
+        try (var test = TestServer.start(app)) {
+          var result =
+              test.send(request -> request.path("/file"), HttpResponse.BodyHandlers.ofString());
+
+          assertEquals("file body", result.body());
+          assertEquals(0, codec.writes.get());
+        }
       }
     }
   }
@@ -154,23 +178,29 @@ class TypedCodecLifetimeTest {
   void rejectsDecodingAfterStreamingInputWasSelected() throws Exception {
     var codec = new CountingCodec();
 
-    try (var app = new Shoostr()) {
-      app.codec(codec)
-          .routes()
-          .post(
-              "/input",
-              (request, response) -> {
-                request.input();
-                assertThrows(IllegalStateException.class, () -> request.body(String.class));
-                response.text("guarded");
-              });
+    {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        assertEquals(
-            200,
-            test.send(request -> request.path("/input").method("POST").body(new byte[] {1}))
-                .statusCode());
-        assertEquals(0, codec.reads.get());
+      try (Closeable appCleanup4 = app::close) {
+        app.codec(codec)
+            .routes()
+            .post(
+                "/input",
+                (request, response) -> {
+                  request.input();
+
+                  assertThrows(IllegalStateException.class, () -> request.body(String.class));
+
+                  response.text("guarded");
+                });
+
+        try (var test = TestServer.start(app)) {
+          assertEquals(
+              200,
+              test.send(request -> request.path("/input").method("POST").body(new byte[] {1}))
+                  .statusCode());
+          assertEquals(0, codec.reads.get());
+        }
       }
     }
   }
@@ -180,33 +210,35 @@ class TypedCodecLifetimeTest {
     var codec = new CountingCodec();
     var rejection = new CompletableFuture<IllegalStateException>();
 
-    try (var app = new Shoostr()) {
-      app.codec(codec)
-          .routes()
-          .get(
-              "/flush",
-              (ignored3, response) -> response.text("plain"),
-              extensions ->
-                  extensions
-                      .lifecycle()
-                      .afterResponseFlush(
-                          (ignored4, response) -> {
-                            try {
-                              rejection.complete(
-                                  assertThrows(
-                                      IllegalStateException.class,
-                                      () ->
-                                          ((TypedResponse) response)
-                                              .body("application/json", "late")));
-                            } catch (RuntimeException | Error failure) {
-                              rejection.completeExceptionally(failure);
-                            }
-                          }));
+    {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        assertEquals(200, test.send(request -> request.path("/flush")).statusCode());
-        rejection.get(5, TimeUnit.SECONDS);
-        assertEquals(0, codec.writes.get());
+      try (Closeable appCleanup5 = app::close) {
+        app.codec(codec)
+            .routes()
+            .get(
+                "/flush",
+                (ignoredTypedRequest, response) -> response.text("plain"),
+                extensions ->
+                    extensions.afterResponseFlush((ignoredRequest, response) -> {
+                      try {
+                        rejection.complete(
+                            assertThrows(
+                                IllegalStateException.class,
+                                () ->
+                                    ((Response.Typed) response).body("application/json", "late")));
+                      } catch (RuntimeException | Error failure) {
+                        rejection.completeExceptionally(failure);
+                      }
+                    }));
+
+        try (var test = TestServer.start(app)) {
+          assertEquals(200, test.send(request -> request.path("/flush")).statusCode());
+
+          rejection.get(5, TimeUnit.SECONDS);
+
+          assertEquals(0, codec.writes.get());
+        }
       }
     }
   }
@@ -216,19 +248,21 @@ class TypedCodecLifetimeTest {
     private final AtomicInteger writes;
 
     private CountingCodec() {
-      reads = new AtomicInteger();
-      writes = new AtomicInteger();
+      this.reads = new AtomicInteger();
+      this.writes = new AtomicInteger();
     }
 
     @Override
     public <T> T read(byte[] source, Class<T> type) throws Exception {
       reads.incrementAndGet();
+
       return super.read(source, type);
     }
 
     @Override
     public byte[] write(Object value) throws Exception {
       writes.incrementAndGet();
+
       return super.write(value);
     }
   }

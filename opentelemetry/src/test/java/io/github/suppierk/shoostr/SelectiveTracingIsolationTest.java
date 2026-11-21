@@ -18,17 +18,29 @@ import io.opentelemetry.sdk.OpenTelemetrySdk;
 import io.opentelemetry.sdk.testing.exporter.InMemorySpanExporter;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
 import io.opentelemetry.sdk.trace.export.SimpleSpanProcessor;
+import java.io.Closeable;
+import java.io.IOException;
 import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ForkJoinPool;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 
 class SelectiveTracingIsolationTest {
+  private static Shoostr withExecutionMode(Options options, boolean virtualApplication) {
+    options.setVirtualThreads(virtualApplication);
+
+    return new Shoostr(options)
+        .onRequestHeaders((request, response) ->
+            assertEquals(virtualApplication, Thread.currentThread().isVirtual()));
+  }
+
   @ParameterizedTest
   @CsvSource({"false,false", "false,true", "true,false", "true,true"})
   void preservesGlobalSpanWithSelectiveTracingInstalledInEitherOrder(
@@ -40,42 +52,55 @@ class SelectiveTracingIsolationTest {
             SdkTracerProvider.builder()
                 .addSpanProcessor(SimpleSpanProcessor.create(exporter))
                 .build();
-        var workers = new ForkJoinPool(1);
-        var app = withExecutionMode(new Shoostr(), virtualApplication)) {
-      var telemetry =
-          OpenTelemetrySdk.builder()
-              .setTracerProvider(provider)
-              .setPropagators(ContextPropagators.create(W3CTraceContextPropagator.getInstance()))
-              .build();
-      var global = new OpenTelemetryTracing(telemetry).allRequests();
-      var selective = new OpenTelemetryTracing(telemetry);
-      app.extensions(globalFirst ? global : selective, globalFirst ? selective : global)
-          .afterRequest(ignored -> completed.complete(null));
-      app.routes()
-          .get(
-              "/unselected",
-              workers,
-              (ignored2, response) -> response.text(Span.current().getSpanContext().getTraceId()));
+        var workers = new ForkJoinPool(1)) {
+      var app = withExecutionMode(new Options(), virtualApplication);
 
-      try (var test = TestServer.start(app)) {
-        var response =
-            test.send(
-                request ->
-                    request
-                        .path("/unselected")
-                        .header(
-                            "traceparent",
-                            "00-11111111111111111111111111111111-0123456789012345-01"),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals("11111111111111111111111111111111", response.body());
-        completed.get(5, TimeUnit.SECONDS);
-        assertEquals(1, exporter.getFinishedSpanItems().size());
-        assertFalse(
-            workers
-                .submit(() -> Span.current().getSpanContext().isValid())
-                .get(5, TimeUnit.SECONDS));
+      try (Closeable appCleanup = app::close) {
+        var telemetry =
+            OpenTelemetrySdk.builder()
+                .setTracerProvider(provider)
+                .setPropagators(ContextPropagators.create(W3CTraceContextPropagator.getInstance()))
+                .build();
+        var global = new OpenTelemetryTracing(telemetry);
+        var selective = new OpenTelemetryTracing(telemetry);
+        app.withExtension(globalFirst ? global : selective)
+            .withExtension(globalFirst ? selective : global)
+            .afterRequest(ignored -> completed.complete(null));
+        app.routes()
+            .get(
+                "/unselected",
+                workers,
+                (ignoredRequest, response) ->
+                    response.text(Span.current().getSpanContext().getTraceId()),
+                lifecycle -> lifecycle.withoutExtension(selective));
+
+        try (var test = TestServer.start(app)) {
+          var response =
+              sendResponseForPreservesGlobalSpanWithSelectiveTracingInstalledInEitherOrder(test);
+
+          assertEquals("11111111111111111111111111111111", response.body());
+
+          completed.get(5, TimeUnit.SECONDS);
+
+          assertEquals(1, exporter.getFinishedSpanItems().size());
+          assertFalse(
+              workers
+                  .submit(() -> Span.current().getSpanContext().isValid())
+                  .get(5, TimeUnit.SECONDS));
+        }
       }
     }
+  }
+
+  private HttpResponse<String>
+      sendResponseForPreservesGlobalSpanWithSelectiveTracingInstalledInEitherOrder(TestServer test)
+          throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/unselected")
+                .header("traceparent", "00-11111111111111111111111111111111-0123456789012345-01"),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @ParameterizedTest
@@ -95,111 +120,124 @@ class SelectiveTracingIsolationTest {
                 .addSpanProcessor(SimpleSpanProcessor.create(exporter))
                 .build();
         var workers = new ForkJoinPool(1);
-        var drivers = Executors.newVirtualThreadPerTaskExecutor();
-        var app = withExecutionMode(new Shoostr(), virtualApplication)) {
-      var telemetry =
-          OpenTelemetrySdk.builder()
-              .setTracerProvider(provider)
-              .setPropagators(ContextPropagators.create(W3CTraceContextPropagator.getInstance()))
-              .build();
-      var tracing = new OpenTelemetryTracing(telemetry);
-      app.extensions(tracing).afterRequest(ignored3 -> completed.countDown());
-      app.routes()
-          .get(
-              "/outer",
-              workers,
-              (ignored4, response) -> {
-                var child =
-                    applicationChild
-                        ? telemetry.getTracer("test").spanBuilder("outer-business").startSpan()
-                        : null;
-                var current = child == null ? Span.current() : child;
+        var drivers = Executors.newVirtualThreadPerTaskExecutor()) {
+      var app = withExecutionMode(new Options(), virtualApplication);
 
-                try (var ignored5 = current.makeCurrent()) {
-                  outerThread.complete(Thread.currentThread());
-                  outerSpan.complete(current.getSpanContext().getSpanId());
-                  entered.countDown();
-                  if (!allowHelping.await(5, TimeUnit.SECONDS)) {
-                    throw new IllegalStateException("Helping was not enabled");
+      try (Closeable appCleanup1 = app::close) {
+        var telemetry =
+            OpenTelemetrySdk.builder()
+                .setTracerProvider(provider)
+                .setPropagators(ContextPropagators.create(W3CTraceContextPropagator.getInstance()))
+                .build();
+        var tracing = new OpenTelemetryTracing(telemetry);
+        app.afterRequest(ignoredRequestOutcome -> completed.countDown());
+        app.routes()
+            .get(
+                "/outer",
+                workers,
+                (ignoredRequest, response) -> {
+                  var child =
+                      applicationChild
+                          ? telemetry.getTracer("test").spanBuilder("outer-business").startSpan()
+                          : null;
+                  var current = child == null ? Span.current() : child;
+
+                  try (var ignoredScope = current.makeCurrent()) {
+                    outerThread.complete(Thread.currentThread());
+                    outerSpan.complete(current.getSpanContext().getSpanId());
+                    entered.countDown();
+                    if (!allowHelping.await(5, TimeUnit.SECONDS)) {
+                      throw new IllegalStateException("Helping was not enabled");
+                    }
+
+                    assertTrue(workers.awaitQuiescence(5, TimeUnit.SECONDS));
+
+                    response.text(Span.current().getSpanContext().getSpanId());
+                  } finally {
+                    if (child != null) {
+                      child.end();
+                    }
                   }
+                },
+                lifecycle -> lifecycle.withExtension(tracing))
+            .get(
+                "/inner",
+                workers,
+                (ignoredRequest, response) -> {
+                  innerThread.complete(Thread.currentThread());
+                  var inherited = Span.current().getSpanContext();
+                  var business =
+                      telemetry.getTracer("test").spanBuilder("inner-business").startSpan();
+                  business.end();
+                  response.text(inherited.isValid() ? inherited.getTraceId() : "none");
+                });
 
-                  assertTrue(workers.awaitQuiescence(5, TimeUnit.SECONDS));
-                  response.text(Span.current().getSpanContext().getSpanId());
-                } finally {
-                  if (child != null) {
-                    child.end();
-                  }
-                }
-              },
-              e -> e.with(tracing))
-          .get(
-              "/inner",
-              workers,
-              (ignored6, response) -> {
-                innerThread.complete(Thread.currentThread());
-                var inherited = Span.current().getSpanContext();
-                var business =
-                    telemetry.getTracer("test").spanBuilder("inner-business").startSpan();
-                business.end();
-                response.text(inherited.isValid() ? inherited.getTraceId() : "none");
-              });
+        try (var test = TestServer.start(app)) {
+          var outer =
+              submitOuterForDoesNotInheritAnotherRequestTraceWhileHelpingAnUnselectedRequest(
+                  drivers, test);
 
-      try (var test = TestServer.start(app)) {
-        var outer =
-            drivers.submit(
-                () ->
-                    test.send(
-                        request ->
-                            request
-                                .path("/outer")
-                                .header(
-                                    "traceparent",
-                                    "00-11111111111111111111111111111111-0123456789012345-01"),
-                        HttpResponse.BodyHandlers.ofString()));
+          try {
+            assertTrue(entered.await(5, TimeUnit.SECONDS));
 
-        try {
-          assertTrue(entered.await(5, TimeUnit.SECONDS));
-          var inner =
-              drivers.submit(
-                  () ->
-                      test.send(
-                          request -> request.path("/inner"), HttpResponse.BodyHandlers.ofString()));
-          await().atMost(Duration.ofSeconds(5)).until(() -> workers.getQueuedSubmissionCount() > 0);
-          allowHelping.countDown();
-          var innerResponse = inner.get(5, TimeUnit.SECONDS);
-          var outerResponse = outer.get(5, TimeUnit.SECONDS);
-          assertTrue(completed.await(5, TimeUnit.SECONDS));
-          assertSame(outerThread.get(5, TimeUnit.SECONDS), innerThread.get(5, TimeUnit.SECONDS));
-          assertEquals(outerSpan.get(5, TimeUnit.SECONDS), outerResponse.body());
-          assertFalse(
-              workers
-                  .submit(() -> Span.current().getSpanContext().isValid())
-                  .get(5, TimeUnit.SECONDS));
-          var spans = exporter.getFinishedSpanItems();
-          assertEquals(1, spans.stream().filter(span -> span.getKind() == SpanKind.SERVER).count());
-          var business =
-              spans.stream()
-                  .filter(span -> "inner-business".equals(span.getName()))
-                  .findFirst()
-                  .orElseThrow();
-          assertAll(
-              () -> assertEquals("none", innerResponse.body()),
-              () -> assertFalse(business.getParentSpanContext().isValid()),
-              () -> assertNotEquals("11111111111111111111111111111111", business.getTraceId()));
-        } finally {
-          allowHelping.countDown();
+            var inner =
+                submitInnerForDoesNotInheritAnotherRequestTraceWhileHelpingAnUnselectedRequest(
+                    drivers, test);
+            await()
+                .atMost(Duration.ofSeconds(5))
+                .until(() -> workers.getQueuedSubmissionCount() > 0);
+            allowHelping.countDown();
+            final var innerResponse = inner.get(5, TimeUnit.SECONDS);
+            var outerResponse = outer.get(5, TimeUnit.SECONDS);
+
+            assertTrue(completed.await(5, TimeUnit.SECONDS));
+            assertSame(outerThread.get(5, TimeUnit.SECONDS), innerThread.get(5, TimeUnit.SECONDS));
+            assertEquals(outerSpan.get(5, TimeUnit.SECONDS), outerResponse.body());
+            assertFalse(
+                workers
+                    .submit(() -> Span.current().getSpanContext().isValid())
+                    .get(5, TimeUnit.SECONDS));
+
+            var spans = exporter.getFinishedSpanItems();
+
+            assertEquals(
+                1, spans.stream().filter(span -> span.getKind() == SpanKind.SERVER).count());
+
+            var business =
+                spans.stream()
+                    .filter(span -> "inner-business".equals(span.getName()))
+                    .findFirst()
+                    .orElseThrow();
+
+            assertAll(
+                () -> assertEquals("none", innerResponse.body()),
+                () -> assertFalse(business.getParentSpanContext().isValid()),
+                () -> assertNotEquals("11111111111111111111111111111111", business.getTraceId()));
+          } finally {
+            allowHelping.countDown();
+          }
         }
       }
     }
   }
 
-  private static Shoostr withExecutionMode(Shoostr app, boolean virtualApplication) {
-    if (virtualApplication) {
-      app.virtualThreads();
-    }
+  private Future<HttpResponse<String>>
+      submitOuterForDoesNotInheritAnotherRequestTraceWhileHelpingAnUnselectedRequest(
+          ExecutorService drivers, TestServer test) {
+    return drivers.submit(() ->
+        test.send(
+            request ->
+                request
+                    .path("/outer")
+                    .header(
+                        "traceparent", "00-11111111111111111111111111111111-0123456789012345-01"),
+            HttpResponse.BodyHandlers.ofString()));
+  }
 
-    return app.onRequestHeaders(
-        (request, response) ->
-            assertEquals(virtualApplication, Thread.currentThread().isVirtual()));
+  private Future<HttpResponse<String>>
+      submitInnerForDoesNotInheritAnotherRequestTraceWhileHelpingAnUnselectedRequest(
+          ExecutorService drivers, TestServer test) {
+    return drivers.submit(
+        () -> test.send(request -> request.path("/inner"), HttpResponse.BodyHandlers.ofString()));
   }
 }

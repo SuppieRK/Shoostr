@@ -9,10 +9,13 @@ import io.github.suppierk.shoostr.Shoostr;
 import io.github.suppierk.shoostr.testing.TestServer;
 import io.modelcontextprotocol.common.McpTransportContext;
 import io.modelcontextprotocol.json.McpJsonDefaults;
+import io.modelcontextprotocol.server.McpAsyncServer;
 import io.modelcontextprotocol.server.McpServer;
 import io.modelcontextprotocol.server.McpServerFeatures;
 import io.modelcontextprotocol.spec.McpSchema;
 import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.net.URI;
 import java.net.http.HttpResponse;
@@ -28,113 +31,49 @@ import org.junit.jupiter.api.Timeout;
 class McpReplyAuthorizationTest {
   @Test
   @Timeout(20)
-  void anUnauthorizedReplyCannotCompleteANativeRequestButAGrantedRetryCan() throws Exception {
+  void anUnauthorizedReplyCannotCompleteNativeRequestButGrantedRetryCan() throws Exception {
     var completed = new CountDownLatch(1);
     var security =
-        new McpHttpSecurity(
-            Set.of(),
-            request ->
-                new McpIdentity(
-                    "alice:client",
-                    McpTransportContext.create(
-                        Map.of("replyAllowed", request.header("X-Verified-Grants").isPresent())),
-                    null),
-            (identity, message) -> {
-              if (message instanceof McpSchema.JSONRPCResponse
-                  && !Boolean.TRUE.equals(identity.context().get("replyAllowed"))) {
-                throw McpHttpSecurity.scopeDenied(
-                    Set.of("client:reply"),
-                    URI.create("https://example.com/.well-known/oauth-protected-resource/mcp"));
-              }
-            });
+        createSecurityForAnUnauthorizedReplyCannotCompleteNativeRequestButGrantedRetryCan();
     var mcp =
-        Mcp.async(
-            security,
-            transport ->
-                McpServer.async(transport)
-                    .requestTimeout(Duration.ofSeconds(10))
-                    .capabilities(McpSchema.ServerCapabilities.builder().tools(false).build())
-                    .tools(
-                        McpServerFeatures.AsyncToolSpecification.builder()
-                            .tool(
-                                McpSchema.Tool.builder("ping-client", Map.of("type", "object"))
-                                    .build())
-                            .callHandler(
-                                (exchange, ignored) ->
-                                    exchange
-                                        .ping()
-                                        .doOnSuccess(ignored2 -> completed.countDown())
-                                        .thenReturn(
-                                            McpSchema.CallToolResult.builder()
-                                                .addTextContent("reply accepted")
-                                                .build()))
-                            .build())
-                    .build());
+        createMcpForAnUnauthorizedReplyCannotCompleteNativeRequestButGrantedRetryCan(
+            security, completed);
     var app = new Shoostr();
-    app.extensions(mcp).routes(routes -> routes.path("/mcp", mcp::routes));
+    app.routes(routes -> routes.path("/mcp", mcp::routes));
 
     try (var test = TestServer.start(app)) {
       var initialized =
-          test.send(
-              request ->
-                  request
-                      .path("/mcp")
-                      .method("POST")
-                      .header("Content-Type", "application/json")
-                      .header("Accept", "application/json, text/event-stream")
-                      .body(
-                          """
-                          {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
-                            "protocolVersion":"2025-11-25","capabilities":{},
-                            "clientInfo":{"name":"reply-authorization-fixture","version":"1.0"}}}
-                          """
-                              .getBytes(StandardCharsets.UTF_8)));
+          sendInitializedRequestForAnUnauthorizedReplyCannotCompleteNativeRequestButGrantedRetryCan(
+              test);
       var sessionId = initialized.headers().firstValue("Mcp-Session-Id").orElseThrow();
       var response =
-          test.send(
-              request ->
-                  request
-                      .path("/mcp")
-                      .method("POST")
-                      .header("Content-Type", "application/json")
-                      .header("Accept", "application/json, text/event-stream")
-                      .header("Mcp-Session-Id", sessionId)
-                      .header("MCP-Protocol-Version", "2025-11-25")
-                      .body(
-                          """
-                          {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{
-                            "name":"ping-client","arguments":{}}}
-                          """
-                              .getBytes(StandardCharsets.UTF_8)),
-              HttpResponse.BodyHandlers.ofInputStream());
+          sendResponseForAnUnauthorizedReplyCannotCompleteNativeRequestButGrantedRetryCan(
+              test, sessionId);
       var mapper = McpJsonDefaults.getMapper();
 
       try (var reader =
           new BufferedReader(new InputStreamReader(response.body(), StandardCharsets.UTF_8))) {
         assertEquals(200, response.statusCode());
+
         String line;
         do {
           line = reader.readLine();
+
           assertNotNull(line, "The native request must arrive before its reply is sent");
         } while (!line.startsWith("data:"));
+
         var ping =
             assertInstanceOf(
                 McpSchema.JSONRPCRequest.class,
                 McpSchema.deserializeJsonRpcMessage(mapper, line.substring(5).strip()));
         assertEquals("ping", ping.method());
+
         var replyBody =
             mapper.writeValueAsBytes(McpSchema.JSONRPCResponse.result(ping.id(), Map.of()));
         var denied =
-            test.send(
-                request ->
-                    request
-                        .path("/mcp")
-                        .method("POST")
-                        .header("Content-Type", "application/json")
-                        .header("Accept", "application/json, text/event-stream")
-                        .header("Mcp-Session-Id", sessionId)
-                        .header("MCP-Protocol-Version", "2025-11-25")
-                        .body(replyBody));
+            sendDeniedRequestForAnUnauthorizedReplyCannotCompleteNativeRequestButGrantedRetryCan(
+                test, sessionId, replyBody);
+
         assertEquals(403, denied.statusCode());
         assertEquals(
             "Bearer error=\"insufficient_scope\", scope=\"client:reply\", "
@@ -143,20 +82,127 @@ class McpReplyAuthorizationTest {
         assertEquals(1L, completed.getCount());
 
         var granted =
-            test.send(
-                request ->
-                    request
-                        .path("/mcp")
-                        .method("POST")
-                        .header("Content-Type", "application/json")
-                        .header("Accept", "application/json, text/event-stream")
-                        .header("Mcp-Session-Id", sessionId)
-                        .header("MCP-Protocol-Version", "2025-11-25")
-                        .header("X-Verified-Grants", "client:reply")
-                        .body(replyBody));
+            sendGrantedRequestForAnUnauthorizedReplyCannotCompleteNativeRequestButGrantedRetryCan(
+                test, sessionId, replyBody);
+
         assertEquals(202, granted.statusCode());
         assertTrue(completed.await(3, TimeUnit.SECONDS));
       }
     }
+  }
+
+  private McpHttpSecurity
+      createSecurityForAnUnauthorizedReplyCannotCompleteNativeRequestButGrantedRetryCan() {
+    return new McpHttpSecurity(
+        Set.of(),
+        request ->
+            new McpIdentity(
+                "alice:client",
+                McpTransportContext.create(
+                    Map.of("replyAllowed", request.header("X-Verified-Grants").isPresent())),
+                null),
+        (identity, message) -> {
+          if (message instanceof McpSchema.JSONRPCResponse
+              && !Boolean.TRUE.equals(identity.context().get("replyAllowed"))) {
+            throw McpHttpSecurity.scopeDenied(
+                Set.of("client:reply"),
+                URI.create("https://example.com/.well-known/oauth-protected-resource/mcp"));
+          }
+        });
+  }
+
+  private Mcp<McpAsyncServer>
+      createMcpForAnUnauthorizedReplyCannotCompleteNativeRequestButGrantedRetryCan(
+          McpHttpSecurity security, CountDownLatch completed) {
+    return Mcp.async(
+        security,
+        transport ->
+            McpServer.async(transport)
+                .requestTimeout(Duration.ofSeconds(10))
+                .capabilities(McpSchema.ServerCapabilities.builder().tools(false).build())
+                .tools(
+                    McpServerFeatures.AsyncToolSpecification.builder()
+                        .tool(
+                            McpSchema.Tool.builder("ping-client", Map.of("type", "object")).build())
+                        .callHandler((exchange, ignored) ->
+                            exchange
+                                .ping()
+                                .doOnSuccess(ignoredObject -> completed.countDown())
+                                .thenReturn(
+                                    McpSchema.CallToolResult.builder()
+                                        .addTextContent("reply accepted")
+                                        .build()))
+                        .build())
+                .build());
+  }
+
+  private HttpResponse<byte[]>
+      sendInitializedRequestForAnUnauthorizedReplyCannotCompleteNativeRequestButGrantedRetryCan(
+          TestServer test) throws IOException, InterruptedException {
+    return test.send(request ->
+        request
+            .path("/mcp")
+            .method("POST")
+            .header("Content-Type", "application/json")
+            .header("Accept", "application/json, text/event-stream")
+            .body(
+                """
+                {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+                  "protocolVersion":"2025-11-25","capabilities":{},
+                  "clientInfo":{"name":"reply-authorization-fixture","version":"1.0"}}}
+                """
+                    .getBytes(StandardCharsets.UTF_8)));
+  }
+
+  private HttpResponse<InputStream>
+      sendResponseForAnUnauthorizedReplyCannotCompleteNativeRequestButGrantedRetryCan(
+          TestServer test, String sessionId) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/mcp")
+                .method("POST")
+                .header("Content-Type", "application/json")
+                .header("Accept", "application/json, text/event-stream")
+                .header("Mcp-Session-Id", sessionId)
+                .header("MCP-Protocol-Version", "2025-11-25")
+                .body(
+                    """
+                    {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{
+                      "name":"ping-client","arguments":{}}}
+                    """
+                        .getBytes(StandardCharsets.UTF_8)),
+        HttpResponse.BodyHandlers.ofInputStream());
+  }
+
+  private HttpResponse<byte[]>
+      sendDeniedRequestForAnUnauthorizedReplyCannotCompleteNativeRequestButGrantedRetryCan(
+          TestServer test, String sessionId, byte[] replyBody)
+          throws IOException, InterruptedException {
+    return test.send(request ->
+        request
+            .path("/mcp")
+            .method("POST")
+            .header("Content-Type", "application/json")
+            .header("Accept", "application/json, text/event-stream")
+            .header("Mcp-Session-Id", sessionId)
+            .header("MCP-Protocol-Version", "2025-11-25")
+            .body(replyBody));
+  }
+
+  private HttpResponse<byte[]>
+      sendGrantedRequestForAnUnauthorizedReplyCannotCompleteNativeRequestButGrantedRetryCan(
+          TestServer test, String sessionId, byte[] replyBody)
+          throws IOException, InterruptedException {
+    return test.send(request ->
+        request
+            .path("/mcp")
+            .method("POST")
+            .header("Content-Type", "application/json")
+            .header("Accept", "application/json, text/event-stream")
+            .header("Mcp-Session-Id", sessionId)
+            .header("MCP-Protocol-Version", "2025-11-25")
+            .header("X-Verified-Grants", "client:reply")
+            .body(replyBody));
   }
 }

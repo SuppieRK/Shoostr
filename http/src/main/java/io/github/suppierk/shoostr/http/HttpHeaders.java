@@ -161,10 +161,10 @@ public final class HttpHeaders {
    * <p>S1133 is suppressed due to the need to keep this status for any legacy system or another
    * system that might want to use this status, clearly indicating that it should be replaced.
    *
-   * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    * @see <a
    *     href="https://www.w3.org/TR/2007/WD-access-control-20071126/#access-control0">Specification
    *     cited by IANA</a>
+   * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    */
   @SuppressWarnings("squid:S1133")
   @Deprecated(since = "0.1.0")
@@ -394,8 +394,8 @@ public final class HttpHeaders {
    * <p>S1133 is suppressed due to the need to keep this status for any legacy system or another
    * system that might want to use this status, clearly indicating that it should be replaced.
    *
-   * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    * @see <a href="https://www.rfc-editor.org/rfc/rfc2774.html">RFC 2774</a>
+   * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    */
   @SuppressWarnings("squid:S1133")
   @Deprecated(since = "0.1.0")
@@ -409,8 +409,8 @@ public final class HttpHeaders {
    * <p>S1133 is suppressed due to the need to keep this status for any legacy system or another
    * system that might want to use this status, clearly indicating that it should be replaced.
    *
-   * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    * @see <a href="https://www.rfc-editor.org/rfc/rfc2774.html">RFC 2774</a>
+   * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    */
   @SuppressWarnings("squid:S1133")
   @Deprecated(since = "0.1.0")
@@ -424,8 +424,8 @@ public final class HttpHeaders {
    * <p>S1133 is suppressed due to the need to keep this status for any legacy system or another
    * system that might want to use this status, clearly indicating that it should be replaced.
    *
-   * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    * @see <a href="https://www.rfc-editor.org/rfc/rfc2774.html">RFC 2774</a>
+   * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    */
   @SuppressWarnings("squid:S1133")
   @Deprecated(since = "0.1.0")
@@ -439,8 +439,8 @@ public final class HttpHeaders {
    * <p>S1133 is suppressed due to the need to keep this status for any legacy system or another
    * system that might want to use this status, clearly indicating that it should be replaced.
    *
-   * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    * @see <a href="https://www.w3.org/TR/WD-http-pep">Specification cited by IANA</a>
+   * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    */
   @SuppressWarnings("squid:S1133")
   @Deprecated(since = "0.1.0")
@@ -712,8 +712,8 @@ public final class HttpHeaders {
    * <p>S1133 is suppressed due to the need to keep this status for any legacy system or another
    * system that might want to use this status, clearly indicating that it should be replaced.
    *
-   * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    * @see <a href="https://www.rfc-editor.org/rfc/rfc2068.html">RFC 2068</a>
+   * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    */
   @SuppressWarnings("squid:S1133")
   @Deprecated(since = "0.1.0")
@@ -794,9 +794,9 @@ public final class HttpHeaders {
    * <p>S1133 is suppressed due to the need to keep this status for any legacy system or another
    * system that might want to use this status, clearly indicating that it should be replaced.
    *
-   * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    * @see <a href="https://www.rfc-editor.org/rfc/rfc2616.html#section-14.15">RFC 2616, section
    *     14.15</a>
+   * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    */
   @SuppressWarnings("squid:S1133")
   @Deprecated(since = "0.1.0")
@@ -820,8 +820,8 @@ public final class HttpHeaders {
    * <p>S1133 is suppressed due to the need to keep this status for any legacy system or another
    * system that might want to use this status, clearly indicating that it should be replaced.
    *
-   * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    * @see <a href="https://www.w3.org/TR/html401">Specification cited by IANA</a>
+   * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    */
   @SuppressWarnings("squid:S1133")
   @Deprecated(since = "0.1.0")
@@ -855,8 +855,8 @@ public final class HttpHeaders {
    * <p>S1133 is suppressed due to the need to keep this status for any legacy system or another
    * system that might want to use this status, clearly indicating that it should be replaced.
    *
-   * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    * @see <a href="https://www.w3.org/TR/html401">Specification cited by IANA</a>
+   * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    */
   @SuppressWarnings("squid:S1133")
   @Deprecated(since = "0.1.0")
@@ -880,8 +880,8 @@ public final class HttpHeaders {
    * <p>S1133 is suppressed due to the need to keep this status for any legacy system or another
    * system that might want to use this status, clearly indicating that it should be replaced.
    *
-   * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    * @see <a href="https://www.rfc-editor.org/rfc/rfc2068.html">RFC 2068</a>
+   * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    */
   @SuppressWarnings("squid:S1133")
   @Deprecated(since = "0.1.0")
@@ -905,8 +905,8 @@ public final class HttpHeaders {
    * <p>S1133 is suppressed due to the need to keep this status for any legacy system or another
    * system that might want to use this status, clearly indicating that it should be replaced.
    *
-   * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    * @see <a href="https://www.rfc-editor.org/rfc/rfc2965.html">RFC 2965</a>
+   * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    */
   @SuppressWarnings("squid:S1133")
   @Deprecated(since = "0.1.0")
@@ -1018,8 +1018,8 @@ public final class HttpHeaders {
    * <p>S1133 is suppressed due to the need to keep this status for any legacy system or another
    * system that might want to use this status, clearly indicating that it should be replaced.
    *
-   * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    * @see <a href="https://www.w3.org/TR/html401">Specification cited by IANA</a>
+   * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    */
   @SuppressWarnings("squid:S1133")
   @Deprecated(since = "0.1.0")
@@ -1060,8 +1060,8 @@ public final class HttpHeaders {
    * <p>S1133 is suppressed due to the need to keep this status for any legacy system or another
    * system that might want to use this status, clearly indicating that it should be replaced.
    *
-   * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    * @see <a href="https://www.rfc-editor.org/rfc/rfc2068.html">RFC 2068</a>
+   * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    */
   @SuppressWarnings("squid:S1133")
   @Deprecated(since = "0.1.0")
@@ -1112,8 +1112,8 @@ public final class HttpHeaders {
    * <p>S1133 is suppressed due to the need to keep this status for any legacy system or another
    * system that might want to use this status, clearly indicating that it should be replaced.
    *
-   * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    * @see <a href="https://www.rfc-editor.org/rfc/rfc3230.html">RFC 3230</a>
+   * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    */
   @SuppressWarnings("squid:S1133")
   @Deprecated(since = "0.1.0")
@@ -1202,8 +1202,8 @@ public final class HttpHeaders {
    * <p>S1133 is suppressed due to the need to keep this status for any legacy system or another
    * system that might want to use this status, clearly indicating that it should be replaced.
    *
-   * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    * @see <a href="https://www.rfc-editor.org/rfc/rfc2774.html">RFC 2774</a>
+   * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    */
   @SuppressWarnings("squid:S1133")
   @Deprecated(since = "0.1.0")
@@ -1236,8 +1236,8 @@ public final class HttpHeaders {
    * <p>S1133 is suppressed due to the need to keep this status for any legacy system or another
    * system that might want to use this status, clearly indicating that it should be replaced.
    *
-   * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    * @see <a href="https://www.w3.org/TR/NOTE-OPS-OverHTTP">Specification cited by IANA</a>
+   * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    */
   @SuppressWarnings("squid:S1133")
   @Deprecated(since = "0.1.0")
@@ -1271,9 +1271,9 @@ public final class HttpHeaders {
    * <p>S1133 is suppressed due to the need to keep this status for any legacy system or another
    * system that might want to use this status, clearly indicating that it should be replaced.
    *
-   * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    * @see <a href="https://www.rfc-editor.org/rfc/rfc7540.html#section-3.2.1">RFC 7540, section
    *     3.2.1</a>
+   * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    */
   @SuppressWarnings("squid:S1133")
   @Deprecated(since = "0.1.0")
@@ -1470,8 +1470,8 @@ public final class HttpHeaders {
    * <p>S1133 is suppressed due to the need to keep this status for any legacy system or another
    * system that might want to use this status, clearly indicating that it should be replaced.
    *
-   * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    * @see <a href="https://www.rfc-editor.org/rfc/rfc2774.html">RFC 2774</a>
+   * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    */
   @SuppressWarnings("squid:S1133")
   @Deprecated(since = "0.1.0")
@@ -1513,10 +1513,10 @@ public final class HttpHeaders {
    * <p>S1133 is suppressed due to the need to keep this status for any legacy system or another
    * system that might want to use this status, clearly indicating that it should be replaced.
    *
-   * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    * @see <a
    *     href="https://www.w3.org/TR/2007/WD-access-control-20071126/#method-check">Specification
    *     cited by IANA</a>
+   * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    */
   @SuppressWarnings("squid:S1133")
   @Deprecated(since = "0.1.0")
@@ -1530,10 +1530,10 @@ public final class HttpHeaders {
    * <p>S1133 is suppressed due to the need to keep this status for any legacy system or another
    * system that might want to use this status, clearly indicating that it should be replaced.
    *
-   * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    * @see <a
    *     href="https://www.w3.org/TR/2007/WD-access-control-20071126/#method-check-expires">Specification
    *     cited by IANA</a>
+   * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    */
   @SuppressWarnings("squid:S1133")
   @Deprecated(since = "0.1.0")
@@ -1618,8 +1618,8 @@ public final class HttpHeaders {
    * <p>S1133 is suppressed due to the need to keep this status for any legacy system or another
    * system that might want to use this status, clearly indicating that it should be replaced.
    *
-   * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    * @see <a href="https://www.rfc-editor.org/rfc/rfc2774.html">RFC 2774</a>
+   * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    */
   @SuppressWarnings("squid:S1133")
   @Deprecated(since = "0.1.0")
@@ -1702,8 +1702,8 @@ public final class HttpHeaders {
    * <p>S1133 is suppressed due to the need to keep this status for any legacy system or another
    * system that might want to use this status, clearly indicating that it should be replaced.
    *
-   * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    * @see <a href="https://www.w3.org/TR/P3P">Specification cited by IANA</a>
+   * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    */
   @SuppressWarnings("squid:S1133")
   @Deprecated(since = "0.1.0")
@@ -1717,8 +1717,8 @@ public final class HttpHeaders {
    * <p>S1133 is suppressed due to the need to keep this status for any legacy system or another
    * system that might want to use this status, clearly indicating that it should be replaced.
    *
-   * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    * @see <a href="http://www.w3.org/TR/WD-http-pep">Specification cited by IANA</a>
+   * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    */
   @SuppressWarnings("squid:S1133")
   @Deprecated(since = "0.1.0")
@@ -1732,8 +1732,8 @@ public final class HttpHeaders {
    * <p>S1133 is suppressed due to the need to keep this status for any legacy system or another
    * system that might want to use this status, clearly indicating that it should be replaced.
    *
-   * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    * @see <a href="http://www.w3.org/TR/WD-http-pep">Specification cited by IANA</a>
+   * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    */
   @SuppressWarnings("squid:S1133")
   @Deprecated(since = "0.1.0")
@@ -1757,8 +1757,8 @@ public final class HttpHeaders {
    * <p>S1133 is suppressed due to the need to keep this status for any legacy system or another
    * system that might want to use this status, clearly indicating that it should be replaced.
    *
-   * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    * @see <a href="https://www.w3.org/TR/REC-PICS-labels-961031">Specification cited by IANA</a>
+   * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    */
   @SuppressWarnings("squid:S1133")
   @Deprecated(since = "0.1.0")
@@ -1838,8 +1838,8 @@ public final class HttpHeaders {
    * <p>S1133 is suppressed due to the need to keep this status for any legacy system or another
    * system that might want to use this status, clearly indicating that it should be replaced.
    *
-   * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    * @see <a href="https://www.w3.org/TR/NOTE-OPS-OverHTTP">Specification cited by IANA</a>
+   * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    */
   @SuppressWarnings("squid:S1133")
   @Deprecated(since = "0.1.0")
@@ -1853,8 +1853,8 @@ public final class HttpHeaders {
    * <p>S1133 is suppressed due to the need to keep this status for any legacy system or another
    * system that might want to use this status, clearly indicating that it should be replaced.
    *
-   * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    * @see <a href="https://www.w3.org/TR/REC-PICS-labels-961031">Specification cited by IANA</a>
+   * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    */
   @SuppressWarnings("squid:S1133")
   @Deprecated(since = "0.1.0")
@@ -1886,8 +1886,8 @@ public final class HttpHeaders {
    * <p>S1133 is suppressed due to the need to keep this status for any legacy system or another
    * system that might want to use this status, clearly indicating that it should be replaced.
    *
-   * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    * @see <a href="https://www.w3.org/TR/REC-PICS-labels-961031">Specification cited by IANA</a>
+   * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    */
   @SuppressWarnings("squid:S1133")
   @Deprecated(since = "0.1.0")
@@ -1932,8 +1932,8 @@ public final class HttpHeaders {
    * <p>S1133 is suppressed due to the need to keep this status for any legacy system or another
    * system that might want to use this status, clearly indicating that it should be replaced.
    *
-   * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    * @see <a href="https://www.w3.org/TR/WD-proxy.html">Specification cited by IANA</a>
+   * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    */
   @SuppressWarnings("squid:S1133")
   @Deprecated(since = "0.1.0")
@@ -1947,8 +1947,8 @@ public final class HttpHeaders {
    * <p>S1133 is suppressed due to the need to keep this status for any legacy system or another
    * system that might want to use this status, clearly indicating that it should be replaced.
    *
-   * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    * @see <a href="https://www.w3.org/TR/WD-proxy.html">Specification cited by IANA</a>
+   * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    */
   @SuppressWarnings("squid:S1133")
   @Deprecated(since = "0.1.0")
@@ -1982,8 +1982,8 @@ public final class HttpHeaders {
    * <p>S1133 is suppressed due to the need to keep this status for any legacy system or another
    * system that might want to use this status, clearly indicating that it should be replaced.
    *
-   * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    * @see <a href="https://www.rfc-editor.org/rfc/rfc2068.html">RFC 2068</a>
+   * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    */
   @SuppressWarnings("squid:S1133")
   @Deprecated(since = "0.1.0")
@@ -2045,10 +2045,10 @@ public final class HttpHeaders {
    * <p>S1133 is suppressed due to the need to keep this status for any legacy system or another
    * system that might want to use this status, clearly indicating that it should be replaced.
    *
-   * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    * @see <a
    *     href="https://www.w3.org/TR/2007/WD-access-control-20071126/#referer-root">Specification
    *     cited by IANA</a>
+   * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    */
   @SuppressWarnings("squid:S1133")
   @Deprecated(since = "0.1.0")
@@ -2168,8 +2168,8 @@ public final class HttpHeaders {
    * <p>S1133 is suppressed due to the need to keep this status for any legacy system or another
    * system that might want to use this status, clearly indicating that it should be replaced.
    *
-   * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    * @see <a href="https://www.rfc-editor.org/rfc/rfc2310.html">RFC 2310</a>
+   * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    */
   @SuppressWarnings("squid:S1133")
   @Deprecated(since = "0.1.0")
@@ -2327,8 +2327,8 @@ public final class HttpHeaders {
    * <p>S1133 is suppressed due to the need to keep this status for any legacy system or another
    * system that might want to use this status, clearly indicating that it should be replaced.
    *
-   * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    * @see <a href="https://www.rfc-editor.org/rfc/rfc2660.html">RFC 2660</a>
+   * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    */
   @SuppressWarnings("squid:S1133")
   @Deprecated(since = "0.1.0")
@@ -2371,8 +2371,8 @@ public final class HttpHeaders {
    * <p>S1133 is suppressed due to the need to keep this status for any legacy system or another
    * system that might want to use this status, clearly indicating that it should be replaced.
    *
-   * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    * @see <a href="https://www.rfc-editor.org/rfc/rfc2965.html">RFC 2965</a>
+   * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    */
   @SuppressWarnings("squid:S1133")
   @Deprecated(since = "0.1.0")
@@ -2395,8 +2395,8 @@ public final class HttpHeaders {
    * <p>S1133 is suppressed due to the need to keep this status for any legacy system or another
    * system that might want to use this status, clearly indicating that it should be replaced.
    *
-   * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    * @see <a href="https://www.w3.org/TR/NOTE-OPS-OverHTTP">Specification cited by IANA</a>
+   * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    */
   @SuppressWarnings("squid:S1133")
   @Deprecated(since = "0.1.0")
@@ -2623,8 +2623,8 @@ public final class HttpHeaders {
    * <p>S1133 is suppressed due to the need to keep this status for any legacy system or another
    * system that might want to use this status, clearly indicating that it should be replaced.
    *
-   * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    * @see <a href="https://www.rfc-editor.org/rfc/rfc2068.html">RFC 2068</a>
+   * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    */
   @SuppressWarnings("squid:S1133")
   @Deprecated(since = "0.1.0")
@@ -2696,8 +2696,8 @@ public final class HttpHeaders {
    * <p>S1133 is suppressed due to the need to keep this status for any legacy system or another
    * system that might want to use this status, clearly indicating that it should be replaced.
    *
-   * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    * @see <a href="https://www.rfc-editor.org/rfc/rfc3230.html">RFC 3230</a>
+   * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    */
   @SuppressWarnings("squid:S1133")
   @Deprecated(since = "0.1.0")
@@ -2731,9 +2731,9 @@ public final class HttpHeaders {
    * <p>S1133 is suppressed due to the need to keep this status for any legacy system or another
    * system that might want to use this status, clearly indicating that it should be replaced.
    *
-   * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    * @see <a href="https://www.rfc-editor.org/rfc/rfc9111.html#section-5.5">RFC 9111, section
    *     5.5</a>
+   * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    */
   @SuppressWarnings("squid:S1133")
   @Deprecated(since = "0.1.0")
@@ -2821,61 +2821,12 @@ public final class HttpHeaders {
       return Optional.empty();
     }
 
-    for (int i = 0; i < value.length(); i++) {
-      if (value.charAt(i) > 127) {
+    for (var index = 0; index < value.length(); index++) {
+      if (value.charAt(index) > 127) {
         return Optional.empty();
       }
     }
     return Optional.ofNullable(BY_VALUE.get(value.toLowerCase(Locale.ROOT)));
-  }
-
-  /**
-   * Returns the registered spelling for use as an HTTP field name.
-   *
-   * @return field name, for example {@code Content-Type}
-   */
-  public String value() {
-    return value;
-  }
-
-  /**
-   * Compares this header's wire name with a possibly null name, ignoring ASCII case.
-   *
-   * @param name HTTP field name, or null; whitespace is not trimmed
-   * @return true for the same wire name, or false for null, non-ASCII, or a different name
-   */
-  public boolean equalsIgnoreCase(@Nullable String name) {
-    if (name == null) {
-      return false;
-    }
-
-    for (int i = 0; i < name.length(); i++) {
-      if (name.charAt(i) > 127) {
-        return false;
-      }
-    }
-    return value.equalsIgnoreCase(name);
-  }
-
-  /**
-   * Compares field names without case sensitivity, as required by HTTP.
-   *
-   * @param other candidate value
-   * @return true when both values have equivalent field names
-   */
-  @Override
-  public boolean equals(Object other) {
-    return other instanceof HttpHeaders header && value.equalsIgnoreCase(header.value);
-  }
-
-  /**
-   * Hashes the field name without case sensitivity.
-   *
-   * @return hash consistent with {@link #equals(Object)}
-   */
-  @Override
-  public int hashCode() {
-    return value.toLowerCase(Locale.ROOT).hashCode();
   }
 
   /**
@@ -2884,8 +2835,8 @@ public final class HttpHeaders {
    * @return registered headers indexed by normalized wire name
    */
   private static Map<String, HttpHeaders> index() {
-    var result = new HashMap<String, HttpHeaders>();
-    for (var header :
+    final var result = new HashMap<String, HttpHeaders>();
+    for (final var header :
         new HttpHeaders[] {
           A_IM,
           ACCEPT,
@@ -3149,5 +3100,54 @@ public final class HttpHeaders {
       result.put(header.value.toLowerCase(Locale.ROOT), header);
     }
     return Map.copyOf(result);
+  }
+
+  /**
+   * Returns the registered spelling for use as an HTTP field name.
+   *
+   * @return field name, for example {@code Content-Type}
+   */
+  public String value() {
+    return value;
+  }
+
+  /**
+   * Compares this header's wire name with a possibly null name, ignoring ASCII case.
+   *
+   * @param name HTTP field name, or null; whitespace is not trimmed
+   * @return true for the same wire name, or false for null, non-ASCII, or a different name
+   */
+  public boolean equalsIgnoreCase(@Nullable String name) {
+    if (name == null) {
+      return false;
+    }
+
+    for (var index = 0; index < name.length(); index++) {
+      if (name.charAt(index) > 127) {
+        return false;
+      }
+    }
+    return value.equalsIgnoreCase(name);
+  }
+
+  /**
+   * Compares field names without case sensitivity, as required by HTTP.
+   *
+   * @param other candidate value
+   * @return true when both values have equivalent field names
+   */
+  @Override
+  public boolean equals(Object other) {
+    return other instanceof HttpHeaders header && value.equalsIgnoreCase(header.value);
+  }
+
+  /**
+   * Hashes the field name without case sensitivity.
+   *
+   * @return hash consistent with {@link #equals(Object)}
+   */
+  @Override
+  public int hashCode() {
+    return value.toLowerCase(Locale.ROOT).hashCode();
   }
 }

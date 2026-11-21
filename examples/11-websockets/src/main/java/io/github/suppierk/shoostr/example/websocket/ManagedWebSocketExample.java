@@ -19,6 +19,7 @@ public final class ManagedWebSocketExample {
   public static Shoostr application() {
     // A separate counter per connection prevents clients in one room from sharing a count.
     var counts = new ConcurrentHashMap<WebSocketConnection, Long>();
+
     return new Shoostr()
         .afterClose(counts::clear)
         .routes(
@@ -46,6 +47,7 @@ public final class ManagedWebSocketExample {
                                   }
 
                                   var count = counts.merge(connection, 1L, Long::sum);
+
                                   connection.send(
                                       connection.pathParam("room").orElseThrow()
                                           + ":"
@@ -55,8 +57,9 @@ public final class ManagedWebSocketExample {
                                 })
                             // The managed adapter handles native demand and buffer completion.
                             .onBinary(WebSocketConnection::send)
-                            .onError((connection, ignored2) -> counts.remove(connection))
+                            .onError((connection, ignoredFailure) -> counts.remove(connection))
                             .onClose(
-                                (connection, ignored3, ignored4) -> counts.remove(connection))));
+                                (connection, ignoredCloseCode, ignoredCloseReason) ->
+                                    counts.remove(connection))));
   }
 }

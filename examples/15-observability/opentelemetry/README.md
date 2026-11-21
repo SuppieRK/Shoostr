@@ -9,9 +9,11 @@ Java and Gradle are provided by the build image. Start one example at a time:
 docker compose -f examples/15-observability/opentelemetry/compose.yaml up --build -d
 ```
 
-Startup is asynchronous. Check diagnostics with `docker compose -f examples/15-observability/opentelemetry/compose.yaml logs -f app`.
+Startup is asynchronous. Check diagnostics with
+`docker compose -f examples/15-observability/opentelemetry/compose.yaml logs -f app`.
 Open `http://127.0.0.1:8080/hello/Ada`. Expect Hello, Ada!; backend checks are below.
-Retry the request if the listener is not ready yet. Set `APP_PORT=8081` before the command if port 8080 is occupied, and use that port in requests.
+Retry the request if the listener is not ready yet. Set `APP_PORT=8081` before the command if port 8080 is occupied, and
+use that port in requests.
 Compose exposes the app on host loopback. These credentials and unauthenticated fixtures
 are for trusted local development. Direct Java runs use the default wildcard listener.
 
@@ -33,7 +35,8 @@ container validation is described in [CONTRIBUTING](../../../CONTRIBUTING.md#exa
 
 ## Recipe and direct-run notes
 
-Maintainer backend fixture. Read the [tracing recipe](../../../site/src/content/docs/observability/tracing.mdx) for consumer code.
+Maintainer backend fixture. Read the [tracing recipe](../../../site/src/content/docs/observability/tracing.mdx) for
+consumer code.
 
 The focused [RequestTracingExample](src/main/java/io/github/suppierk/shoostr/example/tracing/RequestTracingExample.java)
 has a complete SDK-exporter test in this module, covering parent/child spans and
@@ -48,11 +51,12 @@ is an ordinary `AutoCloseable`, not an extension; `app.afterClose(configuration:
 flushes and closes its SDK after framework and extension cleanup. No global SDK,
 Java agent, Collector or second Shoostr app is needed.
 
-Installation alone creates no SERVER spans. The greeting route selects
-`extensions.with(tracing)`; `/health` stays untraced. The same selection can be
+The greeting route selects `lifecycle.withExtension(tracing)`, which also establishes
+shared infrastructure automatically; `/health` stays untraced. The same selection can be
 attached to `routes.path(...)` to enable a whole group. Repeated activation adds no
-duplicate SERVER span. Alternatively, configure `.allRequests()` before installation
-to include all requests, including unmatched paths and pre-routing work.
+duplicate SERVER span. Alternatively, use `app.withExtension(tracing)` before
+route registration to select all registered endpoints by default. Unmatched requests
+produce no extension-generated spans.
 
 ```sh
 ./gradlew :opentelemetry-example:jibDockerBuild

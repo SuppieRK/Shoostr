@@ -16,7 +16,9 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.AfterEach;
@@ -48,9 +50,12 @@ class ResponseMetadataTest {
             (ignored, response) -> {
               assertEquals(200, response.status());
               assertNull(response.header("Absent"));
+
               response.status(202).setHeader("X-Value", "first");
+
               assertEquals(202, response.status());
               assertEquals("first", response.header("x-value"));
+
               response.text("ok");
             });
 
@@ -59,6 +64,7 @@ class ResponseMetadataTest {
           test.send(
               request -> request.path("/metadata").timeout(Duration.ofSeconds(3)),
               HttpResponse.BodyHandlers.ofString());
+
       assertEquals(202, result.statusCode());
       assertEquals("first", result.headers().firstValue("X-Value").orElseThrow());
       assertEquals("ok", result.body());
@@ -66,15 +72,17 @@ class ResponseMetadataTest {
   }
 
   @Test
-  @SuppressWarnings("NullAway") // Deliberately verifies rejection of an invalid public API input.
+  @SuppressWarnings("NullAway")
+  // Deliberately verifies rejection of an invalid public API input.
   void rejectsNullTextWithoutChangingStagedResponse() throws Exception {
     app.routes()
         .get(
             "/null-text",
-            (ignored2, response) -> {
+            (ignoredRequest, response) -> {
               response
                   .status(202)
                   .body("application/json", "\"kept\"".getBytes(StandardCharsets.UTF_8));
+
               assertThrows(NullPointerException.class, () -> response.text(null));
             });
 
@@ -83,6 +91,7 @@ class ResponseMetadataTest {
           test.send(
               request -> request.path("/null-text").timeout(Duration.ofSeconds(3)),
               HttpResponse.BodyHandlers.ofString());
+
       assertEquals(202, result.statusCode());
       assertEquals("application/json", result.headers().firstValue("Content-Type").orElseThrow());
       assertEquals("\"kept\"", result.body());
@@ -94,23 +103,31 @@ class ResponseMetadataTest {
     app.routes()
         .get(
             "/headers",
-            (ignored3, response) -> {
+            (ignoredRequest, response) -> {
               response
                   .addHeader("Set-Cookie", "first=1; Path=/")
                   .addHeader("set-cookie", "second=2; Path=/");
               var snapshot = response.headerMap();
+
               assertEquals(
                   List.of("first=1; Path=/", "second=2; Path=/"), snapshot.get("SET-COOKIE"));
               assertEquals(List.of(), response.headers("Absent"));
               assertThrows(UnsupportedOperationException.class, snapshot::clear);
+
               var snapshotCookieHeaders = Objects.requireNonNull(snapshot.get("SET-COOKIE"));
+
               assertThrows(
                   UnsupportedOperationException.class, () -> snapshotCookieHeaders.add("x"));
+
               var cookieHeaders = response.headers("Set-Cookie");
+
               assertThrows(UnsupportedOperationException.class, () -> cookieHeaders.add("x"));
+
               response.addHeader("X-Values", "a,b").addHeader("X-Values", "c");
+
               assertNull(snapshot.get("X-Values"));
               assertEquals(List.of("a,b", "c"), response.headers("x-values"));
+
               response.text("ok");
             });
 
@@ -119,6 +136,7 @@ class ResponseMetadataTest {
           test.send(
               request -> request.path("/headers").timeout(Duration.ofSeconds(3)),
               HttpResponse.BodyHandlers.ofString());
+
       assertEquals(200, result.statusCode());
       assertEquals(
           List.of("first=1; Path=/", "second=2; Path=/"), result.headers().allValues("Set-Cookie"));
@@ -131,17 +149,21 @@ class ResponseMetadataTest {
     app.routes()
         .get(
             "/remove",
-            (ignored4, response) -> {
+            (ignoredRequest, response) -> {
               response
                   .addHeader("X-Value", "one")
                   .addHeader("x-value", "two")
                   .setHeader("X-VALUE", "replacement")
                   .setHeader("X-Keep", "kept");
+
               assertEquals(List.of("replacement"), response.headers("x-value"));
+
               response.removeHeader("x-VaLuE").removeHeader("Absent");
+
               assertNull(response.header("X-Value"));
               assertEquals(List.of(), response.headers("X-Value"));
               assertNull(response.headerMap().get("X-Value"));
+
               response.text("ok");
             });
 
@@ -150,6 +172,7 @@ class ResponseMetadataTest {
           test.send(
               request -> request.path("/remove").timeout(Duration.ofSeconds(3)),
               HttpResponse.BodyHandlers.ofString());
+
       assertEquals(200, result.statusCode());
       assertEquals(List.of(), result.headers().allValues("X-Value"));
       assertEquals("kept", result.headers().firstValue("X-Keep").orElseThrow());
@@ -161,7 +184,7 @@ class ResponseMetadataTest {
     app.routes()
         .get(
             "/invalid",
-            (ignored5, response) -> {
+            (ignoredRequest, response) -> {
               response.setHeader("X-Value", "kept");
               for (var invalid :
                   List.of("bad\rvalue", "bad\nvalue", "bad" + (char) 0, "bad" + (char) 127)) {
@@ -179,18 +202,20 @@ class ResponseMetadataTest {
           test.send(
               request -> request.path("/invalid").timeout(Duration.ofSeconds(3)),
               HttpResponse.BodyHandlers.ofString());
+
       assertEquals(200, result.statusCode());
       assertEquals(List.of("kept"), result.headers().allValues("X-Value"));
     }
   }
 
   @Test
-  @SuppressWarnings("NullAway") // Null header inputs must fail before mutating the response.
+  @SuppressWarnings("NullAway")
+  // Null header inputs must fail before mutating the response.
   void protectsHeaderNamesAndFraming() throws Exception {
     app.routes()
         .get(
             "/framing",
-            (ignored6, response) -> {
+            (ignoredRequest, response) -> {
               response.setHeader("X-Value", "kept");
               for (var name :
                   List.of(
@@ -204,11 +229,14 @@ class ResponseMetadataTest {
                 assertThrows(IllegalArgumentException.class, () -> response.addHeader(name, "x"));
                 assertThrows(IllegalArgumentException.class, () -> response.removeHeader(name));
               }
+
               assertThrows(NullPointerException.class, () -> response.addHeader(null, "x"));
               assertThrows(NullPointerException.class, () -> response.removeHeader(null));
               assertThrows(NullPointerException.class, () -> response.setHeader("X-Value", null));
               assertThrows(NullPointerException.class, () -> response.addHeader("X-Value", null));
+
               response.setHeader("X-Tab", "a\tb").text("ok");
+
               assertEquals("a\tb", response.header("X-Tab"));
             });
 
@@ -217,6 +245,7 @@ class ResponseMetadataTest {
           test.send(
               request -> request.path("/framing").timeout(Duration.ofSeconds(3)),
               HttpResponse.BodyHandlers.ofString());
+
       assertEquals(200, result.statusCode());
       assertEquals("2", result.headers().firstValue("Content-Length").orElseThrow());
       assertEquals("a b", result.headers().firstValue("X-Tab").orElseThrow());
@@ -230,32 +259,30 @@ class ResponseMetadataTest {
     app.routes()
         .get(
             "/stream-metadata",
-            (ignored7, response) -> {
+            (ignoredRequest, response) -> {
               retained.set(response);
               response.status(202).setHeader("X-Value", "kept");
+
               assertFalse(response.isCommitted());
 
               try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
                 executor
-                    .submit(
-                        () -> {
-                          assertThrows(IllegalStateException.class, response::status);
-                          assertThrows(
-                              IllegalStateException.class, () -> response.header("X-Value"));
-                          assertThrows(
-                              IllegalStateException.class, () -> response.headers("X-Value"));
-                          assertThrows(IllegalStateException.class, response::headerMap);
-                          assertThrows(IllegalStateException.class, response::isCommitted);
-                          assertThrows(
-                              IllegalStateException.class,
-                              () -> response.addHeader("X-Value", "bad"));
-                          assertThrows(
-                              IllegalStateException.class, () -> response.removeHeader("X-Value"));
-                        })
+                    .submit(() -> {
+                      assertThrows(IllegalStateException.class, response::status);
+                      assertThrows(IllegalStateException.class, () -> response.header("X-Value"));
+                      assertThrows(IllegalStateException.class, () -> response.headers("X-Value"));
+                      assertThrows(IllegalStateException.class, response::headerMap);
+                      assertThrows(IllegalStateException.class, response::isCommitted);
+                      assertThrows(
+                          IllegalStateException.class, () -> response.addHeader("X-Value", "bad"));
+                      assertThrows(
+                          IllegalStateException.class, () -> response.removeHeader("X-Value"));
+                    })
                     .get(3, TimeUnit.SECONDS);
               }
 
-              var stream = response.startStream("text/plain");
+              final var stream = response.startStream("text/plain");
+
               assertTrue(response.isCommitted());
               assertEquals(202, response.status());
               assertEquals("kept", response.header("X-Value"));
@@ -263,6 +290,7 @@ class ResponseMetadataTest {
               assertEquals(List.of("kept"), response.headerMap().get("x-value"));
               assertThrows(IllegalStateException.class, () -> response.addHeader("X-Value", "bad"));
               assertThrows(IllegalStateException.class, () -> response.removeHeader("X-Value"));
+
               stream.write("streamed");
             });
 
@@ -271,9 +299,12 @@ class ResponseMetadataTest {
           test.send(
               request -> request.path("/stream-metadata").timeout(Duration.ofSeconds(3)),
               HttpResponse.BodyHandlers.ofString());
+
       assertEquals(202, result.statusCode());
       assertEquals("streamed", result.body());
+
       var closedResponse = retained.get();
+
       assertThrows(IllegalStateException.class, closedResponse::status);
       assertThrows(IllegalStateException.class, () -> closedResponse.header("X-Value"));
       assertThrows(IllegalStateException.class, () -> closedResponse.headers("X-Value"));
@@ -290,24 +321,22 @@ class ResponseMetadataTest {
       app.routes()
           .get(
               "/redirect",
-              (ignored8, response) -> {
+              (ignoredRequest, response) -> {
                 response
                     .text("obsolete")
                     .redirect("/next?value=%2F#top")
                     .setHeader("X-After", "continued");
+
                 assertFalse(response.isCommitted());
                 assertEquals(302, response.status());
+
                 entered.countDown();
+
                 assertTrue(release.await(3, TimeUnit.SECONDS));
               });
 
       try (var test = TestServer.start(app)) {
-        var future =
-            testRequests.submit(
-                () ->
-                    test.send(
-                        request -> request.path("/redirect"),
-                        HttpResponse.BodyHandlers.ofString()));
+        var future = submitFutureForStagesRedirectUntilHandlerReturns(testRequests, test);
 
         try {
           assertTrue(entered.await(3, TimeUnit.SECONDS));
@@ -317,6 +346,7 @@ class ResponseMetadataTest {
         }
 
         var result = future.get(3, TimeUnit.SECONDS);
+
         assertEquals(302, result.statusCode());
         assertEquals("/next?value=%2F#top", result.headers().firstValue("Location").orElseThrow());
         assertEquals("continued", result.headers().firstValue("X-After").orElseThrow());
@@ -326,12 +356,19 @@ class ResponseMetadataTest {
     }
   }
 
+  private Future<HttpResponse<String>> submitFutureForStagesRedirectUntilHandlerReturns(
+      ExecutorService testRequests, TestServer test) {
+    return testRequests.submit(() ->
+        test.send(request -> request.path("/redirect"), HttpResponse.BodyHandlers.ofString()));
+  }
+
   @Test
   void redirectAfterFileDiscardsTheSelectedRepresentation() throws Exception {
     var file = Files.writeString(temporaryDirectory.resolve("report.txt"), "file contents");
     app.routes()
         .get(
-            "/report", (ignored9, response) -> response.file(file, "text/plain").redirect("/next"));
+            "/report",
+            (ignoredRequest, response) -> response.file(file, "text/plain").redirect("/next"));
 
     try (var test = TestServer.start(app)) {
 
@@ -352,19 +389,12 @@ class ResponseMetadataTest {
 
   @Test
   void supportsExplicitRedirectStatuses() throws Exception {
-    var codes =
-        List.of(
-            HttpStatusCodes.MULTIPLE_CHOICES,
-            HttpStatusCodes.MOVED_PERMANENTLY,
-            HttpStatusCodes.FOUND,
-            HttpStatusCodes.SEE_OTHER,
-            HttpStatusCodes.TEMPORARY_REDIRECT,
-            HttpStatusCodes.PERMANENT_REDIRECT);
+    var codes = createCodesForSupportsExplicitRedirectStatuses();
     for (var code : codes) {
       app.routes()
           .get(
               "/redirect-" + code.value(),
-              (ignored10, response) -> response.redirect("../next", code));
+              (ignoredRequest, response) -> response.redirect("../next", code));
     }
 
     try (var test = TestServer.start(app)) {
@@ -373,6 +403,7 @@ class ResponseMetadataTest {
             test.send(
                 request -> request.path("/redirect-" + code.value()).timeout(Duration.ofSeconds(3)),
                 HttpResponse.BodyHandlers.ofString());
+
         assertEquals(code.value(), result.statusCode());
         assertEquals("../next", result.headers().firstValue("Location").orElseThrow());
         assertEquals("", result.body());
@@ -380,13 +411,24 @@ class ResponseMetadataTest {
     }
   }
 
+  private List<HttpStatusCodes> createCodesForSupportsExplicitRedirectStatuses() {
+    return List.of(
+        HttpStatusCodes.MULTIPLE_CHOICES,
+        HttpStatusCodes.MOVED_PERMANENTLY,
+        HttpStatusCodes.FOUND,
+        HttpStatusCodes.SEE_OTHER,
+        HttpStatusCodes.TEMPORARY_REDIRECT,
+        HttpStatusCodes.PERMANENT_REDIRECT);
+  }
+
   @Test
-  @SuppressWarnings("NullAway") // Null redirect inputs are rejected by the response API.
+  @SuppressWarnings("NullAway")
+  // Null redirect inputs are rejected by the response API.
   void validatesRedirectBeforeChangingOutput() throws Exception {
     app.routes()
         .get(
             "/invalid-redirect",
-            (ignored11, response) -> {
+            (ignoredRequest, response) -> {
               response.status(202).setHeader("Location", "/original").text("kept");
               for (var location :
                   List.of(
@@ -411,6 +453,7 @@ class ResponseMetadataTest {
                 assertThrows(
                     IllegalArgumentException.class, () -> response.redirect("/valid", code));
               }
+
               assertThrows(NullPointerException.class, () -> response.redirect(null));
               assertThrows(NullPointerException.class, () -> response.redirect("/valid", null));
             });
@@ -420,6 +463,7 @@ class ResponseMetadataTest {
           test.send(
               request -> request.path("/invalid-redirect").timeout(Duration.ofSeconds(3)),
               HttpResponse.BodyHandlers.ofString());
+
       assertEquals(202, result.statusCode());
       assertEquals("/original", result.headers().firstValue("Location").orElseThrow());
       assertEquals(
@@ -430,20 +474,13 @@ class ResponseMetadataTest {
 
   @Test
   void preservesValidRedirectReferences() throws Exception {
-    String[][] destinations = {
-      {"/", "/"},
-      {"next", "next"},
-      {"?q=1", "?q=1"},
-      {"#section", "#section"},
-      {"//example.test/a", "//example.test/a"},
-      {"https://example.test/a?x=%2f", "https://example.test/a?x=%2f"},
-      {"mailto:help@example.test", "mailto:help@example.test"},
-      {"/café", "/caf%C3%A9"}
-    };
+    String[][] destinations = createDestinationsForPreservesValidRedirectReferences();
     for (int index = 0; index < destinations.length; index++) {
       var destination = destinations[index][0];
       app.routes()
-          .get("/destination-" + index, (ignored12, response) -> response.redirect(destination));
+          .get(
+              "/destination-" + index,
+              (ignoredRequest, response) -> response.redirect(destination));
     }
 
     try (var test = TestServer.start(app)) {
@@ -453,10 +490,24 @@ class ResponseMetadataTest {
             test.send(
                 request -> request.path(path).timeout(Duration.ofSeconds(3)),
                 HttpResponse.BodyHandlers.ofString());
+
         assertEquals(302, result.statusCode());
         assertEquals(destinations[index][1], result.headers().firstValue("Location").orElseThrow());
       }
     }
+  }
+
+  private String[][] createDestinationsForPreservesValidRedirectReferences() {
+    return new String[][] {
+      {"/", "/"},
+      {"next", "next"},
+      {"?q=1", "?q=1"},
+      {"#section", "#section"},
+      {"//example.test/a", "//example.test/a"},
+      {"https://example.test/a?x=%2f", "https://example.test/a?x=%2f"},
+      {"mailto:help@example.test", "mailto:help@example.test"},
+      {"/café", "/caf%C3%A9"}
+    };
   }
 
   @Test
@@ -464,40 +515,47 @@ class ResponseMetadataTest {
     app.routes()
         .get(
             "/stream-redirect",
-            (ignored13, response) -> {
+            (ignoredRequest, response) -> {
               var stream = response.startStream("text/plain");
+
               assertThrows(IllegalStateException.class, () -> response.redirect("/late"));
               assertNull(response.header("Location"));
+
               stream.write("original");
             });
     app.routes()
         .get(
             "/failed-redirect",
-            (ignored14, response) -> {
+            (ignoredRequest, response) -> {
               response.redirect("/never");
               throw new IllegalArgumentException("private details");
             });
-    app.routes().head("/head-redirect", (ignored15, response) -> response.redirect("/next"));
+    app.routes().head("/head-redirect", (ignoredRequest, response) -> response.redirect("/next"));
 
     try (var test = TestServer.start(app)) {
       var streamed =
           test.send(
               request -> request.path("/stream-redirect").timeout(Duration.ofSeconds(3)),
               HttpResponse.BodyHandlers.ofString());
+
       assertEquals(200, streamed.statusCode());
       assertEquals("original", streamed.body());
       assertEquals(List.of(), streamed.headers().allValues("Location"));
+
       var failed =
           test.send(
               request -> request.path("/failed-redirect").timeout(Duration.ofSeconds(3)),
               HttpResponse.BodyHandlers.ofString());
+
       assertEquals(500, failed.statusCode());
       assertEquals("Internal Server Error", failed.body());
       assertEquals(List.of(), failed.headers().allValues("Location"));
+
       var head =
           test.send(
               request -> request.path("/head-redirect").method("HEAD"),
               HttpResponse.BodyHandlers.ofString());
+
       assertEquals(302, head.statusCode());
       assertEquals("/next", head.headers().firstValue("Location").orElseThrow());
       assertEquals("", head.body());

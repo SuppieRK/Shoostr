@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import io.github.suppierk.shoostr.testing.TestServer;
 import java.io.ByteArrayOutputStream;
+import java.io.Closeable;
 import java.io.IOException;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
@@ -21,40 +22,88 @@ import org.junit.jupiter.params.provider.ValueSource;
 class MultipartExampleTest {
   @TempDir Path directory;
 
+  private static HttpResponse<String> send(TestServer test, byte[] body) throws Exception {
+    return test.send(
+        request ->
+            request
+                .path("/documents")
+                .method("POST")
+                .header("Content-Type", "multipart/form-data; boundary=example")
+                .body(body),
+        HttpResponse.BodyHandlers.ofString());
+  }
+
+  private static byte[] multipart(byte[]... parts) {
+    var body = new ByteArrayOutputStream();
+    for (var part : parts) {
+      body.writeBytes(part);
+    }
+    body.writeBytes("--example--\r\n".getBytes(StandardCharsets.US_ASCII));
+
+    return body.toByteArray();
+  }
+
+  private static byte[] part(String name, String filename, byte[] content) {
+    var body = new ByteArrayOutputStream();
+    var disposition = "--example\r\nContent-Disposition: form-data; name=\"" + name + "\"";
+    if (filename != null) {
+      disposition += "; filename=\"" + filename + "\"";
+    }
+
+    body.writeBytes((disposition + "\r\n\r\n").getBytes(StandardCharsets.UTF_8));
+    body.writeBytes(content);
+    body.writeBytes("\r\n".getBytes(StandardCharsets.US_ASCII));
+
+    return body.toByteArray();
+  }
+
   @Test
-  void readsAFieldAndUploadedBytes() throws Exception {
+  void readsFieldAndUploadedBytes() throws Exception {
+
     try (var test = TestServer.start(MultipartExample.application(directory))) {
-      var response =
-          send(
-              test,
-              multipart(
-                  part("title", null, "Notes".getBytes(StandardCharsets.UTF_8)),
-                  part("document", "notes.txt", new byte[] {'a', 'b', 'c'})));
+      var response = sendResponseForReadsFieldAndUploadedBytes(test);
+
       assertEquals(200, response.statusCode());
       assertEquals(
           "title=Notes\nfirst=notes.txt\nfiles=1\nfields=1\nbytes=3\nhex=616263", response.body());
     }
   }
 
+  private HttpResponse<String> sendResponseForReadsFieldAndUploadedBytes(TestServer test)
+      throws Exception {
+    return send(
+        test,
+        multipart(
+            part("title", null, "Notes".getBytes(StandardCharsets.UTF_8)),
+            part("document", "notes.txt", new byte[] {'a', 'b', 'c'})));
+  }
+
   @Test
   void preservesRepeatedFilesBinaryContentAndAnEmptyFilename() throws Exception {
+
     try (var test = TestServer.start(MultipartExample.application(directory))) {
-      var response =
-          send(
-              test,
-              multipart(
-                  part("title", null, "A+B".getBytes(StandardCharsets.UTF_8)),
-                  part("document", "", new byte[] {0, -1}),
-                  part("document", "other.bin", new byte[] {127, -128}),
-                  part("attachment", "extra.txt", new byte[0])));
+      var response = sendResponseForPreservesRepeatedFilesBinaryContentAndAnEmptyFilename(test);
+
       assertEquals(200, response.statusCode());
       assertEquals("title=A+B\nfirst=\nfiles=2\nfields=2\nbytes=4\nhex=00ff7f80", response.body());
     }
   }
 
+  private HttpResponse<String> sendResponseForPreservesRepeatedFilesBinaryContentAndAnEmptyFilename(
+      TestServer test) throws Exception {
+    return send(
+        test,
+        multipart(
+            part("title", null, "A+B".getBytes(StandardCharsets.UTF_8)),
+            part("document", "", new byte[] {0, -1}),
+            part("document", "other.bin", new byte[] {127, -128}),
+            part("attachment", "extra.txt", new byte[0])));
+  }
+
   @ParameterizedTest
   @CsvSource({"1024, 200", "1025, 413"})
   void enforcesThePartLimitForBothFieldsAndFiles(int size, int status) throws Exception {
+
     try (var test = TestServer.start(MultipartExample.application(directory))) {
       assertEquals(
           status, send(test, multipart(part("document", "data.bin", new byte[size]))).statusCode());
@@ -68,8 +117,8 @@ class MultipartExampleTest {
   @CsvSource({"8, 200", "9, 413"})
   void countsEveryMultipartPart(int count, int status) throws Exception {
     var parts = new byte[count][];
-    for (var i = 0; i < count; i++) {
-      parts[i] = part("title", null, new byte[0]);
+    for (var index = 0; index < count; index++) {
+      parts[index] = part("title", null, new byte[0]);
     }
 
     try (var test = TestServer.start(MultipartExample.application(directory))) {
@@ -80,8 +129,8 @@ class MultipartExampleTest {
   @Test
   void rejectsAggregateOverflowEvenWhenEveryPartFits() throws Exception {
     var parts = new byte[8][];
-    for (var i = 0; i < parts.length; i++) {
-      parts[i] = part("document", "data.bin", new byte[1024]);
+    for (var index = 0; index < parts.length; index++) {
+      parts[index] = part("document", "data.bin", new byte[1024]);
     }
 
     try (var test = TestServer.start(MultipartExample.application(directory))) {
@@ -93,6 +142,7 @@ class MultipartExampleTest {
 
   @Test
   void rejectsOversizedHeadersWithTinyContent() throws Exception {
+
     try (var test = TestServer.start(MultipartExample.application(directory))) {
       assertEquals(
           413, send(test, multipart(part("document", "x".repeat(1100), new byte[1]))).statusCode());
@@ -133,80 +183,94 @@ class MultipartExampleTest {
   @CsvSource({"128, 0", "129, 1"})
   void spillsAboveTheThresholdAndCleansUpAfterTheExchange(int size, int expectedFiles)
       throws Exception {
-    try (var app = MultipartExample.application(directory)) {
-      app.routes()
-          .post(
-              "/storage",
-              (request, response) -> {
-                request.files();
+    {
+      var app = MultipartExample.application(directory);
 
-                try (var files = Files.list(directory)) {
-                  response.text(Long.toString(files.count()));
-                }
-              });
+      try (Closeable appCleanup = app::close) {
+        app.routes()
+            .post(
+                "/storage",
+                (request, response) -> {
+                  request.files();
 
-      try (var test = TestServer.start(app)) {
-        var response =
-            test.send(
-                request ->
-                    request
-                        .path("/storage")
-                        .method("POST")
-                        .header("Content-Type", "multipart/form-data; boundary=example")
-                        .body(multipart(part("document", "data.bin", new byte[size]))),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(200, response.statusCode());
-        assertEquals(Integer.toString(expectedFiles), response.body());
-        awaitEmptyDirectory();
+                  try (var files = Files.list(directory)) {
+                    response.text(Long.toString(files.count()));
+                  }
+                });
+
+        try (var test = TestServer.start(app)) {
+          var response =
+              sendResponseForSpillsAboveTheThresholdAndCleansUpAfterTheExchange(test, size);
+
+          assertEquals(200, response.statusCode());
+          assertEquals(Integer.toString(expectedFiles), response.body());
+
+          awaitEmptyDirectory();
+        }
       }
     }
+  }
+
+  private HttpResponse<String> sendResponseForSpillsAboveTheThresholdAndCleansUpAfterTheExchange(
+      TestServer test, int size) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/storage")
+                .method("POST")
+                .header("Content-Type", "multipart/form-data; boundary=example")
+                .body(multipart(part("document", "data.bin", new byte[size]))),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @Test
   void rejectsBufferedAndStreamingAccessAfterMultipartParsing() throws Exception {
-    try (var app = MultipartExample.application(directory)) {
-      app.routes()
-          .post(
-              "/modes",
-              (request, response) -> {
-                request.files();
-                assertThrows(IllegalStateException.class, request::bodyBytes);
-                assertThrows(IllegalStateException.class, request::input);
-                response.text("checked");
-              });
+    {
+      var app = MultipartExample.application(directory);
 
-      try (var test = TestServer.start(app)) {
-        var response =
-            test.send(
-                request ->
-                    request
-                        .path("/modes")
-                        .method("POST")
-                        .header("Content-Type", "multipart/form-data; boundary=example")
-                        .body(multipart(part("document", "a.txt", new byte[0]))),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(200, response.statusCode());
-        assertEquals("checked", response.body());
+      try (Closeable appCleanup1 = app::close) {
+        app.routes()
+            .post(
+                "/modes",
+                (request, response) -> {
+                  request.files();
+
+                  assertThrows(IllegalStateException.class, request::bodyBytes);
+                  assertThrows(IllegalStateException.class, request::input);
+
+                  response.text("checked");
+                });
+
+        try (var test = TestServer.start(app)) {
+          var response =
+              sendResponseForRejectsBufferedAndStreamingAccessAfterMultipartParsing(test);
+
+          assertEquals(200, response.statusCode());
+          assertEquals("checked", response.body());
+        }
       }
     }
   }
 
-  @Test
-  void rejectsAFileAsTheStorageDirectoryBeforeStartup() throws Exception {
-    var file = Files.createFile(directory.resolve("not-a-directory"));
-    assertThrows(IOException.class, () -> MultipartExample.application(file));
-    assertThrows(NullPointerException.class, () -> MultipartExample.application(null));
-  }
-
-  private static HttpResponse<String> send(TestServer test, byte[] body) throws Exception {
+  private HttpResponse<String>
+      sendResponseForRejectsBufferedAndStreamingAccessAfterMultipartParsing(TestServer test)
+          throws IOException, InterruptedException {
     return test.send(
         request ->
             request
-                .path("/documents")
+                .path("/modes")
                 .method("POST")
                 .header("Content-Type", "multipart/form-data; boundary=example")
-                .body(body),
+                .body(multipart(part("document", "a.txt", new byte[0]))),
         HttpResponse.BodyHandlers.ofString());
+  }
+
+  @Test
+  void rejectsFileAsTheStorageDirectoryBeforeStartup() throws Exception {
+    var file = Files.createFile(directory.resolve("not-a-directory"));
+
+    assertThrows(IOException.class, () -> MultipartExample.application(file));
+    assertThrows(NullPointerException.class, () -> MultipartExample.application(null));
   }
 
   private void awaitEmptyDirectory() {
@@ -218,27 +282,5 @@ class MultipartExampleTest {
                 assertEquals(0, files.count());
               }
             });
-  }
-
-  private static byte[] multipart(byte[]... parts) {
-    var body = new ByteArrayOutputStream();
-    for (var part : parts) {
-      body.writeBytes(part);
-    }
-    body.writeBytes("--example--\r\n".getBytes(StandardCharsets.US_ASCII));
-    return body.toByteArray();
-  }
-
-  private static byte[] part(String name, String filename, byte[] content) {
-    var body = new ByteArrayOutputStream();
-    var disposition = "--example\r\nContent-Disposition: form-data; name=\"" + name + "\"";
-    if (filename != null) {
-      disposition += "; filename=\"" + filename + "\"";
-    }
-
-    body.writeBytes((disposition + "\r\n\r\n").getBytes(StandardCharsets.UTF_8));
-    body.writeBytes(content);
-    body.writeBytes("\r\n".getBytes(StandardCharsets.US_ASCII));
-    return body.toByteArray();
   }
 }

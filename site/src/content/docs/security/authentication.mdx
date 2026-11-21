@@ -1,6 +1,6 @@
 ---
 title: Require authentication for routes and groups
-description: Select an installed authenticator for routes or groups, publish a verified principal, and distinguish a 401 challenge from an authenticated 403 denial.
+description: Select an authenticator for routes or groups, publish a verified principal, and distinguish a 401 challenge from an authenticated 403 denial.
 next:
   label: Authenticate with pac4j
   link: ../pac4j/
@@ -14,24 +14,22 @@ import test from '../../../../../examples/14-security/src/test/java/io/github/su
 
 Authentication verifies credentials and establishes a request's identity. Authorization then decides whether that identity may perform an operation. In Shoostr, a principal is the identity value attached to a request after your authenticator has verified it.
 
-An installed provider is an object that contributes reusable application behavior. The provider interface is `Extension<C>`, where `C` names its route-settings type. `AuthenticationExtension` is the base for a provider that also acts as the request's authentication handler. Route callbacks receive an `Extensions` configuration object; selecting the installed authenticator there protects that route or group.
+An extension contributes reusable application behavior. `ApplicationExtension<C>` supports application defaults and `RouteExtension<C>` supports scoped selection; `C` names the provider's settings type. `AuthenticationExtension` implements both roles and acts as the request's authentication handler. Route callbacks receive a `Lifecycle` object; selecting the authenticator there protects that route or group.
 
 The authenticator callback receives the incoming `Request` and outgoing `Response`, just as an endpoint handler does.
 
 This task distinguishes missing or invalid credentials from an authenticated permission denial. The example's credential lookup is a test fixture, rather than a production identity system.
 
-Implement the authenticator with `AuthenticationExtension`, which combines `Extension<AuthenticationExtension>` provider behavior with a `Handler`. The provider participates in application lifetime and supplies a dedicated authentication step before endpoint work.
+Implement the authenticator with `AuthenticationExtension`, which combines both activation roles with a `Handler`. The provider participates in application lifetime and supplies a dedicated authentication step before endpoint work.
 
 Implement `handle(request, response)` to validate credentials and establish the request's identity.
-Shoostr supplies the final `configure(...)` implementation; selecting the instance with `extensions.with(authentication)` requires authentication in that scope.
+Shoostr supplies the final `configure(...)` implementation; selecting the instance with `lifecycle.withExtension(authentication)` requires authentication in that scope.
 The selected authenticator runs before local and application admission hooks and the endpoint handler.
 
-Install an instance with `app.authentication(authentication)`; `app.extensions(...)` rejects authentication extensions.
-In the route or group configuration callback, use the supplied [`Extensions`](../../extensions/route-metadata/#description) object to select that same instance through `extensions.with(authentication)`.
-Installation alone does not protect a route, and a group's selection is inherited by its child routes.
-To protect registered endpoints by default, select the authenticator in `app.configureExtensionsDefaults(...)` before registering routes, then use `extensions.without(authentication)` on a public endpoint or group.
-A deeper `with(authentication)` restores the same owner; exclusion does not permit substituting another authenticator.
-Several authenticators can be installed in one application, but each endpoint can require only one distinct instance; conflicting selections are rejected during registration.
+In the route or group configuration callback, use the supplied [`Lifecycle`](../../extensions/route-metadata/#description) object to select the instance through `lifecycle.withExtension(authentication)`. Its first selection establishes application-owned setup automatically; a group's selection is inherited by its child routes.
+To protect registered endpoints by default, use `app.withExtension(authentication)` before registering routes, then use `lifecycle.withoutExtension(authentication)` on a public endpoint or group.
+A deeper `withExtension(authentication)` restores the same owner; exclusion does not permit substituting another authenticator.
+Several authenticator instances can protect separate scopes in one application, but each endpoint can require only one distinct instance; conflicting selections are rejected during registration.
 
 Validate the supplied credentials before assigning `request.principal(...)`, because a principal is the identity established by your policy, not proof that Shoostr has independently checked a token.
 Use `AuthenticationRequiredException(challenge)` for a `401` response with `WWW-Authenticate`, and `ForbiddenException` when a verified identity lacks permission for the operation.

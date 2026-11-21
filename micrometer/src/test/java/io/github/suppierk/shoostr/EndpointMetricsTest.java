@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import io.github.suppierk.shoostr.micrometer.MicrometerMetrics;
 import io.github.suppierk.shoostr.testing.TestServer;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.io.Closeable;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
@@ -19,52 +20,9 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
 class EndpointMetricsTest {
-  @ParameterizedTest
-  @ValueSource(strings = {"platform", "virtual", "fork-join", "wrapped-fork-join"})
-  void recordsOneCompletedMetricAfterSelectedExecutorHandoff(String executorType) throws Exception {
-    var owned = ConcurrentHashMap.<Thread>newKeySet();
-    var handled = new CompletableFuture<Thread>();
-    var finished = new CompletableFuture<Void>();
-    var registry = new SimpleMeterRegistry();
-
-    try (var workers = executor(executorType, owned);
-        var app = new Shoostr()) {
-      var metrics = new MicrometerMetrics(registry);
-      metrics.allRequests();
-      app.extensions(metrics).afterRequest(ignored -> finished.complete(null));
-      app.routes()
-          .get(
-              "/metrics/{id}",
-              workers,
-              (ignored2, response) -> {
-                handled.complete(Thread.currentThread());
-                response.text("ok");
-              });
-
-      try (var test = TestServer.start(app)) {
-        assertEquals(200, test.send(request -> request.path("/metrics/42")).statusCode());
-        assertTrue(owned.contains(handled.get(5, TimeUnit.SECONDS)));
-        finished.get(5, TimeUnit.SECONDS);
-        assertEquals(
-            1, registry.get("http.server.requests").tag("route", "/metrics/{id}").timer().count());
-      }
-
-      assertFalse(workers.isShutdown());
-    } finally {
-      registry.close();
-    }
-  }
-
   private static ExecutorService executor(String type, Set<Thread> owned) {
-    ThreadFactory factory =
-        task -> {
-          var thread =
-              "virtual".equals(type)
-                  ? Thread.ofVirtual().unstarted(task)
-                  : Thread.ofPlatform().unstarted(task);
-          owned.add(thread);
-          return thread;
-        };
+    ThreadFactory factory = createFactoryForExecutor(type, owned);
+
     return switch (type) {
       case "platform" -> Executors.newFixedThreadPool(1, factory);
       case "virtual" -> Executors.newThreadPerTaskExecutor(factory);
@@ -74,15 +32,70 @@ class EndpointMetricsTest {
     };
   }
 
+  private static ThreadFactory createFactoryForExecutor(String type, Set<Thread> owned) {
+    return task -> {
+      var thread =
+          "virtual".equals(type)
+              ? Thread.ofVirtual().unstarted(task)
+              : Thread.ofPlatform().unstarted(task);
+      owned.add(thread);
+
+      return thread;
+    };
+  }
+
   private static ForkJoinPool forkJoin(Set<Thread> owned) {
     return new ForkJoinPool(
         1,
         pool -> {
           var worker = ForkJoinPool.defaultForkJoinWorkerThreadFactory.newThread(pool);
           owned.add(worker);
+
           return worker;
         },
         null,
         false);
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"platform", "virtual", "fork-join", "wrapped-fork-join"})
+  void recordsOneCompletedMetricAfterSelectedExecutorHandoff(String executorType) throws Exception {
+    var owned = ConcurrentHashMap.<Thread>newKeySet();
+    var handled = new CompletableFuture<Thread>();
+    var finished = new CompletableFuture<Void>();
+    var registry = new SimpleMeterRegistry();
+
+    try (var workers = executor(executorType, owned)) {
+      var app = new Shoostr();
+
+      try (Closeable appCleanup = app::close) {
+        var metrics = new MicrometerMetrics(registry);
+
+        app.withExtension(metrics).afterRequest(ignored -> finished.complete(null));
+        app.routes()
+            .get(
+                "/metrics/{id}",
+                workers,
+                (ignoredRequest, response) -> {
+                  handled.complete(Thread.currentThread());
+                  response.text("ok");
+                });
+
+        try (var test = TestServer.start(app)) {
+          assertEquals(200, test.send(request -> request.path("/metrics/42")).statusCode());
+          assertTrue(owned.contains(handled.get(5, TimeUnit.SECONDS)));
+
+          finished.get(5, TimeUnit.SECONDS);
+
+          assertEquals(
+              1,
+              registry.get("http.server.requests").tag("route", "/metrics/{id}").timer().count());
+        }
+
+        assertFalse(workers.isShutdown());
+      }
+    } finally {
+      registry.close();
+    }
   }
 }

@@ -7,6 +7,7 @@ import io.github.suppierk.shoostr.http.HttpHeaders;
 import io.github.suppierk.shoostr.http.exceptions.AuthorizationDeniedException;
 import io.github.suppierk.shoostr.http.exceptions.ForbiddenException;
 import io.github.suppierk.shoostr.testing.TestServer;
+import java.io.Closeable;
 import java.net.http.HttpResponse;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
@@ -17,7 +18,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 class AuthorizationChallengeTest {
   private static final String CHALLENGE = "Bearer error=\"insufficient_scope\", scope=\"write\"";
   private static final Handler DENY =
-      (ignored, ignored2) -> {
+      (ignored, ignoredResponse) -> {
         throw new AuthorizationDeniedException(CHALLENGE);
       };
 
@@ -25,102 +26,134 @@ class AuthorizationChallengeTest {
   @ValueSource(strings = {"builtin", "app", "scope"})
   void preservesTheRequiredChallengeWithBuiltInOrCustomBodyRendering(String renderer)
       throws Exception {
-    try (var app = new Shoostr()) {
-      if ("app".equals(renderer)) {
-        app.exception(
-            ForbiddenException.class, (ignored3, ignored4, response) -> response.text("custom"));
-      } else if ("scope".equals(renderer)) {
-        app.routes()
-            .exception(Exception.class, (ignored5, ignored6, response) -> response.text("custom"));
-      }
+    {
+      var app = new Shoostr();
 
-      app.routes().get("/denied", DENY);
+      try (Closeable appCleanup = app::close) {
+        if ("app".equals(renderer)) {
+          app.exception(
+              ForbiddenException.class,
+              (ignoredFailure, ignoredRequest, response) -> response.text("custom"));
+        } else if ("scope".equals(renderer)) {
+          app.routes()
+              .exception(
+                  Exception.class,
+                  (ignoredFailure, ignoredRequest, response) -> response.text("custom"));
+        }
 
-      try (var test = TestServer.start(app)) {
-        var result =
-            test.send(request -> request.path("/denied"), HttpResponse.BodyHandlers.ofString());
-        assertEquals(403, result.statusCode());
-        assertEquals(
-            CHALLENGE,
-            result.headers().firstValue(HttpHeaders.WWW_AUTHENTICATE.value()).orElseThrow());
-        if (!"builtin".equals(renderer)) {
-          assertEquals("custom", result.body());
+        app.routes().get("/denied", DENY);
+
+        try (var test = TestServer.start(app)) {
+          var result =
+              test.send(request -> request.path("/denied"), HttpResponse.BodyHandlers.ofString());
+
+          assertEquals(403, result.statusCode());
+          assertEquals(
+              CHALLENGE,
+              result.headers().firstValue(HttpHeaders.WWW_AUTHENTICATE.value()).orElseThrow());
+
+          if (!"builtin".equals(renderer)) {
+            assertEquals("custom", result.body());
+          }
         }
       }
     }
   }
 
   @Test
-  void restoresTheRequiredChallengeWhenACustomRendererReplacesIt() throws Exception {
-    try (var app = new Shoostr()) {
-      app.exception(
-          ForbiddenException.class,
-          (ignored7, ignored8, response) ->
-              response
-                  .setHeader(HttpHeaders.WWW_AUTHENTICATE.value(), "Basic realm=\"wrong\"")
-                  .text("custom"));
-      app.routes().get("/denied", DENY);
+  void restoresTheRequiredChallengeWhenCustomRendererReplacesIt() throws Exception {
+    {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        var result = test.send(request -> request.path("/denied"));
-        assertEquals(
-            CHALLENGE,
-            result.headers().firstValue(HttpHeaders.WWW_AUTHENTICATE.value()).orElseThrow());
+      try (Closeable appCleanup1 = app::close) {
+        app.exception(
+            ForbiddenException.class,
+            (ignoredFailure, ignoredRequest, response) ->
+                response
+                    .setHeader(HttpHeaders.WWW_AUTHENTICATE.value(), "Basic realm=\"wrong\"")
+                    .text("custom"));
+        app.routes().get("/denied", DENY);
+
+        try (var test = TestServer.start(app)) {
+          var result = test.send(request -> request.path("/denied"));
+
+          assertEquals(
+              CHALLENGE,
+              result.headers().firstValue(HttpHeaders.WWW_AUTHENTICATE.value()).orElseThrow());
+        }
       }
     }
   }
 
   @Test
-  void preservesTheChallengeWhenACustomRendererStartsAStream() throws Exception {
-    try (var app = new Shoostr()) {
-      app.routes()
-          .exception(
-              AuthorizationDeniedException.class,
-              (ignored9, ignored10, response) ->
-                  response.startStream("text/plain").write("streamed denial"))
-          .get("/denied", DENY);
+  void preservesTheChallengeWhenCustomRendererStartsStream() throws Exception {
+    {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        var result =
-            test.send(request -> request.path("/denied"), HttpResponse.BodyHandlers.ofString());
-        assertEquals(403, result.statusCode());
-        assertEquals(
-            CHALLENGE,
-            result.headers().firstValue(HttpHeaders.WWW_AUTHENTICATE.value()).orElseThrow());
-        assertEquals("streamed denial", result.body());
+      try (Closeable appCleanup2 = app::close) {
+        app.routes()
+            .exception(
+                AuthorizationDeniedException.class,
+                (ignoredFailure, ignoredRequest, response) ->
+                    response.startStream("text/plain").write("streamed denial"))
+            .get("/denied", DENY);
+
+        try (var test = TestServer.start(app)) {
+          var result =
+              test.send(request -> request.path("/denied"), HttpResponse.BodyHandlers.ofString());
+
+          assertEquals(403, result.statusCode());
+          assertEquals(
+              CHALLENGE,
+              result.headers().firstValue(HttpHeaders.WWW_AUTHENTICATE.value()).orElseThrow());
+          assertEquals("streamed denial", result.body());
+        }
       }
     }
   }
 
   @Test
   void doesNotAddTheDenialChallengeWhenTheRendererDeliberatelyChangesStatus() throws Exception {
-    try (var app = new Shoostr()) {
-      app.exception(
-          ForbiddenException.class, (ignored11, ignored12, response) -> response.status(404));
-      app.routes().get("/denied", DENY);
+    {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        var result = test.send(request -> request.path("/denied"));
-        assertEquals(404, result.statusCode());
-        assertFalse(result.headers().firstValue(HttpHeaders.WWW_AUTHENTICATE.value()).isPresent());
+      try (Closeable appCleanup3 = app::close) {
+        app.exception(
+            ForbiddenException.class,
+            (ignoredFailure, ignoredRequest, response) -> response.status(404));
+        app.routes().get("/denied", DENY);
+
+        try (var test = TestServer.start(app)) {
+          var result = test.send(request -> request.path("/denied"));
+
+          assertEquals(404, result.statusCode());
+          assertFalse(
+              result.headers().firstValue(HttpHeaders.WWW_AUTHENTICATE.value()).isPresent());
+        }
       }
     }
   }
 
   @Test
-  void doesNotInventAChallengeForAPlainForbiddenException() throws Exception {
-    try (var app = new Shoostr()) {
-      app.routes()
-          .get(
-              "/denied",
-              (ignored13, ignored14) -> {
-                throw new ForbiddenException();
-              });
+  void doesNotInventChallengeForPlainForbiddenException() throws Exception {
+    {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        var result = test.send(request -> request.path("/denied"));
-        assertEquals(403, result.statusCode());
-        assertFalse(result.headers().firstValue(HttpHeaders.WWW_AUTHENTICATE.value()).isPresent());
+      try (Closeable appCleanup4 = app::close) {
+        app.routes()
+            .get(
+                "/denied",
+                (ignoredRequest, ignoredResponse) -> {
+                  throw new ForbiddenException();
+                });
+
+        try (var test = TestServer.start(app)) {
+          var result = test.send(request -> request.path("/denied"));
+
+          assertEquals(403, result.statusCode());
+          assertFalse(
+              result.headers().firstValue(HttpHeaders.WWW_AUTHENTICATE.value()).isPresent());
+        }
       }
     }
   }

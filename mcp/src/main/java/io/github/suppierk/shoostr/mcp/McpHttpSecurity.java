@@ -1,6 +1,7 @@
 package io.github.suppierk.shoostr.mcp;
 
 import io.github.suppierk.shoostr.Request;
+import io.github.suppierk.shoostr.http.HttpCharacters;
 import io.github.suppierk.shoostr.http.exceptions.AuthorizationDeniedException;
 import io.modelcontextprotocol.spec.McpSchema;
 import java.net.URI;
@@ -31,6 +32,7 @@ public record McpHttpSecurity(
     BiConsumer<McpIdentity, McpSchema.JSONRPCMessage> authorize,
     @Nullable URI resourceMetadata) {
   private static final String HTTPS = "https";
+  private static final String HTTP = "http";
 
   /**
    * Configures generic HTTP security without adding OAuth discovery to expiry challenges.
@@ -60,6 +62,7 @@ public record McpHttpSecurity(
         Set.copyOf(Objects.requireNonNull(allowedOrigins)).stream()
             .map(McpHttpSecurity::origin)
             .collect(Collectors.toUnmodifiableSet());
+
     Objects.requireNonNull(identity);
     Objects.requireNonNull(authorize);
     if (resourceMetadata != null) {
@@ -80,16 +83,20 @@ public record McpHttpSecurity(
    */
   public static AuthorizationDeniedException scopeDenied(
       Set<String> requiredScopes, URI resourceMetadata) {
-    var scopes = Set.copyOf(Objects.requireNonNull(requiredScopes));
+    final var scopes = Set.copyOf(Objects.requireNonNull(requiredScopes));
     if (scopes.isEmpty()) {
       throw new IllegalArgumentException("At least one required OAuth scope must be supplied");
     }
 
-    for (var scope : scopes) {
+    for (final var scope : scopes) {
       if (scope.isEmpty()
           || scope
               .chars()
-              .anyMatch(value -> value < 0x21 || value > 0x7e || value == '"' || value == '\\')) {
+              .anyMatch(value ->
+                  value < HttpCharacters.EXCLAMATION_MARK
+                      || value > HttpCharacters.TILDE
+                      || value == HttpCharacters.DOUBLE_QUOTE
+                      || value == HttpCharacters.BACKSLASH)) {
         throw new IllegalArgumentException("Invalid OAuth scope token");
       }
     }
@@ -112,26 +119,24 @@ public record McpHttpSecurity(
    * @throws IllegalArgumentException if the value is not a serialized HTTP(S) origin
    */
   static String origin(String value) {
-    var uri = URI.create(Objects.requireNonNull(value));
+    final var uri = URI.create(Objects.requireNonNull(value));
     var scheme = uri.getScheme();
-    if (!(HTTPS.equalsIgnoreCase(scheme) || "http".equalsIgnoreCase(scheme))
-        || uri.getHost() == null
-        || uri.getRawAuthority().endsWith(":")
-        || uri.getRawUserInfo() != null
+    if (!(HTTPS.equalsIgnoreCase(scheme) || HTTP.equalsIgnoreCase(scheme))
+        || !validAuthority(uri)
         || !uri.getRawPath().isEmpty()
         || uri.getRawQuery() != null
-        || uri.getRawFragment() != null
-        || uri.getPort() > 65535) {
+        || uri.getRawFragment() != null) {
       throw new IllegalArgumentException("Expected a serialized HTTP(S) Origin");
     }
 
     scheme = scheme.toLowerCase(Locale.ROOT);
-    var port = uri.getPort();
-    var defaultPort = HTTPS.equals(scheme) ? 443 : 80;
+    final var port = uri.getPort();
+    final var defaultPort = HTTPS.equals(scheme) ? 443 : 80;
+
     return scheme
         + "://"
         + uri.getHost().toLowerCase(Locale.ROOT)
-        + (port == -1 || port == defaultPort ? "" : ":" + port);
+        + (port == -1 || port == defaultPort ? "" : HttpCharacters.COLON_SIGN_STRING + port);
   }
 
   /**
@@ -144,12 +149,22 @@ public record McpHttpSecurity(
   private static void validateMetadata(URI metadata) {
     Objects.requireNonNull(metadata);
     if (!HTTPS.equalsIgnoreCase(metadata.getScheme())
-        || metadata.getHost() == null
-        || metadata.getRawUserInfo() != null
-        || metadata.getRawFragment() != null
-        || metadata.getRawAuthority().endsWith(":")
-        || metadata.getPort() > 65535) {
+        || !validAuthority(metadata)
+        || metadata.getRawFragment() != null) {
       throw new IllegalArgumentException("Expected an absolute HTTPS metadata URL");
     }
+  }
+
+  /**
+   * Checks the authority requirements shared by Origin and OAuth metadata URLs.
+   *
+   * @param uri parsed URI
+   * @return whether the URI has a host, no credentials and a valid optional port
+   */
+  private static boolean validAuthority(URI uri) {
+    return uri.getHost() != null
+        && uri.getRawUserInfo() == null
+        && !uri.getRawAuthority().endsWith(HttpCharacters.COLON_SIGN_STRING)
+        && uri.getPort() <= 65535;
   }
 }

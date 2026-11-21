@@ -27,7 +27,9 @@ public final class JsonExample {
    */
   public static void main(String[] args) throws Exception {
     var app = application();
+
     app.start();
+
     LOGGER.info("JSON: http://127.0.0.1:{}/users", app.port());
   }
 
@@ -47,42 +49,44 @@ public final class JsonExample {
                     "/users",
                     users -> {
                       // Return JSON for invalid input only within this route group.
-                      users.exception(
-                          BadRequestException.class,
-                          (ignored, ignored2, response) ->
-                              response
-                                  .status(HttpStatusCodes.BAD_REQUEST.value())
-                                  .body(MediaType.APPLICATION_JSON, INVALID_USER));
+                      users
+                          .exception(
+                              BadRequestException.class,
+                              (ignored, ignoredRequest, response) ->
+                                  response
+                                      .status(HttpStatusCodes.BAD_REQUEST.value())
+                                      .body(MediaType.APPLICATION_JSON, INVALID_USER))
 
-                      // Keep internal details out of the deliberate server-error response.
-                      users.exception(
-                          IllegalStateException.class,
-                          (ignored3, ignored4, response) ->
-                              response
-                                  .status(HttpStatusCodes.INTERNAL_SERVER_ERROR.value())
-                                  .body(MediaType.APPLICATION_JSON, INTERNAL_ERROR));
+                          // Keep internal details out of the deliberate server-error response.
+                          .exception(
+                              IllegalStateException.class,
+                              (ignoredFailure, ignoredRequest, response) ->
+                                  response
+                                      .status(HttpStatusCodes.INTERNAL_SERVER_ERROR.value())
+                                      .body(MediaType.APPLICATION_JSON, INTERNAL_ERROR))
 
-                      // Ordinary text responses remain available alongside typed JSON.
-                      users.get(
-                          "/help",
-                          (ignored5, response) ->
-                              response.text("POST a JSON object with a nonblank name"));
+                          // Ordinary text responses remain available alongside typed JSON.
+                          .get(
+                              "/help",
+                              (ignoredTypedRequest, response) ->
+                                  response.text("POST a JSON object with a nonblank name"))
 
-                      // Throw a failure handled by this group's JSON exception handler.
-                      users.get(
-                          "/failure",
-                          (ignored6, ignored7) -> {
-                            throw new IllegalStateException(
-                                "Example-only internal details must not reach the client");
-                          });
+                          // Throw a failure handled by this group's JSON exception handler.
+                          .get(
+                              "/failure",
+                              (ignoredTypedRequest, ignoredTypedResponse) -> {
+                                throw new IllegalStateException(
+                                    "Example-only internal details must not reach the client");
+                              })
 
-                      // Decode, validate and return a typed user through the installed codec.
-                      users.post(
-                          (request, response) ->
-                              response
-                                  .status(HttpStatusCodes.CREATED.value())
-                                  .body(MediaType.APPLICATION_JSON, request.body(User.class)));
+                          // Decode, validate and return a typed user through the installed codec.
+                          .post(
+                              (request, response) ->
+                                  response
+                                      .status(HttpStatusCodes.CREATED.value())
+                                      .body(MediaType.APPLICATION_JSON, request.body(User.class)));
                     }));
+
     return app;
   }
 }

@@ -32,11 +32,13 @@ import org.openjdk.jmh.infra.Blackhole;
 @Threads(1)
 public class RoutePatternBenchmark {
   private static final int QUERY_COUNT = 16384;
-  private static final Handler HANDLER = (ignored, ignored2) -> {};
+  private static final Handler HANDLER = (ignored, ignoredResponse) -> {};
 
+  /** Number of route groups registered by the fixture. */
   @Param({"1", "100", "1000"})
   public int groups;
 
+  /** Route pattern and match outcome used for the lookups. */
   @Param({
     "literal",
     "oneParameter",
@@ -59,6 +61,7 @@ public class RoutePatternBenchmark {
   })
   public String workload;
 
+  /** Controls reuse of the path string across lookups. */
   @Param({"reused"})
   public String input;
 
@@ -70,6 +73,55 @@ public class RoutePatternBenchmark {
   private boolean fresh;
   private int cursor;
 
+  /** Creates a benchmark state for JMH. */
+  public RoutePatternBenchmark() {}
+
+  /**
+   * Builds the shared route table plus branches required by the selected workload.
+   *
+   * @param groups number of resource groups
+   * @param catchAll whether to register catch-all routes
+   * @param regex whether to register constrained routes
+   * @return ordered endpoint registrations
+   */
+  private static List<RadixRoutes.Endpoint> registrations(
+      int groups, boolean catchAll, boolean regex) {
+    var endpoints = new ArrayList<RadixRoutes.Endpoint>();
+    for (int group = 0; group < groups; group++) {
+      String prefix = "/api/resources/" + group + "/orders";
+      add(endpoints, HttpMethods.GET, prefix + "/latest");
+      add(endpoints, HttpMethods.GET, prefix + "/{id}");
+      add(endpoints, HttpMethods.POST, prefix + "/{orderId}");
+      add(endpoints, HttpMethods.GET, prefix + "/fixed/details");
+      add(endpoints, HttpMethods.GET, prefix + "/{id}/events");
+      add(endpoints, HttpMethods.GET, prefix + "/{id}/items/{itemId}");
+      add(endpoints, HttpMethods.GET, prefix + "/shadowed");
+      add(endpoints, HttpMethods.POST, prefix + "/latest");
+      if (catchAll) {
+        add(endpoints, HttpMethods.GET, prefix + "/{*tail}");
+        add(endpoints, HttpMethods.POST, prefix + "/{*tail}");
+      }
+
+      if (regex) {
+        add(endpoints, HttpMethods.GET, prefix + "/{numericId:[0-9]+}");
+        add(endpoints, HttpMethods.POST, prefix + "/{numericId:[0-9]+}");
+      }
+    }
+    return endpoints;
+  }
+
+  /**
+   * Appends one endpoint to the fixture's registration list.
+   *
+   * @param endpoints ordered fixture registrations
+   * @param method registered HTTP method
+   * @param pattern absolute route pattern
+   */
+  private static void add(
+      List<RadixRoutes.Endpoint> endpoints, HttpMethods method, String pattern) {
+    endpoints.add(RadixRoutes.endpoint(method, pattern, HANDLER));
+  }
+
   /**
    * Matches one path and reads the parameters a handler would consume, or collects allowed methods.
    *
@@ -80,7 +132,9 @@ public class RoutePatternBenchmark {
   public Object route(Blackhole blackhole) {
     int index = cursor;
     cursor = (cursor + 1) & (QUERY_COUNT - 1);
+
     String path = fresh ? new String(characters[index]) : paths[index];
+
     var endpoint = router.match(path, method);
     if (endpoint == null) {
       return router.allowedMethods(path);
@@ -89,6 +143,7 @@ public class RoutePatternBenchmark {
     for (String name : parameterNames) {
       blackhole.consume(endpoint.parameter(path, name));
     }
+
     return endpoint;
   }
 
@@ -135,81 +190,49 @@ public class RoutePatternBenchmark {
               new String[0];
           default -> throw new IllegalArgumentException("Unknown workload: " + workload);
         };
+
     paths = new String[QUERY_COUNT];
     characters = new char[QUERY_COUNT][];
+
     var order = new ArrayList<Integer>(QUERY_COUNT);
-    for (int i = 0; i < QUERY_COUNT; i++) {
-      order.add(i);
+    for (int index = 0; index < QUERY_COUNT; index++) {
+      order.add(index);
     }
     Collections.shuffle(order, new Random(1729));
-    for (int i = 0; i < QUERY_COUNT; i++) {
-      int query = order.get(i);
+
+    for (int queryIndex = 0; queryIndex < QUERY_COUNT; queryIndex++) {
+      int query = order.get(queryIndex);
       String prefix = "/api/resources/" + (query % groups) + "/orders";
-      String suffix =
-          switch (workload) {
-            case "literal", "wrongMethod" -> "/latest";
-            case "oneParameter" -> "/order-" + query;
-            case "twoParameters" -> "/order-" + query + "/items/item-" + query;
-            case "encodedParameter" -> "/caf%C3%A9%20" + query;
-            case "precedence" -> "/shadowed";
-            case "fallback", "regexFallback" -> "/fixed/events";
-            case "notFound" -> "/order-" + query + "/missing";
-            case "catchAllNoRead", "catchAllRead", "catchAllWrongMethod" ->
-                "/archive/order-" + query + "/receipt";
-            case "catchAllFallback" -> "/fixed/other/" + query;
-            case "catchAllMiss", "regexMiss" -> "/";
-            case "regexNoRead", "regexRead", "regexWrongMethod" -> "/" + query;
-            default -> throw new IllegalArgumentException("Unknown workload: " + workload);
-          };
-      paths[i] = prefix + suffix;
-      characters[i] = paths[i].toCharArray();
+      String suffix = pathSuffix(query);
+      paths[queryIndex] = prefix + suffix;
+      characters[queryIndex] = paths[queryIndex].toCharArray();
     }
+
     cursor = 0;
   }
 
   /**
-   * Builds the shared route table plus branches required by the selected workload.
+   * Selects the path suffix for the configured routing scenario.
    *
-   * @param groups number of resource groups
-   * @param catchAll whether to register catch-all routes
-   * @param regex whether to register constrained routes
-   * @return ordered endpoint registrations
+   * @param query query sequence index
+   * @return suffix appended to the query path
+   * @throws IllegalArgumentException if the configured benchmark scenario is unknown
    */
-  private static List<RadixRoutes.Endpoint> registrations(
-      int groups, boolean catchAll, boolean regex) {
-    var endpoints = new ArrayList<RadixRoutes.Endpoint>();
-    for (int group = 0; group < groups; group++) {
-      String prefix = "/api/resources/" + group + "/orders";
-      add(endpoints, HttpMethods.GET, prefix + "/latest");
-      add(endpoints, HttpMethods.GET, prefix + "/{id}");
-      add(endpoints, HttpMethods.POST, prefix + "/{orderId}");
-      add(endpoints, HttpMethods.GET, prefix + "/fixed/details");
-      add(endpoints, HttpMethods.GET, prefix + "/{id}/events");
-      add(endpoints, HttpMethods.GET, prefix + "/{id}/items/{itemId}");
-      add(endpoints, HttpMethods.GET, prefix + "/shadowed");
-      add(endpoints, HttpMethods.POST, prefix + "/latest");
-      if (catchAll) {
-        add(endpoints, HttpMethods.GET, prefix + "/{*tail}");
-        add(endpoints, HttpMethods.POST, prefix + "/{*tail}");
-      }
-
-      if (regex) {
-        add(endpoints, HttpMethods.GET, prefix + "/{numericId:[0-9]+}");
-        add(endpoints, HttpMethods.POST, prefix + "/{numericId:[0-9]+}");
-      }
-    }
-    return endpoints;
-  }
-
-  /**
-   * Appends one endpoint to the fixture's registration list.
-   *
-   * @param endpoints ordered fixture registrations
-   * @param method registered HTTP method
-   * @param pattern absolute route pattern
-   */
-  private static void add(
-      List<RadixRoutes.Endpoint> endpoints, HttpMethods method, String pattern) {
-    endpoints.add(RadixRoutes.endpoint(method, pattern, HANDLER));
+  private String pathSuffix(int query) {
+    return switch (workload) {
+      case "literal", "wrongMethod" -> "/latest";
+      case "oneParameter" -> "/order-" + query;
+      case "twoParameters" -> "/order-" + query + "/items/item-" + query;
+      case "encodedParameter" -> "/caf%C3%A9%20" + query;
+      case "precedence" -> "/shadowed";
+      case "fallback", "regexFallback" -> "/fixed/events";
+      case "notFound" -> "/order-" + query + "/missing";
+      case "catchAllNoRead", "catchAllRead", "catchAllWrongMethod" ->
+          "/archive/order-" + query + "/receipt";
+      case "catchAllFallback" -> "/fixed/other/" + query;
+      case "catchAllMiss", "regexMiss" -> "/";
+      case "regexNoRead", "regexRead", "regexWrongMethod" -> "/" + query;
+      default -> throw new IllegalArgumentException("Unknown workload: " + workload);
+    };
   }
 }

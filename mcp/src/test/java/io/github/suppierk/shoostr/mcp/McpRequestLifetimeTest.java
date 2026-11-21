@@ -10,6 +10,7 @@ import io.github.suppierk.shoostr.http.exceptions.AuthenticationRequiredExceptio
 import java.time.Duration;
 import java.time.Instant;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Future;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
@@ -25,16 +26,12 @@ class McpRequestLifetimeTest {
 
     try (var deadlines = new ScheduledThreadPoolExecutor(1)) {
       var heldDeadlineWorker =
-          deadlines.submit(
-              () -> {
-                schedulerEntered.countDown();
-                assertTrue(releaseScheduler.await(5, TimeUnit.SECONDS));
-                return null;
-              });
+          submitHeldDeadlineWorkerForExpiryRejection(deadlines, schedulerEntered, releaseScheduler);
 
       try (var lifetime = new McpRequestLifetime(deadlines, "Bearer error=\"invalid_token\"")) {
         try {
           assertTrue(schedulerEntered.await(3, TimeUnit.SECONDS));
+
           var expiry = Instant.now().plusMillis(100);
           lifetime.arm(expiry);
 
@@ -45,7 +42,9 @@ class McpRequestLifetimeTest {
               .pollInterval(Duration.ofMillis(5))
               .atMost(Duration.ofSeconds(3))
               .until(() -> !expiry.isAfter(Instant.now()));
+
           assertThrows(AuthenticationRequiredException.class, () -> lifetime.beforeFlush(false));
+
           lifetime.beforeFlush(true);
 
           releaseScheduler.countDown();
@@ -53,11 +52,25 @@ class McpRequestLifetimeTest {
           // This later marker runs after the overdue deadline, before the owner is released.
           assertEquals("drained", deadlines.submit(() -> "drained").get(3, TimeUnit.SECONDS));
           assertFalse(Thread.currentThread().isInterrupted());
+
           lifetime.beforeFlush(true);
         } finally {
           releaseScheduler.countDown();
         }
       }
     }
+  }
+
+  private Future<Object> submitHeldDeadlineWorkerForExpiryRejection(
+      ScheduledThreadPoolExecutor deadlines,
+      CountDownLatch schedulerEntered,
+      CountDownLatch releaseScheduler) {
+    return deadlines.submit(() -> {
+      schedulerEntered.countDown();
+
+      assertTrue(releaseScheduler.await(5, TimeUnit.SECONDS));
+
+      return null;
+    });
   }
 }

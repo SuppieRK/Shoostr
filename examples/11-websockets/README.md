@@ -11,7 +11,8 @@ docker compose -f examples/11-websockets/compose.yaml up --build -d
 
 Startup is asynchronous. Check diagnostics with `docker compose -f examples/11-websockets/compose.yaml logs -f app`.
 Open `http://127.0.0.1:8080/`. Expect the endpoint list; use the browser snippets below.
-Retry the request if the listener is not ready yet. Set `APP_PORT=8081` before the command if port 8080 is occupied, and use that port in requests.
+Retry the request if the listener is not ready yet. Set `APP_PORT=8081` before the command if port 8080 is occupied, and
+use that port in requests.
 Compose exposes the app on host loopback. These credentials and unauthenticated fixtures
 are for trusted local development. Direct Java runs use the default wildcard listener.
 
@@ -38,7 +39,7 @@ Consumer recipes: [managed messages](../../site/src/content/docs/websockets/mana
 and [native listeners](../../site/src/content/docs/websockets/native.mdx).
 
 | Recipe           | Example                                                                                                            | Test                                                                                                |
-| ---------------- | ------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------- |
+|------------------|--------------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------|
 | Managed messages | [ManagedWebSocketExample](src/main/java/io/github/suppierk/shoostr/example/websocket/ManagedWebSocketExample.java) | [Test](src/test/java/io/github/suppierk/shoostr/example/websocket/ManagedWebSocketExampleTest.java) |
 | Binary objects   | [TypedWebSocketExample](src/main/java/io/github/suppierk/shoostr/example/websocket/TypedWebSocketExample.java)     | [Test](src/test/java/io/github/suppierk/shoostr/example/websocket/TypedWebSocketExampleTest.java)   |
 | Native listeners | [NativeWebSocketExample](src/main/java/io/github/suppierk/shoostr/example/websocket/NativeWebSocketExample.java)   | [Test](src/test/java/io/github/suppierk/shoostr/example/websocket/NativeWebSocketExampleTest.java)  |
@@ -47,7 +48,8 @@ Gradle project: `websocket-example`.
 
 ## Standalone WebSocket fixture
 
-The consumer recipes use focused [managed callbacks](src/main/java/io/github/suppierk/shoostr/example/websocket/ManagedWebSocketExample.java)
+The consumer recipes use
+focused [managed callbacks](src/main/java/io/github/suppierk/shoostr/example/websocket/ManagedWebSocketExample.java)
 with a [complete test](src/test/java/io/github/suppierk/shoostr/example/websocket/ManagedWebSocketExampleTest.java),
 and a [native listener](src/main/java/io/github/suppierk/shoostr/example/websocket/NativeWebSocketExample.java)
 with its [test](src/test/java/io/github/suppierk/shoostr/example/websocket/NativeWebSocketExampleTest.java).
@@ -191,7 +193,8 @@ on it and it may not run during shutdown. `close()` initiates 1000 closure witho
 A busy callback can delay reading peer close or ping frames: immediate disconnect cancellation is not guaranteed.
 App shutdown signals 1001 and interrupts managed work before transport drain, without waiting indefinitely for
 code that ignores interruption. A supplied route executor controls only the HTTP handshake; subsequent callbacks
-use the application's configured execution mode. No preview APIs, background producer or example-owned executor is required.
+use the application's configured execution mode. No preview APIs, background producer or example-owned executor is
+required.
 Core owns app shutdown; close your client connections explicitly while testing.
 
 ### Tests and Docker
@@ -212,4 +215,5 @@ docker compose -f examples/11-websockets/compose.yaml down
 
 Set `APP_PORT=8081` if 8080 is occupied, and visit that port before using the console snippets. They target this
 plain-HTTP demo; use `wss://` if adapting it to HTTPS. Compose publishes on host loopback; direct runs use core's
-default listener. These unauthenticated examples are for trusted development only. The launcher logs through SLF4J with the example’s Logback backend.
+default listener. These unauthenticated examples are for trusted development only. The launcher logs through SLF4J with
+the example’s Logback backend.

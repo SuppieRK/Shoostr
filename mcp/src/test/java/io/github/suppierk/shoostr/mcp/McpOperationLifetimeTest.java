@@ -9,11 +9,15 @@ import io.github.suppierk.shoostr.Shoostr;
 import io.github.suppierk.shoostr.testing.TestServer;
 import io.modelcontextprotocol.common.McpTransportContext;
 import io.modelcontextprotocol.json.McpJsonDefaults;
+import io.modelcontextprotocol.server.McpAsyncServer;
+import io.modelcontextprotocol.server.McpAsyncServerExchange;
 import io.modelcontextprotocol.server.McpServer;
 import io.modelcontextprotocol.server.McpServerFeatures;
 import io.modelcontextprotocol.spec.McpSchema;
+import io.modelcontextprotocol.spec.McpSchema.Tool;
 import java.io.BufferedReader;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
@@ -28,6 +32,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import reactor.core.publisher.Mono;
 import reactor.core.publisher.Sinks;
+import reactor.core.publisher.Sinks.Empty;
 
 class McpOperationLifetimeTest {
   @Test
@@ -42,129 +47,156 @@ class McpOperationLifetimeTest {
         new McpHttpSecurity(
             Set.of(),
             ignored -> new McpIdentity("public", McpTransportContext.EMPTY, null),
-            (ignored2, ignored3) -> {});
+            (ignoredMcpIdentity, ignoredJsonRpcMessage) -> {});
     var tool = McpSchema.Tool.builder("ping-client", Map.of("type", "object")).build();
-    var mcp =
-        Mcp.async(
-            security,
-            transport ->
-                McpServer.async(transport)
-                    .requestTimeout(Duration.ofSeconds(10))
-                    .capabilities(
-                        McpSchema.ServerCapabilities.builder().tools(false).logging().build())
-                    .tools(
-                        McpServerFeatures.AsyncToolSpecification.builder()
-                            .tool(tool)
-                            .callHandler(
-                                (exchange, ignored4) -> {
-                                  var ping =
-                                      exchange
-                                          .ping()
-                                          .doOnSuccess(ignored5 -> nativeCompleted.countDown())
-                                          .doOnCancel(cancelled::incrementAndGet);
-                                  var notification =
-                                      breakResponse
-                                          .asMono()
-                                          .then(
-                                              exchange.loggingNotification(
-                                                  McpSchema.LoggingMessageNotification.builder(
-                                                          McpSchema.LoggingLevel.INFO,
-                                                          "trigger failed HTTP flush")
-                                                      .build()))
-                                          .onErrorResume(ignored6 -> Mono.empty());
-                                  return Mono.when(ping, notification)
-                                      .thenReturn(
-                                          McpSchema.CallToolResult.builder()
-                                              .addTextContent("native operation completed")
-                                              .build());
-                                })
-                            .build())
-                    .build());
+    var mcp = operationServer(security, tool, nativeCompleted, cancelled, breakResponse);
     var app = new Shoostr();
-    app.extensions(mcp).routes(routes -> routes.path("/mcp", mcp::routes));
-    app.beforeResponseFlush(
-        (request, ignored7) -> {
-          if (request.header("X-Fail-Response").isPresent() && failResponse.get()) {
-            throw new IOException("fixture HTTP response failure after the native ping was sent");
-          }
-        });
-    app.afterRequest(
-        outcome -> {
-          if ("POST".equals(outcome.method()) && outcome.applicationFailure() != null) {
-            httpEnded.countDown();
-          }
-        });
+    app.routes(routes -> routes.path("/mcp", mcp::routes));
+    app.beforeResponseFlush((request, ignoredResponse) -> {
+      if (request.header("X-Fail-Response").isPresent() && failResponse.get()) {
+        throw new IOException("fixture HTTP response failure after the native ping was sent");
+      }
+    });
+    app.afterRequest(outcome -> {
+      if ("POST".equals(outcome.method()) && outcome.applicationFailure() != null) {
+        httpEnded.countDown();
+      }
+    });
 
     try (var test = TestServer.start(app)) {
-      var initialized =
-          test.send(
-              request ->
-                  request
-                      .path("/mcp")
-                      .method("POST")
-                      .header("Content-Type", "application/json")
-                      .header("Accept", "application/json, text/event-stream")
-                      .body(
-                          """
-              {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
-                "protocolVersion":"2025-11-25","capabilities":{},
-                "clientInfo":{"name":"operation-lifetime-fixture","version":"1.0"}}}
-              """
-                              .getBytes(StandardCharsets.UTF_8)));
+      var initialized = sendInitializedRequestForFailedResponse(test);
       var sessionId = initialized.headers().firstValue("Mcp-Session-Id").orElseThrow();
-      var response =
-          test.send(
-              request ->
-                  request
-                      .path("/mcp")
-                      .method("POST")
-                      .header("Content-Type", "application/json")
-                      .header("Accept", "application/json, text/event-stream")
-                      .header("Mcp-Session-Id", sessionId)
-                      .header("MCP-Protocol-Version", "2025-11-25")
-                      .header("X-Fail-Response", "true")
-                      .body(
-                          """
-              {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{
-                "name":"ping-client","arguments":{}}}
-              """
-                              .getBytes(StandardCharsets.UTF_8)),
-              HttpResponse.BodyHandlers.ofInputStream());
+      var response = sendResponseForFailedResponse(test, sessionId);
       var mapper = McpJsonDefaults.getMapper();
 
       try (var reader =
           new BufferedReader(new InputStreamReader(response.body(), StandardCharsets.UTF_8))) {
         assertEquals(200, response.statusCode());
+
         String line;
         do {
           line = reader.readLine();
+
           assertNotNull(line, "The native ping must arrive before the response ends");
         } while (!line.startsWith("data:"));
+
         var ping =
             assertInstanceOf(
                 McpSchema.JSONRPCRequest.class,
                 McpSchema.deserializeJsonRpcMessage(mapper, line.substring(5).strip()));
         assertEquals("ping", ping.method());
+
         failResponse.set(true);
+
         assertEquals(Sinks.EmitResult.OK, breakResponse.tryEmitEmpty());
         assertTrue(httpEnded.await(5, TimeUnit.SECONDS));
+
         var replyBody =
             mapper.writeValueAsBytes(McpSchema.JSONRPCResponse.result(ping.id(), Map.of()));
-        var reply =
-            test.send(
-                request ->
-                    request
-                        .path("/mcp")
-                        .method("POST")
-                        .header("Content-Type", "application/json")
-                        .header("Accept", "application/json, text/event-stream")
-                        .header("Mcp-Session-Id", sessionId)
-                        .header("MCP-Protocol-Version", "2025-11-25")
-                        .body(replyBody));
+        var reply = sendReplyRequestForFailedResponse(test, sessionId, replyBody);
+
         assertEquals(202, reply.statusCode());
         assertTrue(nativeCompleted.await(5, TimeUnit.SECONDS));
         assertEquals(0, cancelled.get());
       }
     }
+  }
+
+  private Mcp<McpAsyncServer> operationServer(
+      McpHttpSecurity security,
+      Tool tool,
+      CountDownLatch nativeCompleted,
+      AtomicInteger cancelled,
+      Empty<Void> breakResponse) {
+    return Mcp.async(
+        security,
+        transport ->
+            McpServer.async(transport)
+                .requestTimeout(Duration.ofSeconds(10))
+                .capabilities(McpSchema.ServerCapabilities.builder().tools(false).logging().build())
+                .tools(
+                    McpServerFeatures.AsyncToolSpecification.builder()
+                        .tool(tool)
+                        .callHandler((exchange, ignoredCallToolRequest) -> {
+                          var ping =
+                              exchange
+                                  .ping()
+                                  .doOnSuccess(ignoredObject -> nativeCompleted.countDown())
+                                  .doOnCancel(cancelled::incrementAndGet);
+                          var notification =
+                              createNotificationForFailedResponse(breakResponse, exchange);
+
+                          return Mono.when(ping, notification)
+                              .thenReturn(
+                                  McpSchema.CallToolResult.builder()
+                                      .addTextContent("native operation completed")
+                                      .build());
+                        })
+                        .build())
+                .build());
+  }
+
+  private Mono<Void> createNotificationForFailedResponse(
+      Empty<Void> breakResponse, McpAsyncServerExchange exchange) {
+    return breakResponse
+        .asMono()
+        .then(
+            exchange.loggingNotification(
+                McpSchema.LoggingMessageNotification.builder(
+                        McpSchema.LoggingLevel.INFO, "trigger failed HTTP flush")
+                    .build()))
+        .onErrorResume(ignoredFailure -> Mono.empty());
+  }
+
+  private HttpResponse<byte[]> sendInitializedRequestForFailedResponse(TestServer test)
+      throws IOException, InterruptedException {
+    return test.send(request ->
+        request
+            .path("/mcp")
+            .method("POST")
+            .header("Content-Type", "application/json")
+            .header("Accept", "application/json, text/event-stream")
+            .body(
+                """
+                {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+                  "protocolVersion":"2025-11-25","capabilities":{},
+                  "clientInfo":{"name":"operation-lifetime-fixture","version":"1.0"}}}
+                """
+                    .getBytes(StandardCharsets.UTF_8)));
+  }
+
+  private HttpResponse<InputStream> sendResponseForFailedResponse(TestServer test, String sessionId)
+      throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/mcp")
+                .method("POST")
+                .header("Content-Type", "application/json")
+                .header("Accept", "application/json, text/event-stream")
+                .header("Mcp-Session-Id", sessionId)
+                .header("MCP-Protocol-Version", "2025-11-25")
+                .header("X-Fail-Response", "true")
+                .body(
+                    """
+                    {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{
+                      "name":"ping-client","arguments":{}}}
+                    """
+                        .getBytes(StandardCharsets.UTF_8)),
+        HttpResponse.BodyHandlers.ofInputStream());
+  }
+
+  private HttpResponse<byte[]> sendReplyRequestForFailedResponse(
+      TestServer test, String sessionId, byte[] replyBody)
+      throws IOException, InterruptedException {
+    return test.send(request ->
+        request
+            .path("/mcp")
+            .method("POST")
+            .header("Content-Type", "application/json")
+            .header("Accept", "application/json, text/event-stream")
+            .header("Mcp-Session-Id", sessionId)
+            .header("MCP-Protocol-Version", "2025-11-25")
+            .body(replyBody));
   }
 }

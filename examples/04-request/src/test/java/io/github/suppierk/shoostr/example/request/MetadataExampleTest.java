@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.suppierk.shoostr.testing.TestServer;
+import java.io.IOException;
 import java.io.StringReader;
 import java.net.InetAddress;
 import java.net.Socket;
@@ -18,18 +19,12 @@ import org.junit.jupiter.params.provider.CsvSource;
 class MetadataExampleTest {
   @Test
   void ignoresUntrustedForwardingAndIdentityHeaders() throws Exception {
+
     try (var test = TestServer.start(MetadataExample.application())) {
-      var response =
-          test.send(
-              request ->
-                  request
-                      .path("/inspect/Ada?raw=a%2Bb")
-                      .header("Forwarded", "for=203.0.113.7;host=public.example;proto=https")
-                      .header("X-Forwarded-For", "203.0.113.8")
-                      .header("X-Forwarded-Proto", "https")
-                      .header("X-User", "admin"),
-              HttpResponse.BodyHandlers.ofString());
+      var response = sendResponseForIgnoresUntrustedForwardingAndIdentityHeaders(test);
+
       assertEquals(200, response.statusCode());
+
       var fields = new Properties();
       fields.load(new StringReader(response.body()));
 
@@ -44,20 +39,38 @@ class MetadataExampleTest {
     }
   }
 
+  private HttpResponse<String> sendResponseForIgnoresUntrustedForwardingAndIdentityHeaders(
+      TestServer test) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/inspect/Ada?raw=a%2Bb")
+                .header("Forwarded", "for=203.0.113.7;host=public.example;proto=https")
+                .header("X-Forwarded-For", "203.0.113.8")
+                .header("X-Forwarded-Proto", "https")
+                .header("X-User", "admin"),
+        HttpResponse.BodyHandlers.ofString());
+  }
+
   @ParameterizedTest
   @CsvSource({"/inspect/Ada, (missing)", "/inspect/Ada?bad=%FF, bad=%FF"})
   void readsRawQueriesWithoutDecodingThem(String path, String query) throws Exception {
+
     try (var test = TestServer.start(MetadataExample.application())) {
       var response = test.send(request -> request.path(path), HttpResponse.BodyHandlers.ofString());
+
       assertEquals(200, response.statusCode());
+
       var fields = new Properties();
       fields.load(new StringReader(response.body()));
+
       assertEquals(query, fields.getProperty("query"));
     }
   }
 
   @Test
   void distinguishesLogicalAuthorityAndSchemeFromThePhysicalConnection() throws Exception {
+
     try (var test = TestServer.start(MetadataExample.application());
         var socket =
             new Socket(InetAddress.getAllByName("127.0.0.1")[0], test.baseUri().getPort())) {
@@ -74,7 +87,9 @@ class MetadataExampleTest {
                       "")
                   .getBytes(StandardCharsets.US_ASCII));
       var wire = new String(socket.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+
       assertTrue(wire.startsWith("HTTP/1.1 200"), wire);
+
       var fields = new Properties();
       fields.load(new StringReader(wire.substring(wire.indexOf("\r\n\r\n") + 4)));
 
@@ -90,6 +105,7 @@ class MetadataExampleTest {
 
   @Test
   void preservesRawUrlSpellingAlongsideDecodedCaptures() throws Exception {
+
     try (var test =
         TestServer.start(
             MetadataExample.application(), client -> client.version(HttpClient.Version.HTTP_1_1))) {
@@ -97,10 +113,12 @@ class MetadataExampleTest {
           test.send(
               request -> request.path("/inspect/caf%C3%A9?name=a+b&encoded=%2520"),
               HttpResponse.BodyHandlers.ofString());
+
       assertEquals(200, response.statusCode());
+
       var fields = new Properties();
       fields.load(new StringReader(response.body()));
-      var origin = test.baseUri().resolve("/").toString();
+      final var origin = test.baseUri().resolve("/").toString();
 
       assertEquals("GET", fields.getProperty("method"));
       assertEquals("HTTP/1.1", fields.getProperty("protocol"));

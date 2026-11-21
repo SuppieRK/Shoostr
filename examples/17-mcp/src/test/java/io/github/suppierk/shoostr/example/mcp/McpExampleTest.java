@@ -11,13 +11,17 @@ import io.github.suppierk.shoostr.http.HttpStatusCodes;
 import io.github.suppierk.shoostr.http.MediaType;
 import io.github.suppierk.shoostr.testing.TestServer;
 import io.modelcontextprotocol.client.McpClient;
+import io.modelcontextprotocol.client.McpClient.SyncSpec;
 import io.modelcontextprotocol.client.McpSyncClient;
 import io.modelcontextprotocol.client.transport.HttpClientStreamableHttpTransport;
 import io.modelcontextprotocol.spec.McpSchema;
 import java.io.ByteArrayInputStream;
+import java.io.IOException;
+import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.Base64;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.IntStream;
@@ -30,6 +34,19 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 
 class McpExampleTest {
+  private static McpSyncClient client(TestServer test) {
+    return clientProperties(test).build();
+  }
+
+  private static SyncSpec clientProperties(TestServer test) {
+    return McpClient.sync(
+            HttpClientStreamableHttpTransport.builder(test.baseUri().toString())
+                .endpoint("/mcp")
+                .build())
+        .requestTimeout(Duration.ofSeconds(3))
+        .initializationTimeout(Duration.ofSeconds(3));
+  }
+
   @ParameterizedTest
   @CsvSource({
     "http://127.0.0.1:8080, OK",
@@ -39,37 +56,52 @@ class McpExampleTest {
   @Timeout(20)
   void enforcesTheBrowserOriginIndependentlyOfTheBindAddress(
       String origin, HttpStatusCodes expectedStatus) throws Exception {
-    var initialize =
+    var initialize = createInitializeForEnforcesTheBrowserOriginIndependentlyOfTheBindAddress();
+
+    try (var test = TestServer.start(McpExample.application())) {
+      var reply =
+          sendReplyRequestForEnforcesTheBrowserOriginIndependentlyOfTheBindAddress(
+              test, origin, initialize);
+
+      assertEquals(expectedStatus.value(), reply.statusCode());
+    }
+  }
+
+  private String createInitializeForEnforcesTheBrowserOriginIndependentlyOfTheBindAddress() {
+    return
         """
         {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
           "protocolVersion":"2025-11-25","capabilities":{},
           "clientInfo":{"name":"browser-origin-test","version":"1.0"}}}
         """;
+  }
 
-    try (var test = TestServer.start(McpExample.application())) {
-      var reply =
-          test.send(
-              request ->
-                  request
-                      .path("/mcp")
-                      .method("POST")
-                      .header(HttpHeaders.ORIGIN, origin)
-                      .header(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON.value())
-                      .header(HttpHeaders.ACCEPT, "application/json, text/event-stream")
-                      .body(initialize.getBytes(StandardCharsets.UTF_8)));
-      assertEquals(expectedStatus.value(), reply.statusCode());
-    }
+  private HttpResponse<byte[]>
+      sendReplyRequestForEnforcesTheBrowserOriginIndependentlyOfTheBindAddress(
+          TestServer test, String origin, String initialize)
+          throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/mcp")
+                .method("POST")
+                .header(HttpHeaders.ORIGIN, origin)
+                .header(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON.value())
+                .header(HttpHeaders.ACCEPT, "application/json, text/event-stream")
+                .body(initialize.getBytes(StandardCharsets.UTF_8)));
   }
 
   @Test
   @Timeout(20)
   void servesTheExampleWelcomeMessageThroughTheRunnableApplication() throws Exception {
+
     try (var test = TestServer.start(McpExample.application());
         var client = client(test)) {
       client.initialize();
       var result =
           client.callTool(
               McpSchema.CallToolRequest.builder("test_simple_text").arguments(Map.of()).build());
+
       assertFalse(result.isError());
       assertEquals(
           "Welcome to Shoostr's MCP example.",
@@ -80,17 +112,20 @@ class McpExampleTest {
   @Test
   @Timeout(20)
   void servesTheGeneratedCheckerboardThroughTheImageTool() throws Exception {
+
     try (var test = TestServer.start(McpExample.application());
         var client = client(test)) {
       client.initialize();
       var result =
           client.callTool(
               McpSchema.CallToolRequest.builder("test_image_content").arguments(Map.of()).build());
+
       var content = assertInstanceOf(McpSchema.ImageContent.class, result.content().getFirst());
       assertEquals("image/png", content.mimeType());
 
       try (var bytes = new ByteArrayInputStream(Base64.getDecoder().decode(content.data()))) {
         var image = ImageIO.read(bytes);
+
         assertNotNull(image);
         assertEquals(8, image.getWidth());
         assertEquals(8, image.getHeight());
@@ -103,25 +138,30 @@ class McpExampleTest {
   @Test
   @Timeout(20)
   void servesTheGeneratedPcmPulseThroughTheAudioTool() throws Exception {
+
     try (var test = TestServer.start(McpExample.application());
         var client = client(test)) {
       client.initialize();
       var result =
           client.callTool(
               McpSchema.CallToolRequest.builder("test_audio_content").arguments(Map.of()).build());
+
       var content = assertInstanceOf(McpSchema.AudioContent.class, result.content().getFirst());
       assertEquals("audio/wav", content.mimeType());
 
       try (var bytes = new ByteArrayInputStream(Base64.getDecoder().decode(content.data()));
           var audio = AudioSystem.getAudioInputStream(bytes)) {
         var format = audio.getFormat();
+
         assertEquals(AudioFormat.Encoding.PCM_SIGNED, format.getEncoding());
         assertEquals(8_000.0f, format.getSampleRate());
         assertEquals(16, format.getSampleSizeInBits());
         assertEquals(1, format.getChannels());
         assertFalse(format.isBigEndian());
         assertEquals(64, audio.getFrameLength());
+
         var samples = audio.readAllBytes();
+
         assertEquals(128, samples.length);
         assertTrue(IntStream.range(0, samples.length).anyMatch(index -> samples[index] != 0));
       }
@@ -131,44 +171,20 @@ class McpExampleTest {
   @Test
   @Timeout(20)
   void publishesTheParcelDeliverySchemaWithoutLosingItsConditionsOrReferences() throws Exception {
+
     try (var test = TestServer.start(McpExample.application());
         var client = client(test)) {
       client.initialize();
       var schema =
-          client.listTools().tools().stream()
-              .filter(tool -> "json_schema_2020_12_tool".equals(tool.name()))
-              .findFirst()
-              .orElseThrow()
-              .inputSchema();
+          createSchemaForPublishesTheParcelDeliverySchemaWithoutLosingItsConditionsOrReferences(
+              client);
 
       assertEquals("https://json-schema.org/draft/2020-12/schema", schema.get("$schema"));
       assertEquals("object", schema.get("type"));
       assertEquals(List.of("recipient", "delivery"), schema.get("required"));
       assertEquals(false, schema.get("additionalProperties"));
-      assertEquals(
-          Map.of(
-              "recipient", Map.of("type", "string", "minLength", 1),
-              "delivery", Map.of("type", "string", "enum", List.of("pickup", "courier")),
-              "destination", Map.of("$ref", "#parcelDestination"),
-              "collectionPoint", Map.of("type", "string", "minLength", 1)),
-          schema.get("properties"));
-      assertEquals(
-          Map.of(
-              "address",
-              Map.of(
-                  "$anchor",
-                  "parcelDestination",
-                  "type",
-                  "object",
-                  "properties",
-                  Map.of(
-                      "postalCode", Map.of("type", "string", "minLength", 1),
-                      "countryCode", Map.of("type", "string", "pattern", "^[A-Z]{2}$")),
-                  "required",
-                  List.of("postalCode", "countryCode"),
-                  "additionalProperties",
-                  false)),
-          schema.get("$defs"));
+      assertEquals(expectedProperties(), schema.get("properties"));
+      assertEquals(Map.of("address", expectedPayloadSchema()), schema.get("$defs"));
       assertEquals(
           List.of(
               Map.of(
@@ -189,13 +205,38 @@ class McpExampleTest {
     }
   }
 
-  private static McpSyncClient client(TestServer test) {
-    return McpClient.sync(
-            HttpClientStreamableHttpTransport.builder(test.baseUri().toString())
-                .endpoint("/mcp")
-                .build())
-        .requestTimeout(Duration.ofSeconds(3))
-        .initializationTimeout(Duration.ofSeconds(3))
-        .build();
+  private Map<String, Object>
+      createSchemaForPublishesTheParcelDeliverySchemaWithoutLosingItsConditionsOrReferences(
+          McpSyncClient client) {
+    return client.listTools().tools().stream()
+        .filter(tool -> "json_schema_2020_12_tool".equals(tool.name()))
+        .findFirst()
+        .orElseThrow()
+        .inputSchema();
+  }
+
+  private Map<String, Map<String, ? extends Object>> expectedProperties() {
+    var entries = new LinkedHashMap<String, Map<String, ? extends Object>>();
+    entries.put("recipient", Map.of("type", "string", "minLength", 1));
+    entries.put("delivery", Map.of("type", "string", "enum", List.of("pickup", "courier")));
+    entries.put("destination", Map.of("$ref", "#parcelDestination"));
+    entries.put("collectionPoint", Map.of("type", "string", "minLength", 1));
+
+    return Map.copyOf(entries);
+  }
+
+  private Map<String, Object> expectedPayloadSchema() {
+    var entries = new LinkedHashMap<String, Object>();
+    entries.put("$anchor", "parcelDestination");
+    entries.put("type", "object");
+    entries.put(
+        "properties",
+        Map.of(
+            "postalCode", Map.of("type", "string", "minLength", 1),
+            "countryCode", Map.of("type", "string", "pattern", "^[A-Z]{2}$")));
+    entries.put("required", List.of("postalCode", "countryCode"));
+    entries.put("additionalProperties", false);
+
+    return Map.copyOf(entries);
   }
 }

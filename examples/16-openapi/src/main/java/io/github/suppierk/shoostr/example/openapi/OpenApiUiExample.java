@@ -6,6 +6,8 @@ import io.github.suppierk.shoostr.openapi.OpenApi;
 import io.github.suppierk.shoostr.pac4j.Pac4j;
 import io.swagger.v3.oas.models.security.SecurityScheme;
 import java.util.Optional;
+import org.pac4j.core.context.CallContext;
+import org.pac4j.core.credentials.Credentials;
 import org.pac4j.core.credentials.UsernamePasswordCredentials;
 import org.pac4j.core.profile.CommonProfile;
 import org.pac4j.http.client.direct.DirectBasicAuthClient;
@@ -24,20 +26,7 @@ public final class OpenApiUiExample {
    */
   public static Shoostr application() {
     // These credentials exist only for the local example, not for production authentication.
-    var client =
-        new DirectBasicAuthClient(
-            (ignored, supplied) -> {
-              if (!(supplied instanceof UsernamePasswordCredentials credentials)
-                  || !"reader".equals(credentials.getUsername())
-                  || !"local-only".equals(credentials.getPassword())) {
-                return Optional.empty();
-              }
-
-              var profile = new CommonProfile();
-              profile.setId("reader");
-              credentials.setUserProfile(profile);
-              return Optional.of(credentials);
-            });
+    var client = authenticationClient();
     var authentication = new Pac4j(client, "Basic realm=\"docs\", charset=\"UTF-8\"");
     // Declaring a security scheme describes it; route authentication below enforces access.
     var docs =
@@ -46,9 +35,8 @@ public final class OpenApiUiExample {
                 BASIC_SECURITY_SCHEME,
                 new SecurityScheme().type(SecurityScheme.Type.HTTP).scheme(BASIC_SECURITY_SCHEME));
     var ui = docs.uiHandler("/docs/", "/openapi.json");
+
     return new Shoostr()
-        .authentication(authentication)
-        .extensions(docs)
         // Protect the specification and every local UI asset, not just the HTML entry point.
         .routes(
             routes ->
@@ -56,26 +44,56 @@ public final class OpenApiUiExample {
                     .get(
                         "/openapi.json",
                         docs.handler(),
-                        extensions -> extensions.with(authentication))
+                        lifecycle -> lifecycle.withExtension(authentication))
                     .path(
                         "/docs",
                         group -> group.get("/", ui).get("/{*asset}", ui),
-                        extensions -> {
-                          extensions.with(authentication);
+                        lifecycle -> {
+                          lifecycle.withExtension(authentication);
                           // UI resource endpoints are not operations in the generated API document.
-                          extensions.with(docs).hidden();
+                          lifecycle.withExtension(docs).hidden();
                         })
                     .get(
                         "/me",
                         (request, response) ->
                             response.text(request.principal().orElseThrow().getName()),
-                        extensions -> {
-                          extensions.with(authentication);
-                          extensions
-                              .with(docs)
+                        lifecycle -> {
+                          lifecycle.withExtension(authentication);
+                          lifecycle
+                              .withExtension(docs)
                               .summary("Read the authenticated identity")
                               .security(BASIC_SECURITY_SCHEME)
                               .response(200, "Identity", MediaType.TEXT_PLAIN);
                         }));
+  }
+
+  /**
+   * Creates the example's HTTP authentication client with its credential verifier.
+   *
+   * @return configured authentication client
+   */
+  private static DirectBasicAuthClient authenticationClient() {
+    return new DirectBasicAuthClient(OpenApiUiExample::authenticate);
+  }
+
+  /**
+   * Verifies the fixed demonstration credentials and attaches the accepted profile.
+   *
+   * @param context current pac4j exchange
+   * @param supplied extracted credentials
+   * @return accepted credentials, or empty when verification fails
+   */
+  private static Optional<Credentials> authenticate(CallContext context, Credentials supplied) {
+    if (!(supplied instanceof UsernamePasswordCredentials credentials)
+        || !"reader".equals(credentials.getUsername())
+        || !"local-only".equals(credentials.getPassword())) {
+      return Optional.empty();
+    }
+
+    var profile = new CommonProfile();
+    profile.setId("reader");
+    credentials.setUserProfile(profile);
+
+    return Optional.of(credentials);
   }
 }

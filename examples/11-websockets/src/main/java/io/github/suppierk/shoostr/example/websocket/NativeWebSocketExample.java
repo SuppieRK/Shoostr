@@ -1,5 +1,6 @@
 package io.github.suppierk.shoostr.example.websocket;
 
+import io.github.suppierk.shoostr.Options;
 import io.github.suppierk.shoostr.Shoostr;
 import io.github.suppierk.shoostr.http.HttpHeaders;
 import io.github.suppierk.shoostr.http.exceptions.BadRequestException;
@@ -22,8 +23,9 @@ public final class NativeWebSocketExample {
    * @return unstarted, caller-owned application
    */
   public static Shoostr application() {
-    return new Shoostr()
-        .http2()
+    var configuredOptions = options();
+
+    return new Shoostr(configuredOptions)
         .routes(
             routes ->
                 routes.websocket(
@@ -44,8 +46,21 @@ public final class NativeWebSocketExample {
                       }
 
                       upgrade.setAcceptedSubProtocol("chat.v2");
+
                       return new RoomListener(request.pathParam("room").orElseThrow() + ":");
                     }));
+  }
+
+  /**
+   * Configures the listener and resource policy used by this application.
+   *
+   * @return detached serving options
+   */
+  private static Options options() {
+    var configuredOptions = new Options();
+    configuredOptions.setHttp2(true);
+
+    return configuredOptions;
   }
 
   /** Per-connection listener that admits the next event after its outgoing write completes. */
@@ -71,9 +86,11 @@ public final class NativeWebSocketExample {
     @Override
     public void onWebSocketOpen(Session opened) {
       session = Optional.of(opened);
+
       opened.setMaxTextMessageSize(64);
       opened.setMaxBinaryMessageSize(64);
       opened.setMaxOutgoingFrames(2);
+
       // Native listeners must explicitly admit the first and every subsequent event.
       opened.demand();
     }
@@ -103,9 +120,12 @@ public final class NativeWebSocketExample {
       // Copy borrowed input before acknowledging it; the outgoing send can outlive this callback.
       var bytes = new byte[data.remaining()];
       data.get(bytes);
+
       receive.succeed();
+
       opened.sendBinary(
-          ByteBuffer.wrap(bytes), Callback.from(opened::demand, ignored2 -> opened.disconnect()));
+          ByteBuffer.wrap(bytes),
+          Callback.from(opened::demand, ignoredFailure -> opened.disconnect()));
     }
   }
 }

@@ -7,62 +7,11 @@ import { setTimeout as delay } from 'node:timers/promises';
 import test from 'node:test';
 
 // These are public launcher behaviors, independent of the Gradle inventory below.
-const probes = {
-  'hello-example': ['/hello', 'Hello, Shoostr!'],
-  'application-example': ['/echo', 'hello', { method: 'POST', body: 'hello' }],
-  'routing-example': ['/notes', 'notes'],
-  'request-example': ['/search/books?tag=java&tag=http', 'category=books\npath=books\nfirst=java\ntags=java|http\nsort=recent'],
-  'bodies-example': ['/text', 'hello', { method: 'POST', body: 'hello' }],
-  'responses-example': ['/message', 'café'],
-  'json-example': ['/users', '{"name":"Ada"}', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"name":"Ada"}' }, 201],
-  'errors-example': ['/input', 'Invalid input', {}, 400],
-  'resources-example': ['/download', 'name\nAda\nGrace\n'],
-  'lifecycle-example': ['/ready', 'ready'],
-  'extensions-example': ['/health', 'ok'],
-  'requests-example': ['/greetings/Ada', 'Hello, Ada!'],
-  'sse-example': ['/events', /data: starting\r?\n\r?\ndata: complete/],
-  'websocket-example': ['/', 'WebSocket endpoints: /echo, /rooms/{room}, /numbers'],
-  'exceptions-example': ['/app-failure', 'Application failure', {}, 500],
-  'json-errors-example': ['/users', '{"name":"Ada"}', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"name":"Ada"}' }, 201],
-  'authentication-example': ['/public', 'public'],
-  'static-streaming-example': ['/download', 'name\nAda\nGrace\n'],
-  'openapi-example': ['/health', 'healthy'],
-  'mcp-example': ['/health', 'healthy'],
-  'micrometer-example': ['/hello/Ada', 'Hello, Ada!'],
-  'opentelemetry-example': ['/hello/Ada', 'Hello, Ada!'],
-};
+const probes = behaviorProbes();
+
 const examples = [...readFileSync('settings.gradle', 'utf8').matchAll(
   /project\(':([^']+-example)'\)\.projectDir = file\('([^']+)'\)/g,
 )].map(([, project, directory]) => ({ project, directory }));
-
-function inventory() {
-  assert.deepEqual(examples.map(({ project }) => project).sort(), Object.keys(probes).sort());
-  assert.equal(new Set(examples.map(({ directory }) => directory)).size, examples.length);
-  for (const { project, directory } of examples) {
-    assert.ok(existsSync(`${directory}/Dockerfile`), project);
-    assert.ok(existsSync(`${directory}/README.md`), project);
-
-  }
-}
-
-function selectedExamples(files) {
-  const shared = /^(core|http|test|pac4j|micrometer|opentelemetry|openapi|mcp|buildSrc|config|gradle|\.github\/ci)\//;
-  const rootBuild = /^(build\.gradle|settings\.gradle|gradle\.properties|gradlew|gradlew\.bat|\.dockerignore|\.github\/workflows\/ci\.yml)$/;
-  if (files.some(file => shared.test(file) || rootBuild.test(file)
-    || (file.startsWith('examples/') && !examples.some(example => file.startsWith(example.directory + '/'))))) return examples;
-  return examples.filter(example => files.some(file => file.startsWith(example.directory + '/')));
-}
-
-function matrixExamples() {
-  if (process.env.GITHUB_EVENT_NAME !== 'pull_request') return examples;
-  const event = JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH, 'utf8'));
-  const base = event.pull_request.base.sha;
-  const head = event.pull_request.head.sha;
-  assert(/^[a-f0-9]{40}$/.test(base) && /^[a-f0-9]{40}$/.test(head), 'Invalid PR revisions');
-  const changed = spawnSync('git', ['diff', '--name-only', '--no-renames', '-z', `${base}...${head}`], { encoding: 'utf8' });
-  assert.equal(changed.status, 0, changed.stderr || 'Cannot determine changed files');
-  return selectedExamples(changed.stdout.split('\0').filter(Boolean));
-}
 
 if (process.argv.includes('--matrix')) {
   inventory();
@@ -93,14 +42,17 @@ if (process.argv.includes('--matrix')) {
     test('matrix output is JSON and empty or unknown live selections fail', () => {
       const matrix = spawnSync(process.execPath, [process.argv[1], '--matrix'], { encoding: 'utf8',
         env: { ...process.env, GITHUB_EVENT_NAME: 'push' } });
+
       assert.equal(matrix.status, 0, matrix.stderr);
       assert.equal(JSON.parse(matrix.stdout).include.length, examples.length);
+
       for (const selection of ['', 'not-an-example']) {
         const environment = { ...process.env, EXAMPLE: selection };
         delete environment.NODE_TEST_CONTEXT;
         const rejected = spawnSync(process.execPath, ['--test', process.argv[1]], {
           encoding: 'utf8', env: environment, timeout: 5000,
         });
+
         assert.equal(rejected.status, 1, rejected.stderr);
         assert.match(rejected.stdout + rejected.stderr, /Unknown EXAMPLE/);
       }
@@ -111,11 +63,14 @@ if (process.argv.includes('--matrix')) {
     const base = process.env.BASE_URL ?? 'http://127.0.0.1:8080';
     test(`${project} serves its documented behavior from the selected image`, { timeout: 100_000 }, async () => {
       assert.ok(Object.hasOwn(probes, project), `Unknown EXAMPLE: ${project}`);
+
       const [path, fixture, options = {}, status = 200] = probes[project];
       const expected = (project === 'resources-example' ? process.env.REPORT_CONTENT : undefined) ?? fixture;
       await ready(base);
       const response = await fetch(base + path, { ...options, signal: AbortSignal.timeout(10_000) });
+
       assert.equal(response.status, status);
+
       const body = await response.text();
       if (expected instanceof RegExp) assert.match(body, expected);
       else assert.equal(body, expected);
@@ -128,34 +83,42 @@ if (process.argv.includes('--matrix')) {
         const oversized = await fetch(base + path, {
           method: 'POST', body: 'x'.repeat(limit + 1), signal: AbortSignal.timeout(5000),
         });
+
         assert.equal(oversized.status, 413);
+
         await oversized.arrayBuffer();
       }
       if (project === 'responses-example') {
         const head = await fetch(base + '/message', { method: 'HEAD', signal: AbortSignal.timeout(5000) });
+
         assert.equal(head.status, 200);
         assert.equal(head.headers.get('content-length'), '5');
         assert.equal((await head.arrayBuffer()).byteLength, 0);
       }
       if (project === 'extensions-example') {
         const catalog = await fetch(base + '/catalog', { signal: AbortSignal.timeout(5000) });
+
         assert.equal(catalog.status, 200);
         assert.match(await catalog.text(), /GET \/api\/items\/\{id}/);
       }
       if (project === 'static-streaming-example') {
         const asset = await fetch(base + '/assets/greeting.txt', { signal: AbortSignal.timeout(5000) });
+
         assert.equal(asset.status, 200);
         assert.equal(await asset.text(), 'Hello from a classpath asset!\n');
       }
       if (project === 'authentication-example') {
         const denied = await fetch(base + '/private/me', { signal: AbortSignal.timeout(5000) });
+
         assert.equal(denied.status, 401);
         assert.match(denied.headers.get('www-authenticate'), /Basic/);
+
         await denied.arrayBuffer();
         const accepted = await fetch(base + '/private/me', {
           headers: { Authorization: 'Basic ' + Buffer.from('demo:local-only').toString('base64') },
           signal: AbortSignal.timeout(5000),
         });
+
         assert.equal(accepted.status, 200);
         assert.equal(await accepted.text(), 'demo');
       }
@@ -164,6 +127,7 @@ if (process.argv.includes('--matrix')) {
           headers: { Authorization: 'Basic ' + Buffer.from('demo:local-only').toString('base64') },
           signal: AbortSignal.timeout(5000),
         });
+
         assert.equal(spec.status, 200);
         assert.match((await spec.json()).openapi, /^3\.1\./);
       }
@@ -183,6 +147,65 @@ if (process.argv.includes('--matrix')) {
       }
     });
   }
+}
+
+function behaviorProbes() {
+  return {
+  'hello-example': ['/hello', 'Hello, Shoostr!'],
+  'application-example': ['/echo', 'hello', { method: 'POST', body: 'hello' }],
+  'routing-example': ['/notes', 'notes'],
+  'request-example': ['/search/books?tag=java&tag=http', 'category=books\npath=books\nfirst=java\ntags=java|http\nsort=recent'],
+  'bodies-example': ['/text', 'hello', { method: 'POST', body: 'hello' }],
+  'responses-example': ['/message', 'café'],
+  'json-example': ['/users', '{"name":"Ada"}', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"name":"Ada"}' }, 201],
+  'errors-example': ['/input', 'Invalid input', {}, 400],
+  'resources-example': ['/download', 'name\nAda\nGrace\n'],
+  'lifecycle-example': ['/ready', 'ready'],
+  'extensions-example': ['/health', 'ok'],
+  'requests-example': ['/greetings/Ada', 'Hello, Ada!'],
+  'sse-example': ['/events', /data: starting\r?\n\r?\ndata: complete/],
+  'websocket-example': ['/', 'WebSocket endpoints: /echo, /rooms/{room}, /numbers'],
+  'exceptions-example': ['/app-failure', 'Application failure', {}, 500],
+  'json-errors-example': ['/users', '{"name":"Ada"}', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"name":"Ada"}' }, 201],
+  'authentication-example': ['/public', 'public'],
+  'static-streaming-example': ['/download', 'name\nAda\nGrace\n'],
+  'openapi-example': ['/health', 'healthy'],
+  'mcp-example': ['/health', 'healthy'],
+  'micrometer-example': ['/hello/Ada', 'Hello, Ada!'],
+  'opentelemetry-example': ['/hello/Ada', 'Hello, Ada!'],
+};
+}
+
+function inventory() {
+  assert.deepEqual(examples.map(({ project }) => project).sort(), Object.keys(probes).sort());
+  assert.equal(new Set(examples.map(({ directory }) => directory)).size, examples.length);
+
+  for (const { project, directory } of examples) {
+    assert.ok(existsSync(`${directory}/Dockerfile`), project);
+    assert.ok(existsSync(`${directory}/README.md`), project);
+
+  }
+}
+
+function matrixExamples() {
+  if (process.env.GITHUB_EVENT_NAME !== 'pull_request') return examples;
+  const event = JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH, 'utf8'));
+  const base = event.pull_request.base.sha;
+  const head = event.pull_request.head.sha;
+  assert(/^[a-f0-9]{40}$/.test(base) && /^[a-f0-9]{40}$/.test(head), 'Invalid PR revisions');
+  const changed = spawnSync('git', ['diff', '--name-only', '--no-renames', '-z', `${base}...${head}`], { encoding: 'utf8' });
+
+  assert.equal(changed.status, 0, changed.stderr || 'Cannot determine changed files');
+
+  return selectedExamples(changed.stdout.split('\0').filter(Boolean));
+}
+
+function selectedExamples(files) {
+  const shared = /^(core|http|test|pac4j|micrometer|opentelemetry|openapi|mcp|build-logic|config|gradle|\.github\/ci)\//;
+  const rootBuild = /^(build\.gradle|settings\.gradle|gradle\.properties|gradlew|gradlew\.bat|\.dockerignore|\.github\/workflows\/ci\.yml)$/;
+  if (files.some(file => shared.test(file) || rootBuild.test(file)
+    || (file.startsWith('examples/') && !examples.some(example => file.startsWith(example.directory + '/'))))) return examples;
+  return examples.filter(example => files.some(file => file.startsWith(example.directory + '/')));
 }
 
 async function ready(base) {

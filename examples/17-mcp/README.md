@@ -11,7 +11,8 @@ docker compose -f examples/17-mcp/compose.yaml up --build -d
 
 Startup is asynchronous. Check diagnostics with `docker compose -f examples/17-mcp/compose.yaml logs -f app`.
 Open `http://127.0.0.1:8080/health`. Expect healthy; Inspector setup is below.
-Retry the request if the listener is not ready yet. Set `APP_PORT=8081` before the command if port 8080 is occupied, and use that port in requests.
+Retry the request if the listener is not ready yet. Set `APP_PORT=8081` before the command if port 8080 is occupied, and
+use that port in requests.
 Compose exposes the app on host loopback. These credentials and unauthenticated fixtures
 are for trusted local development. Direct Java runs use the default wildcard listener.
 
@@ -33,7 +34,9 @@ container validation is described in [CONTRIBUTING](../../CONTRIBUTING.md#exampl
 
 ## Recipe and direct-run notes
 
-Maintainer interoperability fixture. Consumer recipes cover [MCP catalogs](../../site/src/content/docs/mcp/server.mdx), [security](../../site/src/content/docs/mcp/security.mdx) and [client interactions](../../site/src/content/docs/mcp/interactions.mdx).
+Maintainer interoperability fixture. Consumer recipes
+cover [MCP catalogs](../../site/src/content/docs/mcp/server.mdx), [security](../../site/src/content/docs/mcp/security.mdx)
+and [client interactions](../../site/src/content/docs/mcp/interactions.mdx).
 
 `McpServerExample` supplies the consumer recipe's synchronous and asynchronous
 catalog factories, with real SDK client tests in `McpServerExampleTest`.
@@ -62,7 +65,8 @@ app unstarted for live tests. Pass a listening port to `application(int)` to con
 the native listener and local public origin.
 
 Configuration stays native: `Mcp.sync(security, transport -> McpServer.sync(transport)
-...build())`, then `app.extensions(mcp)` and `routes.path("/mcp", mcp::routes)`.
+...build())`, then mount it with `routes.path("/mcp", mcp::routes)`.
+Route selection establishes shared setup automatically.
 The app owns the native server; `mcp.server()` is borrowed management access, not an
 independently closeable resource. `McpExample` defines HTTP routes inline;
 `McpConfiguration` owns extension setup, and `CompatibilityFixtures` contains native
@@ -247,8 +251,8 @@ visible in reports, rather than adding a broad expected-failure baseline or a
 fake reconnection tool. Additional live SDK tests are required for session
 isolation, stream cleanup, subscriptions and bidirectional operations.
 
-Historical compatibility evidence: the local run on October 12, 2026 passed all 30 scored server scenarios
-(81 successful checks including unscored checks), plus the independently gated
+Historical compatibility evidence: the local run on October 12, 2026 passed all 30 scored server scenarios (81
+successful checks including unscored checks), plus the independently gated
 session lifecycle (3/3) and JSON Schema (8/8). The unscored polling scenario
 reported two warnings: no event-ID priming frame and no retry field. Its
 disconnect/resume check was not exercised; there is no fake `test_reconnection`

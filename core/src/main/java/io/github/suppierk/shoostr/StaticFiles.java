@@ -21,6 +21,7 @@ import java.time.Instant;
 import java.util.Map;
 import java.util.Objects;
 import java.util.function.Function;
+import java.util.function.Supplier;
 import org.eclipse.jetty.util.URIUtil;
 import org.eclipse.jetty.util.resource.Resource;
 import org.eclipse.jetty.util.resource.ResourceFactory;
@@ -34,12 +35,13 @@ import org.jspecify.annotations.Nullable;
  */
 final class StaticFiles implements Closeable {
   private static final String BINARY_CONTENT_TYPE = "application/octet-stream";
+
   private final String mount;
-  private @Nullable EndpointBehavior behavior;
   private final StaticOptions options;
   private final boolean filesystem;
   private final ResourceFactory.Closeable resourceFactory;
   private final Resource source;
+  private @Nullable EndpointBehavior behavior;
 
   /**
    * Validates a filesystem directory mount at registration time.
@@ -63,6 +65,22 @@ final class StaticFiles implements Closeable {
    */
   StaticFiles(String mount, Path directory, StaticOptions options) {
     this(mount, options, true, factory -> factory.newResource(realDirectory(directory)));
+  }
+
+  /**
+   * Creates a filesystem mount, acquiring a fresh factory after mount and options null checks.
+   *
+   * @param mount mounted request path
+   * @param directory source directory
+   * @param options welcome-file and SPA fallback options
+   * @param resources supplies one fresh native factory whose ownership passes to this mount
+   */
+  StaticFiles(
+      String mount,
+      Path directory,
+      StaticOptions options,
+      Supplier<ResourceFactory.Closeable> resources) {
+    this(mount, options, true, factory -> factory.newResource(realDirectory(directory)), resources);
   }
 
   /**
@@ -100,20 +118,38 @@ final class StaticFiles implements Closeable {
    * @param filesystem whether response selection opens a native filesystem channel
    * @param resolve factory operation that locates the root directory
    */
+  private StaticFiles(
+      String mount,
+      StaticOptions options,
+      boolean filesystem,
+      Function<ResourceFactory.Closeable, @Nullable Resource> resolve) {
+    this(mount, options, filesystem, resolve, ResourceFactory::closeable);
+  }
+
+  /**
+   * Acquires and validates a source, releasing its factory if resolution fails.
+   *
+   * @param mount mounted request path
+   * @param options welcome-file and fallback options
+   * @param filesystem whether response selection opens a native filesystem channel
+   * @param resolve factory operation that locates the root directory
+   * @param resources supplies one fresh owned native factory
+   */
   @SuppressWarnings(
       "java:S1181") // Release native resources even when initialization fails fatally.
   private StaticFiles(
       String mount,
       StaticOptions options,
       boolean filesystem,
-      Function<ResourceFactory.Closeable, @Nullable Resource> resolve) {
+      Function<ResourceFactory.Closeable, @Nullable Resource> resolve,
+      Supplier<ResourceFactory.Closeable> resources) {
     this.mount = Objects.requireNonNull(mount);
     this.options = Objects.requireNonNull(options);
     this.filesystem = filesystem;
-    resourceFactory = ResourceFactory.closeable();
+    this.resourceFactory = Objects.requireNonNull(resources.get());
 
     try {
-      var resolved = resolve.apply(resourceFactory);
+      final var resolved = resolve.apply(resourceFactory);
       if (resolved == null
           || !resolved.exists()
           || !resolved.isDirectory()
@@ -121,7 +157,7 @@ final class StaticFiles implements Closeable {
         throw new IllegalArgumentException("Static source must be a readable directory");
       }
 
-      source = resolved;
+      this.source = resolved;
     } catch (RuntimeException | Error failure) {
       try {
         resourceFactory.close();
@@ -131,6 +167,56 @@ final class StaticFiles implements Closeable {
 
       throw failure;
     }
+  }
+
+  /**
+   * Resolves a configured filesystem root before creating its native resource.
+   *
+   * @param directory configured publication directory
+   * @return canonical directory path
+   * @throws IllegalArgumentException if the directory cannot be resolved
+   */
+  private static Path realDirectory(Path directory) {
+    try {
+      return Objects.requireNonNull(directory).toRealPath();
+    } catch (IOException failure) {
+      throw new IllegalArgumentException("Static-file source cannot be resolved", failure);
+    }
+  }
+
+  /**
+   * Selects a deterministic MIME type while keeping unknown files safely binary.
+   *
+   * @param name selected resource filename
+   * @return detected or fallback media type
+   */
+  private static String contentType(String name) {
+    return Objects.requireNonNullElse(
+        URLConnection.guessContentTypeFromName(name), BINARY_CONTENT_TYPE);
+  }
+
+  /**
+   * Rejects traversal, empty segments and platform separators before resource resolution.
+   *
+   * @param path decoded relative path
+   * @return true when the path contains no traversal or platform separator
+   */
+  private static boolean safe(String path) {
+    if (path.indexOf(HttpCharacters.BACKSLASH) >= 0
+        || path.indexOf('\u0000') >= 0
+        || path.isEmpty()) {
+      return false;
+    }
+
+    for (final var segment : path.split(HttpCharacters.PATH_SEPARATOR_STRING, -1)) {
+      if (segment.isEmpty()
+          || HttpCharacters.DOT_STRING.equals(segment)
+          || HttpCharacters.PARENT_DIRECTORY.equals(segment)) {
+        return false;
+      }
+    }
+
+    return true;
   }
 
   /**
@@ -166,7 +252,8 @@ final class StaticFiles implements Closeable {
    * @return archive filesystem, or null for filesystem mounts and classpath directories
    */
   @Nullable FileSystem archiveFileSystem() {
-    var path = source.getPath();
+    final var path = source.getPath();
+
     return path == null || path.getFileSystem().equals(FileSystems.getDefault())
         ? null
         : path.getFileSystem();
@@ -190,7 +277,7 @@ final class StaticFiles implements Closeable {
       return null;
     }
 
-    var selected = select(path);
+    final var selected = select(path);
     if (selected == null) {
       return null;
     }
@@ -255,7 +342,7 @@ final class StaticFiles implements Closeable {
       return;
     }
 
-    var selected = filesystemResource(relative);
+    final var selected = filesystemResource(relative);
     if (selected == null) {
       throw new NotFoundException();
     }
@@ -283,7 +370,7 @@ final class StaticFiles implements Closeable {
    * @throws IOException if the resource cannot be staged
    */
   private void serveClasspath(String relative, Response response) throws IOException {
-    var resource = source.resolve(URIUtil.encodePath(relative));
+    final var resource = source.resolve(URIUtil.encodePath(relative));
     if (!resource.exists()
         || resource.isDirectory()
         || !resource.isReadable()
@@ -294,6 +381,42 @@ final class StaticFiles implements Closeable {
     response
         .setHeader(HttpHeaders.CACHE_CONTROL.value(), "no-cache")
         .resource(resource, contentType(resource.getFileName()));
+  }
+
+  /**
+   * Opens the selected pathname after admission and retains its channel for response completion.
+   * Length comes from the channel; modification time is sampled from the trusted pathname.
+   *
+   * @param relative validated relative resource path
+   * @return selected channel and metadata, or null when the resource is unavailable
+   * @throws IOException if opening or reading metadata fails
+   */
+  @SuppressWarnings("java:S1181") // Release the channel if metadata selection fails fatally.
+  private @Nullable Selected filesystemResource(String relative) throws IOException {
+    final var resource = source.resolve(URIUtil.encodePath(relative));
+    if (!readable(resource)) {
+      return null;
+    }
+
+    final var path = Objects.requireNonNull(resource.getPath());
+    final var channel =
+        Files.newByteChannel(path, StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS);
+
+    try {
+      return new Selected(
+          channel,
+          channel.size(),
+          Files.getLastModifiedTime(path).toInstant(),
+          resource.getFileName());
+    } catch (IOException | RuntimeException | Error failure) {
+      try {
+        channel.close();
+      } catch (IOException | RuntimeException | Error cleanup) {
+        failure.addSuppressed(cleanup);
+      }
+
+      throw failure;
+    }
   }
 
   /**
@@ -315,7 +438,7 @@ final class StaticFiles implements Closeable {
    * @return validated relative file path, or null when this mount cannot serve the request
    */
   private @Nullable String select(String path) {
-    var requested = relative(path);
+    final var requested = relative(path);
     if (requested == null) {
       return null;
     }
@@ -326,96 +449,21 @@ final class StaticFiles implements Closeable {
       return requested;
     }
 
-    String welcome = options.welcomeFile();
+    final var welcome = options.welcomeFile();
     if (welcome != null) {
-      String directory =
+      final var directory =
           requested.endsWith(HttpCharacters.PATH_SEPARATOR_STRING)
               ? requested.substring(0, requested.length() - 1)
               : requested;
-      String candidate =
+      final var candidate =
           directory.isEmpty() ? welcome : directory + HttpCharacters.PATH_SEPARATOR + welcome;
       if (available(candidate)) {
         return candidate;
       }
     }
 
-    String fallback = options.spaFallback();
+    final var fallback = options.spaFallback();
     return fallback != null && available(fallback) ? fallback : null;
-  }
-
-  /**
-   * Checks one validated relative file without opening a response-owned descriptor.
-   *
-   * @param relative validated file path
-   * @return true when a readable regular resource exists
-   */
-  private boolean available(String relative) {
-    if (!safe(relative)) {
-      return false;
-    }
-
-    try {
-      var resource = source.resolve(URIUtil.encodePath(relative));
-      return readable(resource);
-    } catch (InvalidPathException ignored) {
-      return false;
-    }
-  }
-
-  /**
-   * Checks a fresh resource without opening its contents. Alias checks reject symbolic links and
-   * noncanonical names; they are not atomic with a later open and require a trusted publication
-   * tree.
-   *
-   * @param resource freshly resolved child resource
-   * @return whether the selected resource is a readable file within this mount
-   */
-  private boolean readable(Resource resource) {
-    if (!resource.exists()
-        || resource.isDirectory()
-        || !resource.isReadable()
-        || resource.isAlias()
-        || !source.contains(resource)) {
-      return false;
-    }
-
-    var path = resource.getPath();
-    return !filesystem || (path != null && Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS));
-  }
-
-  /**
-   * Opens the selected pathname after admission and retains its channel for response completion.
-   * Length comes from the channel; modification time is sampled from the trusted pathname.
-   *
-   * @param relative validated relative resource path
-   * @return selected channel and metadata, or null when the resource is unavailable
-   * @throws IOException if opening or reading metadata fails
-   */
-  @SuppressWarnings("java:S1181") // Release the channel if metadata selection fails fatally.
-  private @Nullable Selected filesystemResource(String relative) throws IOException {
-    var resource = source.resolve(URIUtil.encodePath(relative));
-    if (!readable(resource)) {
-      return null;
-    }
-
-    var path = Objects.requireNonNull(resource.getPath());
-    var channel = Files.newByteChannel(path, StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS);
-
-    try {
-      return new Selected(
-          channel,
-          channel.size(),
-          Files.getLastModifiedTime(path).toInstant(),
-          resource.getFileName());
-    } catch (IOException | RuntimeException | Error failure) {
-      try {
-        channel.close();
-      } catch (IOException | RuntimeException | Error cleanup) {
-        failure.addSuppressed(cleanup);
-      }
-
-      throw failure;
-    }
   }
 
   /**
@@ -445,7 +493,7 @@ final class StaticFiles implements Closeable {
           URLDecoder.decode(
               encoded.replace(HttpCharacters.PLUS_SIGN_STRING, HttpCharacters.PERCENT_ENCODED_PLUS),
               StandardCharsets.UTF_8);
-    } catch (IllegalArgumentException ignored5) {
+    } catch (IllegalArgumentException ignoredFailure) {
       return null;
     }
 
@@ -476,53 +524,43 @@ final class StaticFiles implements Closeable {
   }
 
   /**
-   * Selects a deterministic MIME type while keeping unknown files safely binary.
+   * Checks one validated relative file without opening a response-owned descriptor.
    *
-   * @param name selected resource filename
-   * @return detected or fallback media type
+   * @param relative validated file path
+   * @return true when a readable regular resource exists
    */
-  private static String contentType(String name) {
-    return Objects.requireNonNullElse(
-        URLConnection.guessContentTypeFromName(name), BINARY_CONTENT_TYPE);
-  }
-
-  /**
-   * Resolves a configured filesystem root before creating its native resource.
-   *
-   * @param directory configured publication directory
-   * @return canonical directory path
-   * @throws IllegalArgumentException if the directory cannot be resolved
-   */
-  private static Path realDirectory(Path directory) {
-    try {
-      return Objects.requireNonNull(directory).toRealPath();
-    } catch (IOException failure) {
-      throw new IllegalArgumentException("Static-file source cannot be resolved", failure);
-    }
-  }
-
-  /**
-   * Rejects traversal, empty segments and platform separators before resource resolution.
-   *
-   * @param path decoded relative path
-   * @return true when the path contains no traversal or platform separator
-   */
-  private static boolean safe(String path) {
-    if (path.indexOf(HttpCharacters.BACKSLASH) >= 0
-        || path.indexOf('\u0000') >= 0
-        || path.isEmpty()) {
+  private boolean available(String relative) {
+    if (!safe(relative)) {
       return false;
     }
 
-    for (var segment : path.split(HttpCharacters.PATH_SEPARATOR_STRING, -1)) {
-      if (segment.isEmpty()
-          || HttpCharacters.DOT_STRING.equals(segment)
-          || HttpCharacters.PARENT_DIRECTORY.equals(segment)) {
-        return false;
-      }
+    try {
+      final var resource = source.resolve(URIUtil.encodePath(relative));
+      return readable(resource);
+    } catch (InvalidPathException ignored) {
+      return false;
+    }
+  }
+
+  /**
+   * Checks a fresh resource without opening its contents. Alias checks reject symbolic links and
+   * noncanonical names; they are not atomic with a later open and require a trusted publication
+   * tree.
+   *
+   * @param resource freshly resolved child resource
+   * @return whether the selected resource is a readable file within this mount
+   */
+  private boolean readable(Resource resource) {
+    if (!resource.exists()
+        || resource.isDirectory()
+        || !resource.isReadable()
+        || resource.isAlias()
+        || !source.contains(resource)) {
+      return false;
     }
 
-    return true;
+    final var path = resource.getPath();
+    return !filesystem || (path != null && Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS));
   }
 
   /** One open filesystem channel and its captured metadata. */

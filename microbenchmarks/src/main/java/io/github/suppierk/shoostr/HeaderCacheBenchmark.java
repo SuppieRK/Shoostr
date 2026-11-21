@@ -31,9 +31,14 @@ import org.openjdk.jmh.annotations.Warmup;
     jvmArgsAppend = {"-Xms256m", "-Xmx256m", "-XX:+UseG1GC"})
 @Threads(1)
 public class HeaderCacheBenchmark implements HttpParser.RequestHandler {
+  private final HttpParser parser;
+  private final ByteBuffer[] requests;
+
+  /** Header-cache capacity supplied to the parser. */
   @Param({"0", "128", "256", "512", "1024"})
   public int capacity;
 
+  /** Header value pattern used to exercise the parser cache. */
   @Param({
     "repeated",
     "varying",
@@ -46,17 +51,15 @@ public class HeaderCacheBenchmark implements HttpParser.RequestHandler {
   })
   public String headers;
 
-  private final HttpParser parser;
-  private final ByteBuffer[] requests;
   private int next;
   private int fields;
   private int messages;
 
   /** Initializes parser and wire storage before JMH configures the trial parameters. */
   public HeaderCacheBenchmark() {
-    headers = "repeated";
-    requests = new ByteBuffer[64];
-    parser = new HttpParser(this, 8192);
+    this.headers = "repeated";
+    this.requests = new ByteBuffer[64];
+    this.parser = new HttpParser(this, 8192);
   }
 
   /**
@@ -66,16 +69,7 @@ public class HeaderCacheBenchmark implements HttpParser.RequestHandler {
    */
   @Setup
   public void setup() {
-    int cookieBytes =
-        switch (headers) {
-          case "repeated", "varying", "large" -> 0;
-          case "cookie64" -> 64;
-          case "cookie192" -> 192;
-          case "cookie384" -> 384;
-          case "cookie768" -> 768;
-          case "cookie1536" -> 1536;
-          default -> throw new IllegalArgumentException("Unknown header fixture");
-        };
+    int cookieBytes = cookieBytes();
 
     for (int index = 0; index < requests.length; index++) {
       var authorization = "varying".equals(headers) ? Integer.toString(index) : "fixed";
@@ -98,6 +92,24 @@ public class HeaderCacheBenchmark implements HttpParser.RequestHandler {
   }
 
   /**
+   * Selects the cookie-header size for the configured fixture.
+   *
+   * @return cookie byte count, or zero for a non-cookie fixture
+   * @throws IllegalArgumentException if the configured benchmark scenario is unknown
+   */
+  private int cookieBytes() {
+    return switch (headers) {
+      case "repeated", "varying", "large" -> 0;
+      case "cookie64" -> 64;
+      case "cookie192" -> 192;
+      case "cookie384" -> 384;
+      case "cookie768" -> 768;
+      case "cookie1536" -> 1536;
+      default -> throw new IllegalArgumentException("Unknown header fixture");
+    };
+  }
+
+  /**
    * Parses a request on a persistent connection.
    *
    * @return number of delivered headers and completed messages
@@ -105,6 +117,7 @@ public class HeaderCacheBenchmark implements HttpParser.RequestHandler {
   @Benchmark
   public int reusedConnection() {
     parser.reset();
+
     return parse(parser);
   }
 
@@ -116,8 +129,11 @@ public class HeaderCacheBenchmark implements HttpParser.RequestHandler {
   @Benchmark
   public int newConnection() {
     var fresh = newParser();
+
     parse(fresh);
+
     fresh.reset();
+
     return parse(fresh);
   }
 
@@ -129,6 +145,7 @@ public class HeaderCacheBenchmark implements HttpParser.RequestHandler {
   private HttpParser newParser() {
     var created = new HttpParser(this, 8192);
     created.setHeaderCacheSize(capacity);
+
     return created;
   }
 
@@ -142,9 +159,12 @@ public class HeaderCacheBenchmark implements HttpParser.RequestHandler {
   private int parse(HttpParser selected) {
     fields = 0;
     messages = 0;
+
     var request = requests[next++ & 63];
     request.clear();
+
     selected.parseNext(request);
+
     if (request.hasRemaining() || !selected.isComplete()) {
       throw new IllegalStateException("Parser did not consume the complete fixture");
     }
@@ -178,6 +198,7 @@ public class HeaderCacheBenchmark implements HttpParser.RequestHandler {
   @Override
   public boolean messageComplete() {
     messages++;
+
     return true;
   }
 

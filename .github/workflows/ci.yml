@@ -77,6 +77,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
           gradle_args=(ciBuild :mcp-example:conformanceTest --console=plain)
           if [[ "$TRUSTED_ANALYSIS" == true ]]; then
             test -n "$SONAR_TOKEN"
@@ -87,7 +88,9 @@ jobs:
               gradle_args+=(-Dsonar.branch.name="$GITHUB_REF_NAME")
             fi
           fi
+
           ./gradlew "${gradle_args[@]}"
+
           if [[ "$TRUSTED_ANALYSIS" == true ]]; then
             node .github/ci/sonar-gate.mjs
           fi
@@ -202,6 +205,7 @@ jobs:
           set -euo pipefail
           compose=(docker compose -p shoostr-example-ci -f "$EXAMPLE_DIRECTORY/compose.yaml")
           mkdir -p build/reports/example-containers
+
           cleanup() {
             local result=0 containers='' container=''
             containers=$("${compose[@]}" ps -a -q) || result=1
@@ -221,11 +225,13 @@ jobs:
             docker volume rm shoostr-report-fixture 2>/dev/null || true
             return "$result"
           }
+
           mode=jib
           trap cleanup EXIT
           if [[ "$EXAMPLE" != micrometer-example && "$EXAMPLE" != opentelemetry-example ]]; then
             "${compose[@]}" pull --ignore-buildable
           fi
+
           for mode in jib distribution; do
             if [[ "$mode" == distribution ]]; then
               "${compose[@]}" build app

@@ -7,6 +7,7 @@ import io.github.suppierk.shoostr.Shoostr;
 import io.github.suppierk.shoostr.testing.TestServer;
 import io.modelcontextprotocol.common.McpTransportContext;
 import io.modelcontextprotocol.server.McpServer;
+import java.io.IOException;
 import java.io.InputStream;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
@@ -29,71 +30,55 @@ class McpSessionDeletionTest {
         new McpHttpSecurity(
             Set.of(),
             ignored -> new McpIdentity("public", McpTransportContext.EMPTY, null),
-            (ignored2, ignored3) -> {});
+            (ignoredMcpIdentity, ignoredJsonRpcMessage) -> {});
     var mcp = Mcp.sync(security, transport -> McpServer.sync(transport).build());
     var app = new Shoostr();
-    app.extensions(mcp).routes(routes -> routes.path("/mcp", mcp::routes));
-    app.beforeResponseFlush(
-        (request, ignored4) -> {
-          if (request.header("X-Hold-Flush").isPresent()) {
-            opening.countDown();
-            if (!release.await(5, TimeUnit.SECONDS)) {
-              throw new IllegalStateException("test flush was not released");
-            }
-          }
-        });
+    app.routes(routes -> routes.path("/mcp", mcp::routes));
+    app.beforeResponseFlush((request, ignoredResponse) -> {
+      if (request.header("X-Hold-Flush").isPresent()) {
+        opening.countDown();
+        if (!release.await(5, TimeUnit.SECONDS)) {
+          throw new IllegalStateException("test flush was not released");
+        }
+      }
+    });
 
     try (var workers = Executors.newVirtualThreadPerTaskExecutor();
         var test = TestServer.start(app)) {
       var initialized =
-          test.send(
-              request ->
-                  request
-                      .path("/mcp")
-                      .method("POST")
-                      .header("Content-Type", "application/json")
-                      .header("Accept", "application/json, text/event-stream")
-                      .body(
-                          """
-              {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
-                "protocolVersion":"2025-11-25","capabilities":{},
-                "clientInfo":{"name":"delete-race-fixture","version":"1.0"}}}
-              """
-                              .getBytes(StandardCharsets.UTF_8)));
+          sendInitializedRequestForDeletionEndsListeningRequestsAdmittedBeforeTheirFirstFlush(test);
       var sessionId = initialized.headers().firstValue("Mcp-Session-Id").orElseThrow();
       var responses = new ArrayList<Future<HttpResponse<InputStream>>>();
       for (int stream = 0; stream < 2; stream++) {
         responses.add(
-            workers.submit(
-                () ->
-                    test.send(
-                        request ->
-                            request
-                                .path("/mcp")
-                                .header("Accept", "text/event-stream")
-                                .header("Mcp-Session-Id", sessionId)
-                                .header("MCP-Protocol-Version", "2025-11-25")
-                                .header("X-Hold-Flush", "true"),
-                        HttpResponse.BodyHandlers.ofInputStream())));
+            workers.submit(() ->
+                test.send(
+                    request ->
+                        request
+                            .path("/mcp")
+                            .header("Accept", "text/event-stream")
+                            .header("Mcp-Session-Id", sessionId)
+                            .header("MCP-Protocol-Version", "2025-11-25")
+                            .header("X-Hold-Flush", "true"),
+                    HttpResponse.BodyHandlers.ofInputStream())));
       }
 
       try {
         assertTrue(opening.await(5, TimeUnit.SECONDS));
+
         var deleted =
-            test.send(
-                request ->
-                    request
-                        .path("/mcp")
-                        .method("DELETE")
-                        .header("Mcp-Session-Id", sessionId)
-                        .header("MCP-Protocol-Version", "2025-11-25"));
+            sendDeletedRequestForDeletionEndsListeningRequestsAdmittedBeforeTheirFirstFlush(
+                test, sessionId);
+
         assertEquals(200, deleted.statusCode());
+
         release.countDown();
         for (var response : responses) {
           var listening = response.get(5, TimeUnit.SECONDS);
 
           try (var body = listening.body()) {
             assertEquals(200, listening.statusCode());
+
             workers.submit(body::readAllBytes).get(3, TimeUnit.SECONDS);
           }
         }
@@ -103,75 +88,125 @@ class McpSessionDeletionTest {
     }
   }
 
+  private HttpResponse<byte[]>
+      sendInitializedRequestForDeletionEndsListeningRequestsAdmittedBeforeTheirFirstFlush(
+          TestServer test) throws IOException, InterruptedException {
+    return test.send(request ->
+        request
+            .path("/mcp")
+            .method("POST")
+            .header("Content-Type", "application/json")
+            .header("Accept", "application/json, text/event-stream")
+            .body(
+                """
+                {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+                  "protocolVersion":"2025-11-25","capabilities":{},
+                  "clientInfo":{"name":"delete-race-fixture","version":"1.0"}}}
+                """
+                    .getBytes(StandardCharsets.UTF_8)));
+  }
+
+  private HttpResponse<byte[]>
+      sendDeletedRequestForDeletionEndsListeningRequestsAdmittedBeforeTheirFirstFlush(
+          TestServer test, String sessionId) throws IOException, InterruptedException {
+    return test.send(request ->
+        request
+            .path("/mcp")
+            .method("DELETE")
+            .header("Mcp-Session-Id", sessionId)
+            .header("MCP-Protocol-Version", "2025-11-25"));
+  }
+
   @Test
   @Timeout(15)
   void deletionEndsEveryListeningStreamInTheSession() throws Exception {
     var security =
         new McpHttpSecurity(
             Set.of(),
-            ignored5 -> new McpIdentity("public", McpTransportContext.EMPTY, null),
-            (ignored6, ignored7) -> {});
+            ignoredRequest -> new McpIdentity("public", McpTransportContext.EMPTY, null),
+            (ignoredMcpIdentity, ignoredJsonRpcMessage) -> {});
     var mcp = Mcp.sync(security, transport -> McpServer.sync(transport).build());
     var app = new Shoostr();
-    app.extensions(mcp).routes(routes -> routes.path("/mcp", mcp::routes));
+    app.routes(routes -> routes.path("/mcp", mcp::routes));
 
     try (var workers = Executors.newVirtualThreadPerTaskExecutor();
         var test = TestServer.start(app)) {
-      var initialized =
-          test.send(
-              request ->
-                  request
-                      .path("/mcp")
-                      .method("POST")
-                      .header("Content-Type", "application/json")
-                      .header("Accept", "application/json, text/event-stream")
-                      .body(
-                          """
-              {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
-                "protocolVersion":"2025-11-25","capabilities":{},
-                "clientInfo":{"name":"delete-fixture","version":"1.0"}}}
-              """
-                              .getBytes(StandardCharsets.UTF_8)));
+      var initialized = sendInitializedRequestForDeletionEndsEveryListeningStreamInTheSession(test);
       var sessionId = initialized.headers().firstValue("Mcp-Session-Id").orElseThrow();
-      var first =
-          test.send(
-              request ->
-                  request
-                      .path("/mcp")
-                      .header("Accept", "text/event-stream")
-                      .header("Mcp-Session-Id", sessionId)
-                      .header("MCP-Protocol-Version", "2025-11-25"),
-              HttpResponse.BodyHandlers.ofInputStream());
+      var first = sendFirstRequestForDeletionEndsEveryListeningStreamInTheSession(test, sessionId);
 
       try (var firstBody = first.body()) {
         var second =
-            test.send(
-                request ->
-                    request
-                        .path("/mcp")
-                        .header("Accept", "text/event-stream")
-                        .header("Mcp-Session-Id", sessionId)
-                        .header("MCP-Protocol-Version", "2025-11-25"),
-                HttpResponse.BodyHandlers.ofInputStream());
+            sendSecondRequestForDeletionEndsEveryListeningStreamInTheSession(test, sessionId);
 
         try (var secondBody = second.body()) {
           assertEquals(200, first.statusCode());
           assertEquals(200, second.statusCode());
+
           var firstEnded = workers.submit(firstBody::readAllBytes);
           var secondEnded = workers.submit(secondBody::readAllBytes);
           var deleted =
-              test.send(
-                  request ->
-                      request
-                          .path("/mcp")
-                          .method("DELETE")
-                          .header("Mcp-Session-Id", sessionId)
-                          .header("MCP-Protocol-Version", "2025-11-25"));
+              sendDeletedRequestForDeletionEndsEveryListeningStreamInTheSession(test, sessionId);
+
           assertEquals(200, deleted.statusCode());
+
           firstEnded.get(3, TimeUnit.SECONDS);
           secondEnded.get(3, TimeUnit.SECONDS);
         }
       }
     }
+  }
+
+  private HttpResponse<byte[]>
+      sendInitializedRequestForDeletionEndsEveryListeningStreamInTheSession(TestServer test)
+          throws IOException, InterruptedException {
+    return test.send(request ->
+        request
+            .path("/mcp")
+            .method("POST")
+            .header("Content-Type", "application/json")
+            .header("Accept", "application/json, text/event-stream")
+            .body(
+                """
+                {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+                  "protocolVersion":"2025-11-25","capabilities":{},
+                  "clientInfo":{"name":"delete-fixture","version":"1.0"}}}
+                """
+                    .getBytes(StandardCharsets.UTF_8)));
+  }
+
+  private HttpResponse<InputStream> sendFirstRequestForDeletionEndsEveryListeningStreamInTheSession(
+      TestServer test, String sessionId) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/mcp")
+                .header("Accept", "text/event-stream")
+                .header("Mcp-Session-Id", sessionId)
+                .header("MCP-Protocol-Version", "2025-11-25"),
+        HttpResponse.BodyHandlers.ofInputStream());
+  }
+
+  private HttpResponse<InputStream>
+      sendSecondRequestForDeletionEndsEveryListeningStreamInTheSession(
+          TestServer test, String sessionId) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/mcp")
+                .header("Accept", "text/event-stream")
+                .header("Mcp-Session-Id", sessionId)
+                .header("MCP-Protocol-Version", "2025-11-25"),
+        HttpResponse.BodyHandlers.ofInputStream());
+  }
+
+  private HttpResponse<byte[]> sendDeletedRequestForDeletionEndsEveryListeningStreamInTheSession(
+      TestServer test, String sessionId) throws IOException, InterruptedException {
+    return test.send(request ->
+        request
+            .path("/mcp")
+            .method("DELETE")
+            .header("Mcp-Session-Id", sessionId)
+            .header("MCP-Protocol-Version", "2025-11-25"));
   }
 }

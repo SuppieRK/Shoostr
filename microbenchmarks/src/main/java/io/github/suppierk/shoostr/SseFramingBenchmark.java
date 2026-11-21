@@ -1,5 +1,6 @@
 package io.github.suppierk.shoostr;
 
+import io.github.suppierk.shoostr.http.HttpCharacters;
 import java.io.IOException;
 import java.lang.reflect.Proxy;
 import java.nio.ByteBuffer;
@@ -32,12 +33,15 @@ import org.openjdk.jmh.annotations.Warmup;
     jvmArgsAppend = {"-Xms512m", "-Xmx512m", "-XX:+UseG1GC"})
 @Threads(1)
 public class SseFramingBenchmark {
+  /** Number of bytes in the prepared event payload. */
   @Param({"128", "65536"})
   public int payloadBytes;
 
+  /** Whether the payload spans multiple lines. */
   @Param({"single", "multiline"})
   public String lineShape;
 
+  /** Whether the event carries data or metadata. */
   @Param({"data", "metadata"})
   public String eventShape;
 
@@ -51,10 +55,14 @@ public class SseFramingBenchmark {
   private int checksum;
   private int writes;
 
+  /** Creates a benchmark state for JMH. */
+  public SseFramingBenchmark() {}
+
   /** Prepares payloads and a callback-completing transport outside timed work. */
   @Setup
   public void setupTrial() {
-    options = Options.defaults();
+    options = new Options();
+
     payload =
         "multiline".equals(lineShape)
             ? "x".repeat(payloadBytes / 2) + "\n" + "x".repeat(payloadBytes - payloadBytes / 2 - 1)
@@ -70,20 +78,21 @@ public class SseFramingBenchmark {
             Proxy.newProxyInstance(
                 SseFramingBenchmark.class.getClassLoader(),
                 new Class<?>[] {Request.class},
-                (ignored, method, ignored2) ->
+                (ignored, method, ignoredObjectValues) ->
                     switch (method.getName()) {
                       case "getMethod" -> "GET";
                       case "getHeaders" -> HttpFields.EMPTY;
                       case "addHttpStreamWrapper" -> null;
                       default -> throw new UnsupportedOperationException(method.getName());
                     });
+
     headers = HttpFields.build();
     delegate =
         (org.eclipse.jetty.server.Response)
             Proxy.newProxyInstance(
                 SseFramingBenchmark.class.getClassLoader(),
                 new Class<?>[] {org.eclipse.jetty.server.Response.class},
-                (ignored3, method, arguments) ->
+                (ignoredObject, method, arguments) ->
                     switch (method.getName()) {
                       case "getStatus" -> 200;
                       case "getHeaders" -> headers;
@@ -93,8 +102,12 @@ public class SseFramingBenchmark {
                         var content = (ByteBuffer) arguments[1];
                         bytesWritten += content.remaining();
                         if (content.hasRemaining()) {
-                          checksum += content.get(content.position()) & 0xff;
-                          checksum += content.get(content.limit() - 1) & 0xff;
+                          checksum +=
+                              content.get(content.position())
+                                  & HttpCharacters.MAX_UNSIGNED_BYTE_VALUE;
+                          checksum +=
+                              content.get(content.limit() - 1)
+                                  & HttpCharacters.MAX_UNSIGNED_BYTE_VALUE;
                         }
 
                         ((Callback) arguments[2]).succeeded();
@@ -114,6 +127,7 @@ public class SseFramingBenchmark {
   public int send() throws IOException {
     var response = freshResponse();
     var stream = response.startEventStream();
+
     if ("data".equals(eventShape)) {
       stream.send(payload);
     } else {
@@ -121,6 +135,7 @@ public class SseFramingBenchmark {
     }
 
     response.complete();
+
     return bytesWritten + checksum;
   }
 
@@ -134,6 +149,7 @@ public class SseFramingBenchmark {
     checksum = 0;
     writes = 0;
     headers.clear();
+
     return io.github.suppierk.shoostr.Request.create(
             nativeRequest, delegate, options, Callback.NOOP)
         .response();

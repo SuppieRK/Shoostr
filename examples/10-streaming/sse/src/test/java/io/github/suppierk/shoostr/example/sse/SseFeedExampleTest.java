@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.suppierk.shoostr.testing.TestServer;
+import java.io.IOException;
 import java.net.http.HttpResponse;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -12,11 +13,13 @@ import org.junit.jupiter.params.provider.ValueSource;
 class SseFeedExampleTest {
   @Test
   void sendsDataCommentsHeartbeatAndNamedEventFieldsAsCompleteFrames() throws Exception {
+
     try (var test = TestServer.start(SseFeedExample.application())) {
       var response =
           test.send(
               request -> request.path("/events").header("Accept", "text/event-stream"),
               HttpResponse.BodyHandlers.ofString());
+
       assertEquals(200, response.statusCode());
       assertEquals(
           "text/event-stream; charset=utf-8",
@@ -46,15 +49,10 @@ class SseFeedExampleTest {
 
   @Test
   void resumesAfterTheLastEventIdSentByTheClient() throws Exception {
+
     try (var test = TestServer.start(SseFeedExample.application())) {
-      var response =
-          test.send(
-              request ->
-                  request
-                      .path("/replay")
-                      .header("Last-Event-ID", "1")
-                      .header("Accept", "text/event-stream"),
-              HttpResponse.BodyHandlers.ofString());
+      var response = sendResponseForResumesAfterTheLastEventIdSentByTheClient(test);
+
       assertEquals(200, response.statusCode());
       assertEquals(
           """
@@ -71,11 +69,24 @@ class SseFeedExampleTest {
     }
   }
 
+  private HttpResponse<String> sendResponseForResumesAfterTheLastEventIdSentByTheClient(
+      TestServer test) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/replay")
+                .header("Last-Event-ID", "1")
+                .header("Accept", "text/event-stream"),
+        HttpResponse.BodyHandlers.ofString());
+  }
+
   @Test
   void sendsTheWholeReplayFeedWhenNoCursorWasSupplied() throws Exception {
+
     try (var test = TestServer.start(SseFeedExample.application())) {
       var response =
           test.send(request -> request.path("/replay"), HttpResponse.BodyHandlers.ofString());
+
       assertEquals(200, response.statusCode());
       assertEquals(
           """
@@ -97,9 +108,11 @@ class SseFeedExampleTest {
   }
 
   @Test
-  void returnsNoContentWithoutStartingAStreamAfterTheFinalEntry() throws Exception {
+  void returnsNoContentWithoutStartingStreamAfterTheFinalEntry() throws Exception {
+
     try (var test = TestServer.start(SseFeedExample.application())) {
       var response = test.send(request -> request.path("/replay").header("Last-Event-ID", "3"));
+
       assertEquals(204, response.statusCode());
       assertEquals(0, response.body().length);
       assertTrue(response.headers().firstValue("Content-Type").isEmpty());
@@ -109,11 +122,13 @@ class SseFeedExampleTest {
   @ParameterizedTest
   @ValueSource(strings = {"abc", "-1", "4", "2147483648", ""})
   void rejectsInvalidReplayCursorsBeforeCommittingAnEventStream(String cursor) throws Exception {
+
     try (var test = TestServer.start(SseFeedExample.application())) {
       var response =
           test.send(
               request -> request.path("/replay").header("Last-Event-ID", cursor),
               HttpResponse.BodyHandlers.ofString());
+
       assertEquals(400, response.statusCode());
       assertEquals("Bad Request", response.body());
       assertEquals(

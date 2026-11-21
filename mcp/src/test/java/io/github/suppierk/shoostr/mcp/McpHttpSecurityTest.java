@@ -28,7 +28,8 @@ class McpHttpSecurityTest {
     Set<String> origins = Set.of();
     Function<Request, McpIdentity> identity =
         ignored -> new McpIdentity("public", McpTransportContext.EMPTY, null);
-    BiConsumer<McpIdentity, McpSchema.JSONRPCMessage> authorize = (ignored2, ignored3) -> {};
+    BiConsumer<McpIdentity, McpSchema.JSONRPCMessage> authorize =
+        (ignoredMcpIdentity, ignoredJsonRpcMessage) -> {};
     var uri = URI.create(metadata);
 
     assertThrows(

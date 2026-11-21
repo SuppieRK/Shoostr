@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.suppierk.shoostr.testing.TestServer;
+import java.io.Closeable;
 import java.io.IOException;
 import java.net.http.HttpResponse;
 import java.util.ArrayList;
@@ -22,6 +23,63 @@ import org.junit.jupiter.params.provider.ValueSource;
 class ObservationHandoffTest {
   @ParameterizedTest
   @ValueSource(booleans = {false, true})
+  void restoresWorkerInterruptionBeforeClosingRemainingAttachedScopes(boolean virtualApplication)
+      throws Exception {
+    var interrupted = new AtomicBoolean();
+    var completions = new AtomicInteger();
+    var finished = new CompletableFuture<Void>();
+
+    try (var workers = Executors.newSingleThreadExecutor()) {
+      var app = withExecutionMode(new Options(), virtualApplication);
+
+      try (Closeable appCleanup = app::close) {
+        app.observe(ignored -> interruptingScopeObservation(interrupted, completions, false));
+        app.observe(ignored -> interruptingScopeObservation(interrupted, completions, true));
+        app.afterRequest(ignored -> finished.complete(null));
+        app.routes().get("/interrupt", workers, (request, response) -> response.text("ok"));
+
+        try (var test = TestServer.start(app)) {
+          assertEquals(200, test.send(request -> request.path("/interrupt")).statusCode());
+          finished.get(5, TimeUnit.SECONDS);
+
+          assertTrue(interrupted.get());
+          assertEquals(2, completions.get());
+        }
+      }
+    }
+  }
+
+  private RequestObservation interruptingScopeObservation(
+      AtomicBoolean interrupted, AtomicInteger completions, boolean interrupts) {
+    return new RequestObservation() {
+      @Override
+      public AutoCloseable attach() {
+        return () -> {
+          if (interrupts) {
+            throw new InterruptedException("attached scope interrupted");
+          }
+
+          interrupted.set(Thread.interrupted());
+        };
+      }
+
+      @Override
+      public void complete(RequestOutcome outcome) {
+        completions.incrementAndGet();
+      }
+    };
+  }
+
+  private static Shoostr withExecutionMode(Options options, boolean virtualApplication) {
+    options.setVirtualThreads(virtualApplication);
+
+    return new Shoostr(options)
+        .onRequestHeaders((request, response) ->
+            assertEquals(virtualApplication, Thread.currentThread().isVirtual()));
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
   void restoresNestedObservationScopesToPreviousWorkerContext(boolean virtualApplication)
       throws Exception {
     var context = new ThreadLocal<String>();
@@ -31,53 +89,59 @@ class ObservationHandoffTest {
     var workers = Executors.newFixedThreadPool(1);
     workers.submit(() -> context.set("worker-base")).get(5, TimeUnit.SECONDS);
 
-    try (workers;
-        var app = withExecutionMode(new Shoostr(), virtualApplication)) {
-      for (var value : List.of("alpha", "beta")) {
-        app.observe(
-            ignored -> {
-              var original = context.get();
-              context.set(value);
-              return new RequestObservation() {
-                @Override
-                public AutoCloseable attach() {
-                  var previous = context.get();
-                  events.add(value);
-                  context.set(value);
-                  return () -> {
-                    context.set(previous);
-                    events.add("/" + value);
-                  };
-                }
+    try (workers) {
+      var app = withExecutionMode(new Options(), virtualApplication);
 
-                @Override
-                public void close() {
-                  context.set(original);
-                }
+      try (Closeable appCleanup = app::close) {
+        for (var value : List.of("alpha", "beta")) {
+          app.observe(ignored -> {
+            var original = context.get();
+            context.set(value);
 
-                @Override
-                public void complete(RequestOutcome outcome) {
-                  completions.incrementAndGet();
-                }
-              };
-            });
-      }
-      app.afterRequest(ignored2 -> finished.complete(null));
-      app.routes()
-          .get(
-              "/nested",
-              workers,
-              (ignored3, response) -> response.text(Objects.requireNonNull(context.get())));
+            return new RequestObservation() {
+              @Override
+              public AutoCloseable attach() {
+                var previous = context.get();
+                events.add(value);
+                context.set(value);
 
-      try (var test = TestServer.start(app)) {
-        assertEquals(
-            "beta",
-            test.send(request -> request.path("/nested"), HttpResponse.BodyHandlers.ofString())
-                .body());
-        finished.get(5, TimeUnit.SECONDS);
-        assertEquals(List.of("alpha", "beta", "/beta", "/alpha"), events);
-        assertEquals("worker-base", workers.submit(context::get).get(5, TimeUnit.SECONDS));
-        assertEquals(2, completions.get());
+                return () -> {
+                  context.set(previous);
+                  events.add("/" + value);
+                };
+              }
+
+              @Override
+              public void close() {
+                context.set(original);
+              }
+
+              @Override
+              public void complete(RequestOutcome outcome) {
+                completions.incrementAndGet();
+              }
+            };
+          });
+        }
+        app.afterRequest(ignoredRequestOutcome -> finished.complete(null));
+        app.routes()
+            .get(
+                "/nested",
+                workers,
+                (ignoredRequest, response) -> response.text(Objects.requireNonNull(context.get())));
+
+        try (var test = TestServer.start(app)) {
+          assertEquals(
+              "beta",
+              test.send(request -> request.path("/nested"), HttpResponse.BodyHandlers.ofString())
+                  .body());
+
+          finished.get(5, TimeUnit.SECONDS);
+
+          assertEquals(List.of("alpha", "beta", "/beta", "/alpha"), events);
+          assertEquals("worker-base", workers.submit(context::get).get(5, TimeUnit.SECONDS));
+          assertEquals(2, completions.get());
+        }
       }
     }
   }
@@ -92,63 +156,66 @@ class ObservationHandoffTest {
     var laterAttached = new AtomicBoolean();
     var workers = Executors.newFixedThreadPool(1);
 
-    try (workers;
-        var app = withExecutionMode(new Shoostr(), virtualApplication)) {
-      app.observe(
-          ignored4 ->
-              new RequestObservation() {
-                @Override
-                public AutoCloseable attach() {
-                  return () -> laterClosed.set(true);
+    try (workers) {
+      var app = withExecutionMode(new Options(), virtualApplication);
+
+      try (Closeable appCleanup1 = app::close) {
+        app.observe(ignoredRequest ->
+            new RequestObservation() {
+              @Override
+              public AutoCloseable attach() {
+                return () -> laterClosed.set(true);
+              }
+
+              @Override
+              public void complete(RequestOutcome outcome) {
+                completions.incrementAndGet();
+              }
+            });
+        app.observe(ignoredRequest ->
+            new RequestObservation() {
+              @Override
+              public AutoCloseable attach() {
+                if ("attach".equals(failurePhase)) {
+                  throw new IllegalStateException("attach failed");
                 }
 
-                @Override
-                public void complete(RequestOutcome outcome) {
-                  completions.incrementAndGet();
-                }
-              });
-      app.observe(
-          ignored5 ->
-              new RequestObservation() {
-                @Override
-                public AutoCloseable attach() {
-                  if ("attach".equals(failurePhase)) {
-                    throw new IllegalStateException("attach failed");
-                  }
+                return () -> {
+                  throw new IOException("close failed");
+                };
+              }
 
-                  return () -> {
-                    throw new IOException("close failed");
-                  };
-                }
+              @Override
+              public void complete(RequestOutcome outcome) {
+                completions.incrementAndGet();
+              }
+            });
+        app.observe(ignoredRequest ->
+            new RequestObservation() {
+              @Override
+              public AutoCloseable attach() {
+                laterAttached.set(true);
 
-                @Override
-                public void complete(RequestOutcome outcome) {
-                  completions.incrementAndGet();
-                }
-              });
-      app.observe(
-          ignored6 ->
-              new RequestObservation() {
-                @Override
-                public AutoCloseable attach() {
-                  laterAttached.set(true);
-                  return () -> {};
-                }
+                return () -> {};
+              }
 
-                @Override
-                public void complete(RequestOutcome outcome) {
-                  completions.incrementAndGet();
-                }
-              });
-      app.afterRequest(ignored7 -> finished.complete(null));
-      app.routes().get("/failure", workers, (ignored8, response) -> response.text("ok"));
+              @Override
+              public void complete(RequestOutcome outcome) {
+                completions.incrementAndGet();
+              }
+            });
+        app.afterRequest(ignoredRequestOutcome -> finished.complete(null));
+        app.routes().get("/failure", workers, (ignoredRequest, response) -> response.text("ok"));
 
-      try (var test = TestServer.start(app)) {
-        assertEquals(200, test.send(request -> request.path("/failure")).statusCode());
-        finished.get(5, TimeUnit.SECONDS);
-        assertTrue(laterClosed.get());
-        assertTrue(laterAttached.get());
-        assertEquals(3, completions.get());
+        try (var test = TestServer.start(app)) {
+          assertEquals(200, test.send(request -> request.path("/failure")).statusCode());
+
+          finished.get(5, TimeUnit.SECONDS);
+
+          assertTrue(laterClosed.get());
+          assertTrue(laterAttached.get());
+          assertEquals(3, completions.get());
+        }
       }
     }
   }
@@ -163,63 +230,61 @@ class ObservationHandoffTest {
     var finished = new CompletableFuture<Void>();
     var workers = Executors.newFixedThreadPool(1);
 
-    try (workers;
-        var app = withExecutionMode(new Shoostr(), virtualApplication)) {
-      app.observe(
-          ignored9 -> {
-            var owner = Thread.currentThread();
-            context.set("observation");
-            return new RequestObservation() {
-              @Override
-              public AutoCloseable attach() {
-                sameOwner.set(owner == Thread.currentThread());
-                events.add("attach");
-                context.set("observation");
-                return () -> {
-                  context.remove();
-                  events.add("attached-close");
-                };
-              }
+    try (workers) {
+      var app = withExecutionMode(new Options(), virtualApplication);
 
-              @Override
-              public void close() {
+      try (Closeable appCleanup2 = app::close) {
+        app.observe(ignoredRequest -> {
+          var owner = Thread.currentThread();
+          context.set("observation");
+
+          return new RequestObservation() {
+            @Override
+            public AutoCloseable attach() {
+              sameOwner.set(owner == Thread.currentThread());
+              events.add("attach");
+              context.set("observation");
+
+              return () -> {
                 context.remove();
-                events.add("original-close");
-              }
+                events.add("attached-close");
+              };
+            }
 
-              @Override
-              public void complete(RequestOutcome outcome) {
-                events.add("complete");
-                finished.complete(null);
-              }
-            };
-          });
-      app.exception(
-          RejectedExecutionException.class,
-          (ignored10, ignored11, response) ->
-              response.status(503).text(Objects.requireNonNull(context.get())));
-      app.routes().get("/rejected", workers, (ignored12, response) -> response.text("wrong"));
+            @Override
+            public void close() {
+              context.remove();
+              events.add("original-close");
+            }
 
-      try (var test = TestServer.start(app)) {
-        workers.shutdown();
-        var result =
-            test.send(request -> request.path("/rejected"), HttpResponse.BodyHandlers.ofString());
-        assertEquals(503, result.statusCode());
-        assertEquals("observation", result.body());
-        finished.get(5, TimeUnit.SECONDS);
-        assertTrue(sameOwner.get());
-        assertEquals(List.of("original-close", "attach", "attached-close", "complete"), events);
+            @Override
+            public void complete(RequestOutcome outcome) {
+              events.add("complete");
+              finished.complete(null);
+            }
+          };
+        });
+        app.exception(
+            RejectedExecutionException.class,
+            (ignoredFailure, ignoredRequest, response) ->
+                response.status(503).text(Objects.requireNonNull(context.get())));
+        app.routes()
+            .get("/rejected", workers, (ignoredRequest, response) -> response.text("wrong"));
+
+        try (var test = TestServer.start(app)) {
+          workers.shutdown();
+          var result =
+              test.send(request -> request.path("/rejected"), HttpResponse.BodyHandlers.ofString());
+
+          assertEquals(503, result.statusCode());
+          assertEquals("observation", result.body());
+
+          finished.get(5, TimeUnit.SECONDS);
+
+          assertTrue(sameOwner.get());
+          assertEquals(List.of("original-close", "attach", "attached-close", "complete"), events);
+        }
       }
     }
-  }
-
-  private static Shoostr withExecutionMode(Shoostr app, boolean virtualApplication) {
-    if (virtualApplication) {
-      app.virtualThreads();
-    }
-
-    return app.onRequestHeaders(
-        (request, response) ->
-            assertEquals(virtualApplication, Thread.currentThread().isVirtual()));
   }
 }

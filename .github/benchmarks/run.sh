@@ -11,6 +11,7 @@ support=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=resources.sh
 source "$support/resources.sh"
 configure_resources
+
 configuration=$(jq -ce --arg workload "$workload" '.[$workload] // error("Unknown workload")' "$support/workloads.json")
 case "$mode" in
   steady) ;;
@@ -18,6 +19,7 @@ case "$mode" in
     || { echo 'This workload does not support overload' >&2; exit 2; } ;;
   *) echo 'Mode must be steady or overload' >&2; exit 2 ;;
 esac
+
 [[ ! -e "$destination" ]] || { echo 'Refusing to overwrite results' >&2; exit 2; }
 mkdir -p "$destination"
 destination=$(realpath "$destination")
@@ -33,6 +35,41 @@ run_dir=''
 recording=0
 failed=0
 server_cgroup=''
+
+cleanup() {
+  if [[ "$recording" == 1 && -n "$server_pid" ]]; then
+    timeout 5s "$JAVA_HOME/bin/jcmd" "$server_pid" JFR.stop name=benchmark \
+      > "$run_dir/jfr-cleanup.txt" 2>&1 || true
+    recording=0
+  fi
+  if [[ -n "$monitor_pid" ]]; then
+    kill "$monitor_pid" 2>/dev/null || true
+    wait "$monitor_pid" 2>/dev/null || true
+    monitor_pid=''
+  fi
+
+  stop_group "$client_group" "$client_pid"
+  client_group=''
+  client_pid=''
+
+  stop_group "$server_group" "$server_pid"
+  server_group=''
+  server_pid=''
+
+  if [[ -n "$server_cgroup" && -d "$server_cgroup" ]]; then
+    capture_server_cgroup > "$run_dir/server-cgroup-after.txt"
+    if ! verify_server_cgroup_limits || [[ ! $(< "$server_cgroup/memory.peak") =~ ^[0-9]+$ ]]; then
+      echo INVALID_RESOURCE_EVIDENCE > "$run_dir/outcome.txt"
+      failed=1
+    fi
+    if awk '$1 == "oom_kill" && $2 > 0 {found=1} END {exit !found}' "$server_cgroup/memory.events"; then
+      echo MEMORY_LIMIT_EXCEEDED > "$run_dir/outcome.txt"
+      failed=1
+    fi
+    sudo -n rmdir "$server_cgroup"
+    server_cgroup=''
+  fi
+}
 
 stop_group() {
   local owned=$1 native_pid=$2
@@ -52,37 +89,6 @@ stop_group() {
   fi
 }
 
-cleanup() {
-  if [[ "$recording" == 1 && -n "$server_pid" ]]; then
-    timeout 5s "$JAVA_HOME/bin/jcmd" "$server_pid" JFR.stop name=benchmark \
-      > "$run_dir/jfr-cleanup.txt" 2>&1 || true
-    recording=0
-  fi
-  if [[ -n "$monitor_pid" ]]; then
-    kill "$monitor_pid" 2>/dev/null || true
-    wait "$monitor_pid" 2>/dev/null || true
-    monitor_pid=''
-  fi
-  stop_group "$client_group" "$client_pid"
-  client_group=''
-  client_pid=''
-  stop_group "$server_group" "$server_pid"
-  server_group=''
-  server_pid=''
-  if [[ -n "$server_cgroup" && -d "$server_cgroup" ]]; then
-    capture_server_cgroup > "$run_dir/server-cgroup-after.txt"
-    if ! verify_server_cgroup_limits || [[ ! $(< "$server_cgroup/memory.peak") =~ ^[0-9]+$ ]]; then
-      echo INVALID_RESOURCE_EVIDENCE > "$run_dir/outcome.txt"
-      failed=1
-    fi
-    if awk '$1 == "oom_kill" && $2 > 0 {found=1} END {exit !found}' "$server_cgroup/memory.events"; then
-      echo MEMORY_LIMIT_EXCEEDED > "$run_dir/outcome.txt"
-      failed=1
-    fi
-    sudo -n rmdir "$server_cgroup"
-    server_cgroup=''
-  fi
-}
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
@@ -97,6 +103,7 @@ jq -n --arg workload "$workload" --arg mode "$mode" --argjson fixture "$configur
     jvm_cpus:$jvm_cpus,jvm_memory_mib:$jvm_memory_mib,
     ramp_start:1000,ramp_end:25000,latency:"scheduled send to complete response"}' \
   > "$destination/configuration.json"
+
 "$JAVA_HOME/bin/java" -version > "$destination/java.txt" 2>&1
 "$tools/zrk" --version > "$destination/zrk.txt"
 {
@@ -105,6 +112,7 @@ jq -n --arg workload "$workload" --arg mode "$mode" --argjson fixture "$configur
   free -m
   df -h "$destination"
 } > "$destination/host.txt"
+
 sha256sum "$tools/zrk" "$tools"/lib/*.jar "$support"/*.lua "$support/workloads.json" \
   "$support/run.sh" "$support/resources.sh" "$support/check-zrk.jq" "$support/install-zrk.sh" \
   > "$destination/sha256.txt"
@@ -113,6 +121,7 @@ printf 'SERVER_CPUS=%s\nCLIENT_CPUS=%s\n' "$server_cpus" "$client_cpus" > "$dest
 load() {
   local phase=$1 length=$2 status=0 offered=$rate
   if [[ "$mode" == overload && "$phase" == measured ]]; then offered=1000:25000; fi
+
   setsid /usr/bin/time -v -o "$run_dir/$phase-client-resource.txt" \
     taskset -c "$client_cpus" "$tools/zrk" -t2 -c"$connections" -d"$length" -R"$offered" \
     --timeout 5s --plain --script "$support/http.lua" \
@@ -136,6 +145,7 @@ load() {
       return 1
     fi
   fi
+
   wait "$client_group" || status=$?
   client_group=''
   client_pid=''
@@ -146,6 +156,7 @@ load() {
     wait "$monitor_pid" 2>/dev/null || true
     monitor_pid=''
   fi
+
   if [[ "$status" == 0 ]]; then
     local last_rate=${offered##*:} first_rate=${offered%%:*} expected_class=2xx
     if [[ "$selected" == not-found || "$selected" == wrong-method ]]; then expected_class=4xx; fi
@@ -154,6 +165,7 @@ load() {
       --arg status_class "$expected_class" -f "$support/check-zrk.jq" \
       "$run_dir/$phase-summary.json" > /dev/null || status=1
   fi
+
   return "$status"
 }
 
@@ -164,6 +176,7 @@ for repeat in 1 2 3; do
   date -u +%FT%TZ > "$run_dir/start.txt"
   server_cgroup="/sys/fs/cgroup/shoostr-benchmark-$$-$repeat"
   create_server_cgroup
+
   setsid /usr/bin/time -v -o "$run_dir/server-resource.txt" \
     bash "$support/resources.sh" "$server_cgroup" \
     taskset -c "$server_cpus" "$JAVA_HOME/bin/java" -Xms256m -Xmx256m -XX:+UseG1GC \
@@ -183,6 +196,7 @@ for repeat in 1 2 3; do
     echo '::endgroup::'
     continue
   fi
+
   verify_server_cgroup "$server_pid"
   capture_server_cgroup > "$run_dir/server-cgroup-before.txt"
   taskset -pc "$server_pid" > "$run_dir/server-affinity.txt"
@@ -196,6 +210,7 @@ for repeat in 1 2 3; do
   cat "/proc/$server_pid/limits" > "$run_dir/server-limits.txt"
   cat "$run_dir/server-affinity.txt" "$run_dir/server-limits.txt"
   [[ $(curl --fail --silent --show-error --max-time 5 "$base/virtual") == false ]]
+
   for fixture in plaintext json-bytes echo stream route-literal route-parameter not-found wrong-method sse-burst sse-paced; do
     "$tools/zrk" -t1 -c1 -d1s -R2 --timeout 5s --plain --script "$support/http.lua" \
       --format json -o "$run_dir/parity-$fixture.json" "$base" "$fixture" 1000 \
@@ -205,6 +220,7 @@ for repeat in 1 2 3; do
     jq -e --argjson seconds 1 --argjson connections 1 --argjson rate 2 --argjson end_rate 2 --arg status_class "$status_class" \
       -f "$support/check-zrk.jq" "$run_dir/parity-$fixture.json" > /dev/null
   done
+
   if ! load warmup 30s; then
     echo WARMUP_FAILED > "$run_dir/outcome.txt"
     failed=1
@@ -212,6 +228,7 @@ for repeat in 1 2 3; do
     echo '::endgroup::'
     continue
   fi
+
   "$JAVA_HOME/bin/jcmd" "$server_pid" JFR.configure stackdepth=128 > "$run_dir/jfr-configure.txt"
   "$JAVA_HOME/bin/jcmd" "$server_pid" JFR.start name=benchmark settings=profile disk=true \
     dumponexit=true filename="$run_dir/server.jfr" \
@@ -219,6 +236,7 @@ for repeat in 1 2 3; do
   recording=1
   "$JAVA_HOME/bin/jcmd" "$server_pid" GC.heap_info > "$run_dir/before-heap.txt"
   cat "/proc/$server_pid/stat" > "$run_dir/before-process-stat.txt"
+
   date -u +%FT%TZ > "$run_dir/measurement-start.txt"
   status=0
   load measured 180s || status=$?
@@ -229,6 +247,7 @@ for repeat in 1 2 3; do
     echo FAILED > "$run_dir/outcome.txt"
     failed=1
   fi
+
   if ! kill -0 "$server_pid" 2>/dev/null; then
     echo SERVER_EXITED > "$run_dir/outcome.txt"
     failed=1
@@ -236,6 +255,7 @@ for repeat in 1 2 3; do
     echo '::endgroup::'
     continue
   fi
+
   cat "/proc/$server_pid/stat" > "$run_dir/after-process-stat.txt"
   "$JAVA_HOME/bin/jcmd" "$server_pid" GC.heap_info > "$run_dir/after-heap.txt"
   "$JAVA_HOME/bin/jcmd" "$server_pid" JFR.stop name=benchmark > "$run_dir/jfr-stop.txt"
@@ -248,6 +268,7 @@ for repeat in 1 2 3; do
     (.latency_histogram | type == "string" and length > 0))' \
     "$run_dir/measured-timeseries.ndjson" > /dev/null
   cleanup
+
   for file in server.jfr jfr-summary.txt measured-summary.json measured-timeseries.ndjson measured-latency.hgrm \
     process-monitor.txt monitor-pids.txt server-resource.txt measured-client-resource.txt \
     allocation-by-site.txt allocation-by-class.txt hot-methods.txt gc-pauses.txt gc-cpu-time.txt \

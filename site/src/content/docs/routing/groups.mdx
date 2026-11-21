@@ -17,9 +17,9 @@ import test from '../../../../../examples/03-routing/src/test/java/io/github/sup
 
 A route group gives related endpoints a shared path prefix and inherited behavior. A `Routes` value is a registration view for that scope, so the same registration method can be reused under different prefixes.
 
-The configuration callback receives `Extensions`, Shoostr's built-in scope-configuration object. Its `lifecycle()` collector registers local request hooks. A before-handler hook runs after matching and any required authentication, before the endpoint handler; the example uses it to add a header. Child routes inherit that behavior.
+The configuration callback receives `Lifecycle`, Shoostr's built-in scope-configuration object. Register local request hooks directly on it. A before-handler hook runs after matching and any required authentication, before the endpoint handler; the example uses it to add a header. Child routes inherit that behavior.
 
-This configuration object is separate from an installed `Extension<C>` provider, which is an optional integration with its own settings or lifecycle. Its type parameter `C` describes the settings the provider exposes. The grouping example creates no provider: it only configures the group's built-in request hooks.
+An extension is an optional integration with its own settings or lifetime. The grouping example creates no extension: it configures the group's built-in request hooks directly.
 
 Create a common prefix with `path(...)`, then pass a registration method when several groups share endpoint definitions. Prefixes are relative to their parent even if they start with `/`: combining `/api` and `/v1` registers `/api/v1`.
 
@@ -35,7 +35,14 @@ The nested account route also reads parameters captured by both parent and child
 Group configuration runs before its registration callback, and the registration callbacks run before the application starts rather than for each request.
 The response-header hooks below demonstrate inherited configuration without changing the endpoint definitions.
 
-Route scopes share application-wide registration state, so do not close an individual group: that would end registration for the entire application.
+Registration and configuration callbacks run synchronously on the calling thread under the application's shared registration lock.
+Registration calls from other threads wait until the complete callback returns, including its nested groups.
+Complete registration work on that thread; a callback must not wait for another thread to register routes or close the same application.
+
+Starting the application from a registration callback is rejected.
+Closing from another thread waits for the callback to finish before ending registration and starting cleanup.
+
+Route scopes share application-owned registration state and have no separate cleanup operation.
 
 <Code code={application} lang="java" title="RouteGroupsExample.java" />
 

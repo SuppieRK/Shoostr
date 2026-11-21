@@ -8,13 +8,18 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.suppierk.shoostr.http.MediaType;
 import io.github.suppierk.shoostr.testing.TestServer;
+import java.io.Closeable;
+import java.io.IOException;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Stream;
 import org.eclipse.jetty.http.HttpFields;
@@ -24,602 +29,17 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.ValueSource;
 
 @Timeout(15)
 class MediaTypeResponseTest {
-  @ParameterizedTest
-  @MethodSource("nullAdditionalAcceptCases")
-  void treatsNullAdditionalCandidatesAsOnlyTheFirstCandidate(
-      String accept, int status, String body, List<String> vary) throws Exception {
-    try (var app = new Shoostr()) {
-      app.routes()
-          .get(
-              "/null-additional",
-              (ignored, response) -> {
-                var selected = response.negotiate(MediaType.APPLICATION_JSON, (MediaType[]) null);
-                assertSame(MediaType.APPLICATION_JSON, selected);
-                response.body(selected, selected.value().getBytes(StandardCharsets.UTF_8));
-              });
-
-      try (var test = TestServer.start(app)) {
-
-        var result =
-            test.send(
-                request -> {
-                  request.path("/null-additional").timeout(Duration.ofSeconds(3));
-                  if (!accept.isEmpty()) {
-                    request.header("Accept", accept);
-                  }
-                },
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(status, result.statusCode());
-        assertEquals(body, result.body());
-        assertEquals(vary, result.headers().allValues("Vary"));
-        if (status == 200) {
-          assertEquals(
-              "application/json", result.headers().firstValue("Content-Type").orElseThrow());
-        }
-      }
-    }
-  }
-
-  @Test
-  @SuppressWarnings("NullAway") // Deliberately verifies invalid inputs at the public API boundary.
-  void rejectsNullNegotiationInputsWithoutChangingStagedResponse() throws Exception {
-    try (var app = new Shoostr()) {
-      app.routes()
-          .get(
-              "/invalid-candidates",
-              (ignored2, response) -> {
-                response
-                    .status(202)
-                    .setHeader("Vary", "Origin")
-                    .body(MediaType.APPLICATION_JSON, "\"kept\"".getBytes(StandardCharsets.UTF_8));
-                assertThrows(NullPointerException.class, () -> response.negotiate(null));
-                assertThrows(
-                    NullPointerException.class,
-                    () ->
-                        response.negotiate(MediaType.APPLICATION_JSON, MediaType.TEXT_PLAIN, null));
-              });
-
-      try (var test = TestServer.start(app)) {
-        var result =
-            test.send(
-                request -> request.path("/invalid-candidates").timeout(Duration.ofSeconds(3)),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(202, result.statusCode());
-        assertEquals("application/json", result.headers().firstValue("Content-Type").orElseThrow());
-        assertEquals(List.of("Origin"), result.headers().allValues("Vary"));
-        assertEquals("\"kept\"", result.body());
-      }
-    }
-  }
-
-  @Test
-  void keepsConcurrentRequestNegotiationIndependent() throws Exception {
-    var ready = new CountDownLatch(2);
-
-    try (var app = new Shoostr();
-        var testRequests = Executors.newVirtualThreadPerTaskExecutor()) {
-      app.routes()
-          .get(
-              "/concurrent",
-              (ignored3, response) -> {
-                ready.countDown();
-                if (!ready.await(3, TimeUnit.SECONDS)) {
-                  throw new IllegalStateException("Requests did not overlap");
-                }
-
-                var selected = response.negotiate(MediaType.APPLICATION_JSON, MediaType.TEXT_PLAIN);
-                response.body(selected, selected.value().getBytes(StandardCharsets.UTF_8));
-              });
-
-      try (var test = TestServer.start(app)) {
-
-        var json =
-            testRequests.submit(
-                () ->
-                    test.send(
-                        request ->
-                            request
-                                .path("/concurrent")
-                                .header("Accept", "application/json")
-                                .timeout(Duration.ofSeconds(5)),
-                        HttpResponse.BodyHandlers.ofString()));
-        var text =
-            testRequests.submit(
-                () ->
-                    test.send(
-                        request ->
-                            request
-                                .path("/concurrent")
-                                .header("Accept", "text/plain")
-                                .timeout(Duration.ofSeconds(5)),
-                        HttpResponse.BodyHandlers.ofString()));
-        var jsonResult = json.get(5, TimeUnit.SECONDS);
-        var textResult = text.get(5, TimeUnit.SECONDS);
-
-        assertEquals(200, jsonResult.statusCode());
-        assertEquals("application/json", jsonResult.body());
-        assertEquals(
-            "application/json", jsonResult.headers().firstValue("Content-Type").orElseThrow());
-        assertEquals(200, textResult.statusCode());
-        assertEquals("text/plain", textResult.body());
-        assertEquals("text/plain", textResult.headers().firstValue("Content-Type").orElseThrow());
-      }
-    }
-  }
-
-  @Test
-  void negotiatesUsingItsBoundRequestHeaderSnapshot() throws Exception {
-    var transportHeaders = new AtomicReference<HttpFields.Mutable>();
-
-    try (var app = new Shoostr()) {
-      app.modifyHttpConfiguration(
-          configuration ->
-              configuration.addCustomizer(
-                  (nativeRequest, ignored4) -> {
-                    var fields = HttpFields.build(nativeRequest.getHeaders());
-                    transportHeaders.set(fields);
-                    return new Wrapper(nativeRequest) {
-                      @Override
-                      public HttpFields getHeaders() {
-                        return fields;
-                      }
-                    };
-                  }));
-      app.onRequestHeaders(
-          (ignored5, ignored6) -> transportHeaders.get().put("Accept", "text/plain"));
-      app.routes()
-          .get(
-              "/bound",
-              (ignored7, response) -> {
-                var selected = response.negotiate(MediaType.APPLICATION_JSON, MediaType.TEXT_PLAIN);
-                response.body(selected, selected.value().getBytes(StandardCharsets.UTF_8));
-              });
-
-      try (var test = TestServer.start(app)) {
-        var result =
-            test.send(
-                request ->
-                    request
-                        .path("/bound")
-                        .header("Accept", "application/json")
-                        .timeout(Duration.ofSeconds(3)),
-                HttpResponse.BodyHandlers.ofString());
-
-        assertEquals(200, result.statusCode());
-        assertEquals("application/json", result.body());
-        assertEquals("application/json", result.headers().firstValue("Content-Type").orElseThrow());
-        assertEquals(List.of("Accept"), result.headers().allValues("Vary"));
-      }
-    }
-  }
-
-  @Test
-  void negotiatesMetadataWithoutTranscodingCallerBytes() throws Exception {
-    var latin = MediaType.TEXT_PLAIN.withCharset(StandardCharsets.ISO_8859_1);
-
-    try (var app = new Shoostr()) {
-      app.routes()
-          .get(
-              "/bytes",
-              (ignored8, response) -> {
-                var type = response.negotiate(latin, MediaType.APPLICATION_JSON);
-                var bytes = type.equals(latin) ? new byte[] {(byte) 0xe9} : new byte[] {'{', '}'};
-                response.body(type, bytes);
-                bytes[0] = 0;
-              });
-
-      try (var test = TestServer.start(app)) {
-
-        var result =
-            test.send(
-                request ->
-                    request.path("/bytes").header("Accept", "text/plain; charset=iso-8859-1"));
-        assertEquals(200, result.statusCode());
-        assertEquals(
-            "text/plain; charset=ISO-8859-1",
-            result.headers().firstValue("Content-Type").orElseThrow());
-        assertArrayEquals(new byte[] {(byte) 0xe9}, result.body());
-      }
-    }
-  }
-
-  @Test
-  void mergesAcceptIntoVaryAndPreservesAnExistingWildcard() throws Exception {
-    try (var app = new Shoostr()) {
-      app.routes()
-          .get(
-              "/merged",
-              (ignored9, response) -> {
-                response.addHeader("Vary", "Origin, aCcEpT");
-                response.addHeader("Vary", "User-Agent");
-                var type = response.negotiate(MediaType.APPLICATION_JSON);
-                response.body(type, new byte[] {1});
-              });
-      app.routes()
-          .get(
-              "/wildcard",
-              (ignored10, response) -> {
-                response.setHeader("Vary", "*");
-                var type = response.negotiate(MediaType.APPLICATION_JSON);
-                response.body(type, new byte[] {1});
-              });
-
-      try (var test = TestServer.start(app)) {
-        var merged =
-            test.send(
-                request -> request.path("/merged").timeout(Duration.ofSeconds(3)),
-                HttpResponse.BodyHandlers.discarding());
-        var wildcard =
-            test.send(
-                request -> request.path("/wildcard").timeout(Duration.ofSeconds(3)),
-                HttpResponse.BodyHandlers.discarding());
-        assertEquals(List.of("Origin, aCcEpT", "User-Agent"), merged.headers().allValues("Vary"));
-        assertEquals(List.of("*"), wildcard.headers().allValues("Vary"));
-      }
-    }
-  }
-
-  @Test
-  void readsRepeatedAcceptFieldsAsOnePreferenceList() throws Exception {
-    try (var app = new Shoostr()) {
-      app.routes().get("/negotiated", MediaTypeResponseTest::negotiate);
-
-      try (var test = TestServer.start(app)) {
-
-        var result =
-            test.send(
-                request ->
-                    request
-                        .path("/negotiated")
-                        .header("Accept", "application/json;q=0.1")
-                        .header("Accept", "text/plain"),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(200, result.statusCode());
-        assertEquals("text/plain", result.body());
-        assertEquals("text/plain", result.headers().firstValue("Content-Type").orElseThrow());
-      }
-    }
-  }
-
-  @Test
-  void ignoresEmptyAcceptListElementsAndParameterSegments() throws Exception {
-    try (var app = new Shoostr()) {
-      app.routes().get("/negotiated", MediaTypeResponseTest::negotiate);
-
-      try (var test = TestServer.start(app)) {
-
-        var result =
-            test.send(
-                request -> request.path("/negotiated").header("Accept", ", text/plain; ;, "),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(200, result.statusCode());
-        assertEquals("text/plain", result.body());
-      }
-    }
-  }
-
-  @ParameterizedTest
-  @MethodSource("emptyAcceptFields")
-  void rejectsAnExplicitEmptyAcceptList(String accept) throws Exception {
-    try (var app = new Shoostr()) {
-      app.routes().get("/negotiated", MediaTypeResponseTest::negotiate);
-
-      try (var test = TestServer.start(app)) {
-
-        var result =
-            test.send(
-                request -> request.path("/negotiated").header("Accept", accept),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(406, result.statusCode());
-        assertEquals("Accept", result.headers().firstValue("Vary").orElseThrow());
-      }
-    }
-  }
-
-  @Test
-  void rejectsTheExactRepresentationWhenAWildcardWithParametersHasHigherQuality() throws Exception {
-    try (var app = new Shoostr()) {
-      app.routes().get("/negotiated", MediaTypeResponseTest::negotiateUtf8Text);
-
-      try (var test = TestServer.start(app)) {
-
-        var result =
-            test.send(
-                request ->
-                    request
-                        .path("/negotiated")
-                        .header("Accept", "text/plain;q=0, text/*;charset=utf-8;q=1"),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(406, result.statusCode());
-      }
-    }
-  }
-
-  @Test
-  void selectsTheExactRepresentationOverAnExcludedWildcardWithParameters() throws Exception {
-    try (var app = new Shoostr()) {
-      app.routes().get("/negotiated", MediaTypeResponseTest::negotiateUtf8Text);
-
-      try (var test = TestServer.start(app)) {
-
-        var result =
-            test.send(
-                request ->
-                    request
-                        .path("/negotiated")
-                        .header("Accept", "text/plain;q=1, text/*;charset=utf-8;q=0"),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(200, result.statusCode());
-      }
-    }
-  }
-
-  @Test
-  void permitsTabsInsideQuotedParameters() throws Exception {
-    try (var app = new Shoostr()) {
-      app.routes().get("/negotiated", MediaTypeResponseTest::negotiate);
-
-      try (var test = TestServer.start(app)) {
-
-        var result =
-            test.send(
-                request ->
-                    request
-                        .path("/negotiated")
-                        .header("Accept", "application/json, text/plain;note=\"a\tb\""),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(200, result.statusCode());
-        assertEquals("application/json", result.body());
-      }
-    }
-  }
-
-  @ParameterizedTest
-  @MethodSource("acceptCases")
-  void appliesAcceptWildcardsWeightsSpecificityParametersAndCallerOrder(
-      String accept, MediaType expected) throws Exception {
-    try (var app = new Shoostr()) {
-      app.routes().get("/negotiated", MediaTypeResponseTest::negotiate);
-
-      try (var test = TestServer.start(app)) {
-
-        var result =
-            test.send(
-                request -> request.path("/negotiated").header("Accept", accept),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(200, result.statusCode());
-        assertEquals(expected.value(), result.body());
-        assertEquals(expected.value(), result.headers().firstValue("Content-Type").orElseThrow());
-        assertEquals("Accept", result.headers().firstValue("Vary").orElseThrow());
-      }
-    }
-  }
-
-  @ParameterizedTest
-  @MethodSource("malformedAcceptFields")
-  void rejectsMalformedAcceptWithoutVary(String accept) throws Exception {
-    try (var app = new Shoostr()) {
-      app.routes().get("/negotiated", MediaTypeResponseTest::negotiate);
-
-      try (var test = TestServer.start(app)) {
-
-        var result =
-            test.send(
-                request -> request.path("/negotiated").header("Accept", accept),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(400, result.statusCode());
-        assertEquals("Bad Request", result.body());
-        assertTrue(result.headers().firstValue("Vary").isEmpty());
-      }
-    }
-  }
-
-  @Test
-  void rejectsNegotiationAfterStreamingHasCommittedHeaders() throws Exception {
-    var failure = new AtomicReference<Throwable>();
-
-    try (var app = new Shoostr()) {
-      app.routes()
-          .get(
-              "/stream",
-              (ignored11, response) -> {
-                response.startStream(MediaType.TEXT_PLAIN).write("ready");
-                failure.set(
-                    assertThrows(
-                        IllegalStateException.class,
-                        () -> response.negotiate(MediaType.TEXT_PLAIN)));
-              });
-
-      try (var test = TestServer.start(app)) {
-        var result =
-            test.send(
-                request -> request.path("/stream").timeout(Duration.ofSeconds(3)),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(200, result.statusCode());
-        assertEquals("ready", result.body());
-        assertEquals(IllegalStateException.class, failure.get().getClass());
-      }
-    }
-  }
-
-  @Test
-  void rejectsARepresentationExcludedByASpecificZeroQualityRange() throws Exception {
-    try (var app = new Shoostr()) {
-      app.routes()
-          .get(
-              "/negotiated",
-              (ignored12, response) -> {
-                response.addHeader("Vary", "Origin");
-                var type = response.negotiate(MediaType.APPLICATION_JSON);
-                response.body(type, new byte[] {1});
-              });
-
-      try (var test = TestServer.start(app)) {
-
-        var result =
-            test.send(
-                request ->
-                    request.path("/negotiated").header("Accept", "*/*;q=1, application/json;q=0"),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(406, result.statusCode());
-        assertEquals("Not Acceptable", result.body());
-        assertEquals(List.of("Origin", "Accept"), result.headers().allValues("Vary"));
-      }
-    }
-  }
-
-  @Test
-  void negotiatesTheHighestWeightedAcceptCandidate() throws Exception {
-    try (var app = new Shoostr()) {
-      app.routes()
-          .get(
-              "/negotiated",
-              (ignored13, response) -> {
-                var type = response.negotiate(MediaType.APPLICATION_JSON, MediaType.TEXT_PLAIN);
-                response.body(type, type.value().getBytes(StandardCharsets.UTF_8));
-              });
-
-      try (var test = TestServer.start(app)) {
-
-        var result =
-            test.send(
-                request ->
-                    request
-                        .path("/negotiated")
-                        .header("Accept", "application/json;q=0.5, text/plain"),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(200, result.statusCode());
-        assertEquals("text/plain", result.body());
-        assertEquals("text/plain", result.headers().firstValue("Content-Type").orElseThrow());
-        assertEquals("Accept", result.headers().firstValue("Vary").orElseThrow());
-      }
-    }
-  }
-
-  @Test
-  void negotiatesTheFirstCandidateWithoutAcceptAndAddsVary() throws Exception {
-    try (var app = new Shoostr()) {
-      app.routes()
-          .get(
-              "/negotiated",
-              (ignored14, response) -> {
-                var type = response.negotiate(MediaType.APPLICATION_JSON, MediaType.TEXT_PLAIN);
-                response.body(type, type.value().getBytes(StandardCharsets.UTF_8));
-              });
-
-      try (var test = TestServer.start(app)) {
-        var result =
-            test.send(
-                request -> request.path("/negotiated").timeout(Duration.ofSeconds(3)),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(200, result.statusCode());
-        assertEquals("application/json", result.body());
-        assertEquals("application/json", result.headers().firstValue("Content-Type").orElseThrow());
-        assertEquals("Accept", result.headers().firstValue("Vary").orElseThrow());
-      }
-    }
-  }
-
-  @Test
-  void sendsFiniteBytesWithTheSelectedCharset() throws Exception {
-    try (var app = new Shoostr()) {
-      app.routes()
-          .get(
-              "/latin",
-              (ignored15, response) -> {
-                var bytes = new byte[] {(byte) 0xe9};
-                response.body(MediaType.TEXT_PLAIN.withCharset(StandardCharsets.ISO_8859_1), bytes);
-                bytes[0] = 0;
-              });
-
-      try (var test = TestServer.start(app)) {
-        var result = test.send(request -> request.path("/latin").timeout(Duration.ofSeconds(3)));
-        assertEquals(200, result.statusCode());
-        assertEquals(
-            "text/plain; charset=ISO-8859-1",
-            result.headers().firstValue("Content-Type").orElseThrow());
-        assertArrayEquals(new byte[] {(byte) 0xe9}, result.body());
-      }
-    }
-  }
-
-  @Test
-  void streamsTypedContentWithinTheHandlerLifetime() throws Exception {
-    var release = new CountDownLatch(1);
-    var retained = new AtomicReference<Response.Stream>();
-
-    try (var app = new Shoostr()) {
-      app.routes()
-          .get(
-              "/stream",
-              (ignored16, response) -> {
-                var stream =
-                    response.startStream(MediaType.TEXT_PLAIN.withCharset(StandardCharsets.UTF_8));
-                retained.set(stream);
-                stream.write("first");
-                stream.flush();
-                if (!release.await(5, TimeUnit.SECONDS)) {
-                  throw new IllegalStateException("Timed out waiting for reader");
-                }
-
-                stream.write("last");
-              });
-
-      try (var test = TestServer.start(app)) {
-
-        try {
-          var result =
-              test.send(
-                  request -> request.path("/stream").timeout(Duration.ofSeconds(3)),
-                  HttpResponse.BodyHandlers.ofInputStream());
-          assertEquals(
-              "text/plain; charset=UTF-8",
-              result.headers().firstValue("Content-Type").orElseThrow());
-
-          try (var input = result.body()) {
-            assertEquals("first", new String(input.readNBytes(5), StandardCharsets.UTF_8));
-            release.countDown();
-            assertEquals("last", new String(input.readAllBytes(), StandardCharsets.UTF_8));
-          }
-
-          var closedStream = retained.get();
-          assertThrows(IllegalStateException.class, () -> closedStream.write("late"));
-        } finally {
-          release.countDown();
-        }
-      }
-    }
-  }
-
-  @Test
-  void retainsParameterizedStringContentTypes() throws Exception {
-    try (var app = new Shoostr()) {
-      app.routes()
-          .get(
-              "/custom",
-              (ignored17, response) ->
-                  response.body("application/example; note=\"a b\"", new byte[] {1, 2, 3}));
-
-      try (var test = TestServer.start(app)) {
-        var result = test.send(request -> request.path("/custom").timeout(Duration.ofSeconds(3)));
-        assertEquals(
-            "application/example; note=\"a b\"",
-            result.headers().firstValue("Content-Type").orElseThrow());
-        assertArrayEquals(new byte[] {1, 2, 3}, result.body());
-      }
-    }
-  }
-
   private static void negotiate(Request request, Response response) {
     var type =
         response.negotiate(
             MediaType.APPLICATION_JSON,
             MediaType.TEXT_PLAIN,
             MediaType.TEXT_PLAIN.withCharset(StandardCharsets.UTF_8));
-    response.body(type, type.value().getBytes(StandardCharsets.UTF_8));
+    assertSame(response, response.body(type, type.value().getBytes(StandardCharsets.UTF_8)));
   }
 
   private static void negotiateUtf8Text(Request request, Response response) {
@@ -647,7 +67,23 @@ class MediaTypeResponseTest {
         Arguments.of(
             "text/plain; charset=\"UTF-8\"",
             MediaType.TEXT_PLAIN.withCharset(StandardCharsets.UTF_8)),
-        Arguments.of("application/json;q=1., text/plain;q=0.", MediaType.APPLICATION_JSON));
+        Arguments.of("application/json;q=1., text/plain;q=0.", MediaType.APPLICATION_JSON),
+        Arguments.of("application/json;q=0.123, text/plain;q=0.122", MediaType.APPLICATION_JSON),
+        Arguments.of(
+            "application/json;note=\"two words\", application/json", MediaType.APPLICATION_JSON),
+        Arguments.of(
+            "application/json;note=\"a\\\";b,c\", application/json", MediaType.APPLICATION_JSON),
+        Arguments.of(
+            "text/plain;charset=\"UTF\\-8\"",
+            MediaType.TEXT_PLAIN.withCharset(StandardCharsets.UTF_8)),
+        Arguments.of("*/*;q=1, application/*;q=0", MediaType.TEXT_PLAIN),
+        Arguments.of("application/*;q=0, */*;q=1", MediaType.TEXT_PLAIN),
+        Arguments.of("application/json;q=1.000, text/plain;q=0.999", MediaType.APPLICATION_JSON),
+        Arguments.of("application/json, text/plain;note=\"a,b;c\"", MediaType.APPLICATION_JSON),
+        Arguments.of("application/json, text/plain;note=\"\"", MediaType.APPLICATION_JSON),
+        Arguments.of(
+            "text/plain;q=0, text/plain;charset=utf-8;q=1",
+            MediaType.TEXT_PLAIN.withCharset(StandardCharsets.UTF_8)));
   }
 
   private static Stream<Arguments> malformedAcceptFields() {
@@ -658,11 +94,837 @@ class MediaTypeResponseTest {
         Arguments.of("text/plain;q=1;q=0"),
         Arguments.of("text /plain"),
         Arguments.of("text/plain;charset =utf-8"),
+        Arguments.of("te xt/plain"),
+        Arguments.of("text/pl@in"),
+        Arguments.of("*/plain"),
+        Arguments.of("text/plain;charset"),
+        Arguments.of("text/plain;ch@rset=utf-8"),
+        Arguments.of("text/plain;charset="),
+        Arguments.of("text/plain;charset=utf-8;charset=utf-8"),
+        Arguments.of("text/plain;charset=ut@f"),
+        Arguments.of("text/plain;q=2.0"),
+        Arguments.of("text/plain;q=0.a"),
+        Arguments.of("text/plain;q=1.001"),
+        Arguments.of("text/plain;note=\"a\"\"b\""),
         Arguments.of(";text/plain"),
         Arguments.of(";;text/plain"));
   }
 
   private static Stream<Arguments> emptyAcceptFields() {
     return Stream.of(Arguments.of(""), Arguments.of(","));
+  }
+
+  @ParameterizedTest
+  @MethodSource("nullAdditionalAcceptCases")
+  void treatsNullAdditionalCandidatesAsOnlyTheFirstCandidate(
+      String accept, int status, String body, List<String> vary) throws Exception {
+    {
+      var app = new Shoostr();
+
+      try (Closeable appCleanup = app::close) {
+        app.routes()
+            .get(
+                "/null-additional",
+                (ignored, response) -> {
+                  var selected = response.negotiate(MediaType.APPLICATION_JSON, (MediaType[]) null);
+
+                  assertSame(MediaType.APPLICATION_JSON, selected);
+
+                  response.body(selected, selected.value().getBytes(StandardCharsets.UTF_8));
+                });
+
+        try (var test = TestServer.start(app)) {
+
+          var result =
+              sendResultForTreatsNullAdditionalCandidatesAsOnlyTheFirstCandidate(test, accept);
+
+          assertEquals(status, result.statusCode());
+          assertEquals(body, result.body());
+          assertEquals(vary, result.headers().allValues("Vary"));
+
+          if (status == 200) {
+            assertEquals(
+                "application/json", result.headers().firstValue("Content-Type").orElseThrow());
+          }
+        }
+      }
+    }
+  }
+
+  private HttpResponse<String> sendResultForTreatsNullAdditionalCandidatesAsOnlyTheFirstCandidate(
+      TestServer test, String accept) throws IOException, InterruptedException {
+    return test.send(
+        request -> {
+          request.path("/null-additional").timeout(Duration.ofSeconds(3));
+          if (!accept.isEmpty()) {
+            request.header("Accept", accept);
+          }
+        },
+        HttpResponse.BodyHandlers.ofString());
+  }
+
+  @Test
+  @SuppressWarnings("NullAway")
+  // Deliberately verifies invalid inputs at the public API boundary.
+  void rejectsNullNegotiationInputsWithoutChangingStagedResponse() throws Exception {
+    {
+      var app = new Shoostr();
+
+      try (Closeable appCleanup1 = app::close) {
+        app.routes()
+            .get(
+                "/invalid-candidates",
+                (ignoredRequest, response) -> {
+                  response
+                      .status(202)
+                      .setHeader("Vary", "Origin")
+                      .body(
+                          MediaType.APPLICATION_JSON, "\"kept\"".getBytes(StandardCharsets.UTF_8));
+
+                  assertThrows(NullPointerException.class, () -> response.negotiate(null));
+                  assertThrows(
+                      NullPointerException.class,
+                      () ->
+                          response.negotiate(
+                              MediaType.APPLICATION_JSON, MediaType.TEXT_PLAIN, null));
+                });
+
+        try (var test = TestServer.start(app)) {
+          var result =
+              test.send(
+                  request -> request.path("/invalid-candidates").timeout(Duration.ofSeconds(3)),
+                  HttpResponse.BodyHandlers.ofString());
+
+          assertEquals(202, result.statusCode());
+          assertEquals(
+              "application/json", result.headers().firstValue("Content-Type").orElseThrow());
+          assertEquals(List.of("Origin"), result.headers().allValues("Vary"));
+          assertEquals("\"kept\"", result.body());
+        }
+      }
+    }
+  }
+
+  @Test
+  void keepsConcurrentRequestNegotiationIndependent() throws Exception {
+    var ready = new CountDownLatch(2);
+
+    {
+      var app = new Shoostr();
+
+      try (Closeable appCleanup2 = app::close;
+          var testRequests = Executors.newVirtualThreadPerTaskExecutor()) {
+        app.routes()
+            .get(
+                "/concurrent",
+                (ignoredRequest, response) -> {
+                  ready.countDown();
+                  if (!ready.await(3, TimeUnit.SECONDS)) {
+                    throw new IllegalStateException("Requests did not overlap");
+                  }
+
+                  var selected =
+                      response.negotiate(MediaType.APPLICATION_JSON, MediaType.TEXT_PLAIN);
+                  response.body(selected, selected.value().getBytes(StandardCharsets.UTF_8));
+                });
+
+        try (var test = TestServer.start(app)) {
+
+          var json = submitJsonForKeepsConcurrentRequestNegotiationIndependent(testRequests, test);
+          var text = submitTextForKeepsConcurrentRequestNegotiationIndependent(testRequests, test);
+          var jsonResult = json.get(5, TimeUnit.SECONDS);
+          final var textResult = text.get(5, TimeUnit.SECONDS);
+
+          assertEquals(200, jsonResult.statusCode());
+          assertEquals("application/json", jsonResult.body());
+          assertEquals(
+              "application/json", jsonResult.headers().firstValue("Content-Type").orElseThrow());
+          assertEquals(200, textResult.statusCode());
+          assertEquals("text/plain", textResult.body());
+          assertEquals("text/plain", textResult.headers().firstValue("Content-Type").orElseThrow());
+        }
+      }
+    }
+  }
+
+  private Future<HttpResponse<String>> submitJsonForKeepsConcurrentRequestNegotiationIndependent(
+      ExecutorService testRequests, TestServer test) {
+    return testRequests.submit(() ->
+        test.send(
+            request ->
+                request
+                    .path("/concurrent")
+                    .header("Accept", "application/json")
+                    .timeout(Duration.ofSeconds(5)),
+            HttpResponse.BodyHandlers.ofString()));
+  }
+
+  private Future<HttpResponse<String>> submitTextForKeepsConcurrentRequestNegotiationIndependent(
+      ExecutorService testRequests, TestServer test) {
+    return testRequests.submit(() ->
+        test.send(
+            request ->
+                request
+                    .path("/concurrent")
+                    .header("Accept", "text/plain")
+                    .timeout(Duration.ofSeconds(5)),
+            HttpResponse.BodyHandlers.ofString()));
+  }
+
+  @Test
+  void negotiatesUsingItsBoundRequestHeaderSnapshot() throws Exception {
+    var transportHeaders = new AtomicReference<HttpFields.Mutable>();
+
+    {
+      var app = new Shoostr();
+
+      try (Closeable appCleanup3 = app::close) {
+        app.modifyHttpConfiguration(configuration ->
+            configuration.addCustomizer((nativeRequest, ignoredMutable) -> {
+              var fields = HttpFields.build(nativeRequest.getHeaders());
+              transportHeaders.set(fields);
+
+              return new Wrapper(nativeRequest) {
+                @Override
+                public HttpFields getHeaders() {
+                  return fields;
+                }
+              };
+            }));
+        app.onRequestHeaders((ignoredRequest, ignoredResponse) ->
+            transportHeaders.get().put("Accept", "text/plain"));
+        app.routes()
+            .get(
+                "/bound",
+                (ignoredRequest, response) -> {
+                  var selected =
+                      response.negotiate(MediaType.APPLICATION_JSON, MediaType.TEXT_PLAIN);
+                  response.body(selected, selected.value().getBytes(StandardCharsets.UTF_8));
+                });
+
+        try (var test = TestServer.start(app)) {
+          var result = sendResultForNegotiatesUsingItsBoundRequestHeaderSnapshot(test);
+
+          assertEquals(200, result.statusCode());
+          assertEquals("application/json", result.body());
+          assertEquals(
+              "application/json", result.headers().firstValue("Content-Type").orElseThrow());
+          assertEquals(List.of("Accept"), result.headers().allValues("Vary"));
+        }
+      }
+    }
+  }
+
+  private HttpResponse<String> sendResultForNegotiatesUsingItsBoundRequestHeaderSnapshot(
+      TestServer test) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/bound")
+                .header("Accept", "application/json")
+                .timeout(Duration.ofSeconds(3)),
+        HttpResponse.BodyHandlers.ofString());
+  }
+
+  @Test
+  void negotiatesMetadataWithoutTranscodingCallerBytes() throws Exception {
+    var latin = MediaType.TEXT_PLAIN.withCharset(StandardCharsets.ISO_8859_1);
+
+    {
+      var app = new Shoostr();
+
+      try (Closeable appCleanup4 = app::close) {
+        app.routes()
+            .get(
+                "/bytes",
+                (ignoredRequest, response) -> {
+                  var type = response.negotiate(latin, MediaType.APPLICATION_JSON);
+                  var bytes = type.equals(latin) ? new byte[] {(byte) 0xe9} : new byte[] {'{', '}'};
+                  response.body(type, bytes);
+                  bytes[0] = 0;
+                });
+
+        try (var test = TestServer.start(app)) {
+
+          var result =
+              test.send(request ->
+                  request.path("/bytes").header("Accept", "text/plain; charset=iso-8859-1"));
+
+          assertEquals(200, result.statusCode());
+          assertEquals(
+              "text/plain; charset=ISO-8859-1",
+              result.headers().firstValue("Content-Type").orElseThrow());
+          assertArrayEquals(new byte[] {(byte) 0xe9}, result.body());
+        }
+      }
+    }
+  }
+
+  @Test
+  void mergesAcceptIntoVaryAndPreservesAnExistingWildcard() throws Exception {
+    {
+      var app = new Shoostr();
+
+      try (Closeable appCleanup5 = app::close) {
+        app.routes()
+            .get(
+                "/merged",
+                (ignoredRequest, response) -> {
+                  response.addHeader("Vary", "Origin, aCcEpT");
+                  response.addHeader("Vary", "User-Agent");
+                  var type = response.negotiate(MediaType.APPLICATION_JSON);
+                  response.body(type, new byte[] {1});
+                });
+        app.routes()
+            .get(
+                "/wildcard",
+                (ignoredRequest, response) -> {
+                  response.setHeader("Vary", "*");
+                  var type = response.negotiate(MediaType.APPLICATION_JSON);
+                  response.body(type, new byte[] {1});
+                });
+
+        try (var test = TestServer.start(app)) {
+          var merged =
+              test.send(
+                  request -> request.path("/merged").timeout(Duration.ofSeconds(3)),
+                  HttpResponse.BodyHandlers.discarding());
+          var wildcard =
+              test.send(
+                  request -> request.path("/wildcard").timeout(Duration.ofSeconds(3)),
+                  HttpResponse.BodyHandlers.discarding());
+
+          assertEquals(List.of("Origin, aCcEpT", "User-Agent"), merged.headers().allValues("Vary"));
+          assertEquals(List.of("*"), wildcard.headers().allValues("Vary"));
+        }
+      }
+    }
+  }
+
+  @Test
+  void readsRepeatedAcceptFieldsAsOnePreferenceList() throws Exception {
+    {
+      var app = new Shoostr();
+
+      try (Closeable appCleanup6 = app::close) {
+        app.routes().get("/negotiated", MediaTypeResponseTest::negotiate);
+
+        try (var test = TestServer.start(app)) {
+
+          var result = sendResultForReadsRepeatedAcceptFieldsAsOnePreferenceList(test);
+
+          assertEquals(200, result.statusCode());
+          assertEquals("text/plain", result.body());
+          assertEquals("text/plain", result.headers().firstValue("Content-Type").orElseThrow());
+        }
+      }
+    }
+  }
+
+  private HttpResponse<String> sendResultForReadsRepeatedAcceptFieldsAsOnePreferenceList(
+      TestServer test) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/negotiated")
+                .header("Accept", "application/json;q=0.1")
+                .header("Accept", "text/plain"),
+        HttpResponse.BodyHandlers.ofString());
+  }
+
+  @Test
+  void ignoresEmptyAcceptListElementsAndParameterSegments() throws Exception {
+    {
+      var app = new Shoostr();
+
+      try (Closeable appCleanup7 = app::close) {
+        app.routes().get("/negotiated", MediaTypeResponseTest::negotiate);
+
+        try (var test = TestServer.start(app)) {
+
+          var result =
+              test.send(
+                  request -> request.path("/negotiated").header("Accept", ", text/plain; ;, "),
+                  HttpResponse.BodyHandlers.ofString());
+
+          assertEquals(200, result.statusCode());
+          assertEquals("text/plain", result.body());
+        }
+      }
+    }
+  }
+
+  @ParameterizedTest
+  @MethodSource("emptyAcceptFields")
+  void rejectsAnExplicitEmptyAcceptList(String accept) throws Exception {
+    {
+      var app = new Shoostr();
+
+      try (Closeable appCleanup8 = app::close) {
+        app.routes().get("/negotiated", MediaTypeResponseTest::negotiate);
+
+        try (var test = TestServer.start(app)) {
+
+          var result =
+              test.send(
+                  request -> request.path("/negotiated").header("Accept", accept),
+                  HttpResponse.BodyHandlers.ofString());
+
+          assertEquals(406, result.statusCode());
+          assertEquals("Accept", result.headers().firstValue("Vary").orElseThrow());
+        }
+      }
+    }
+  }
+
+  @Test
+  void rejectsTheExactRepresentationWhenWildcardWithParametersHasHigherQuality() throws Exception {
+    {
+      var app = new Shoostr();
+
+      try (Closeable appCleanup9 = app::close) {
+        app.routes().get("/negotiated", MediaTypeResponseTest::negotiateUtf8Text);
+
+        try (var test = TestServer.start(app)) {
+
+          var result =
+              sendResultForRejectsTheExactRepresentationWhenWildcardWithParametersHasHigherQuality(
+                  test);
+
+          assertEquals(406, result.statusCode());
+        }
+      }
+    }
+  }
+
+  private HttpResponse<String>
+      sendResultForRejectsTheExactRepresentationWhenWildcardWithParametersHasHigherQuality(
+          TestServer test) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/negotiated")
+                .header("Accept", "text/plain;q=0, text/*;charset=utf-8;q=1"),
+        HttpResponse.BodyHandlers.ofString());
+  }
+
+  @Test
+  void selectsTheExactRepresentationOverAnExcludedWildcardWithParameters() throws Exception {
+    {
+      var app = new Shoostr();
+
+      try (Closeable appCleanup10 = app::close) {
+        app.routes().get("/negotiated", MediaTypeResponseTest::negotiateUtf8Text);
+
+        try (var test = TestServer.start(app)) {
+
+          var result =
+              sendResultForSelectsTheExactRepresentationOverAnExcludedWildcardWithParameters(test);
+
+          assertEquals(200, result.statusCode());
+        }
+      }
+    }
+  }
+
+  private HttpResponse<String>
+      sendResultForSelectsTheExactRepresentationOverAnExcludedWildcardWithParameters(
+          TestServer test) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/negotiated")
+                .header("Accept", "text/plain;q=1, text/*;charset=utf-8;q=0"),
+        HttpResponse.BodyHandlers.ofString());
+  }
+
+  @Test
+  void permitsTabsInsideQuotedParameters() throws Exception {
+    {
+      var app = new Shoostr();
+
+      try (Closeable appCleanup11 = app::close) {
+        app.routes().get("/negotiated", MediaTypeResponseTest::negotiate);
+
+        try (var test = TestServer.start(app)) {
+
+          var result = sendResultForPermitsTabsInsideQuotedParameters(test);
+
+          assertEquals(200, result.statusCode());
+          assertEquals("application/json", result.body());
+        }
+      }
+    }
+  }
+
+  private HttpResponse<String> sendResultForPermitsTabsInsideQuotedParameters(TestServer test)
+      throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/negotiated")
+                .header("Accept", "application/json, text/plain;note=\"a\tb\""),
+        HttpResponse.BodyHandlers.ofString());
+  }
+
+  @ParameterizedTest
+  @MethodSource("acceptCases")
+  void appliesAcceptWildcardsWeightsSpecificityParametersAndCallerOrder(
+      String accept, MediaType expected) throws Exception {
+    {
+      var app = new Shoostr();
+
+      try (Closeable appCleanup12 = app::close) {
+        app.routes().get("/negotiated", MediaTypeResponseTest::negotiate);
+
+        try (var test = TestServer.start(app)) {
+
+          var result =
+              test.send(
+                  request -> request.path("/negotiated").header("Accept", accept),
+                  HttpResponse.BodyHandlers.ofString());
+
+          assertEquals(200, result.statusCode());
+          assertEquals(expected.value(), result.body());
+          assertEquals(expected.value(), result.headers().firstValue("Content-Type").orElseThrow());
+          assertEquals("Accept", result.headers().firstValue("Vary").orElseThrow());
+        }
+      }
+    }
+  }
+
+  @ParameterizedTest
+  @MethodSource("malformedAcceptFields")
+  void rejectsMalformedAcceptWithoutVary(String accept) throws Exception {
+    {
+      var app = new Shoostr();
+
+      try (Closeable appCleanup13 = app::close) {
+        app.routes().get("/negotiated", MediaTypeResponseTest::negotiate);
+
+        try (var test = TestServer.start(app)) {
+
+          var result =
+              test.send(
+                  request -> request.path("/negotiated").header("Accept", accept),
+                  HttpResponse.BodyHandlers.ofString());
+
+          assertEquals(400, result.statusCode());
+          assertEquals("Bad Request", result.body());
+          assertTrue(result.headers().firstValue("Vary").isEmpty());
+        }
+      }
+    }
+  }
+
+  @Test
+  void rejectsNegotiationAfterStreamingHasCommittedHeaders() throws Exception {
+    var failure = new AtomicReference<Throwable>();
+
+    {
+      var app = new Shoostr();
+
+      try (Closeable appCleanup14 = app::close) {
+        app.routes()
+            .get(
+                "/stream",
+                (ignoredRequest, response) -> {
+                  response.startStream(MediaType.TEXT_PLAIN).write("ready");
+                  failure.set(
+                      assertThrows(
+                          IllegalStateException.class,
+                          () -> response.negotiate(MediaType.TEXT_PLAIN)));
+                });
+
+        try (var test = TestServer.start(app)) {
+          var result =
+              test.send(
+                  request -> request.path("/stream").timeout(Duration.ofSeconds(3)),
+                  HttpResponse.BodyHandlers.ofString());
+
+          assertEquals(200, result.statusCode());
+          assertEquals("ready", result.body());
+          assertEquals(IllegalStateException.class, failure.get().getClass());
+        }
+      }
+    }
+  }
+
+  @Test
+  void rejectsRepresentationExcludedBySpecificZeroQualityRange() throws Exception {
+    {
+      var app = new Shoostr();
+
+      try (Closeable appCleanup15 = app::close) {
+        app.routes()
+            .get(
+                "/negotiated",
+                (ignoredRequest, response) -> {
+                  response.addHeader("Vary", "Origin");
+                  var type = response.negotiate(MediaType.APPLICATION_JSON);
+                  response.body(type, new byte[] {1});
+                });
+
+        try (var test = TestServer.start(app)) {
+
+          var result =
+              test.send(
+                  request ->
+                      request.path("/negotiated").header("Accept", "*/*;q=1, application/json;q=0"),
+                  HttpResponse.BodyHandlers.ofString());
+
+          assertEquals(406, result.statusCode());
+          assertEquals("Not Acceptable", result.body());
+          assertEquals(List.of("Origin", "Accept"), result.headers().allValues("Vary"));
+        }
+      }
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "text/plain;charset=iso-8859-1",
+        "text/plain;charset=utf-8;q=0, text/plain;charset=utf-8;q=1",
+        "application/xml",
+        "image/json"
+      })
+  void rejectsAcceptPreferencesThatExcludeEveryOfferedRepresentation(String accept)
+      throws Exception {
+    var app = new Shoostr();
+
+    try (Closeable appCleanup = app::close) {
+      app.routes().get("/negotiated", MediaTypeResponseTest::negotiate);
+
+      try (var test = TestServer.start(app)) {
+        var result =
+            test.send(
+                request -> request.path("/negotiated").header("Accept", accept),
+                HttpResponse.BodyHandlers.ofString());
+
+        assertEquals(406, result.statusCode());
+        assertEquals("Not Acceptable", result.body());
+        assertEquals(List.of("Accept"), result.headers().allValues("Vary"));
+      }
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(ints = {1, 127})
+  void rejectsQuotedControlsSuppliedByNativeRequestCustomization(int control) throws Exception {
+    var app = new Shoostr();
+
+    try (Closeable appCleanup = app::close) {
+      var accept = "application/json, text/plain;note=\"a" + (char) control + "b\"";
+      app.modifyHttpConfiguration(configuration ->
+          configuration.addCustomizer(
+              (nativeRequest, ignoredHeaders) -> requestWithAccept(nativeRequest, accept)));
+
+      var entered = new AtomicBoolean();
+      app.routes()
+          .get(
+              "/negotiated",
+              (request, response) -> {
+                entered.set(true);
+                response.text(response.negotiate(MediaType.APPLICATION_JSON).value());
+              });
+
+      try (var test = TestServer.start(app)) {
+        var result =
+            test.send(request -> request.path("/negotiated"), HttpResponse.BodyHandlers.ofString());
+
+        assertTrue(entered.get());
+        assertEquals(400, result.statusCode());
+        assertEquals("Bad Request", result.body());
+        assertTrue(result.headers().allValues("Vary").isEmpty());
+      }
+    }
+  }
+
+  private Wrapper requestWithAccept(org.eclipse.jetty.server.Request nativeRequest, String accept) {
+    var fields = HttpFields.build(nativeRequest.getHeaders());
+    fields.put("Accept", accept);
+
+    return new Wrapper(nativeRequest) {
+      @Override
+      public HttpFields getHeaders() {
+        return fields;
+      }
+    };
+  }
+
+  @Test
+  void negotiatesTheHighestWeightedAcceptCandidate() throws Exception {
+    {
+      var app = new Shoostr();
+
+      try (Closeable appCleanup16 = app::close) {
+        app.routes()
+            .get(
+                "/negotiated",
+                (ignoredRequest, response) -> {
+                  var type = response.negotiate(MediaType.APPLICATION_JSON, MediaType.TEXT_PLAIN);
+                  response.body(type, type.value().getBytes(StandardCharsets.UTF_8));
+                });
+
+        try (var test = TestServer.start(app)) {
+
+          var result = sendResultForNegotiatesTheHighestWeightedAcceptCandidate(test);
+
+          assertEquals(200, result.statusCode());
+          assertEquals("text/plain", result.body());
+          assertEquals("text/plain", result.headers().firstValue("Content-Type").orElseThrow());
+          assertEquals("Accept", result.headers().firstValue("Vary").orElseThrow());
+        }
+      }
+    }
+  }
+
+  private HttpResponse<String> sendResultForNegotiatesTheHighestWeightedAcceptCandidate(
+      TestServer test) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request.path("/negotiated").header("Accept", "application/json;q=0.5, text/plain"),
+        HttpResponse.BodyHandlers.ofString());
+  }
+
+  @Test
+  void negotiatesTheFirstCandidateWithoutAcceptAndAddsVary() throws Exception {
+    {
+      var app = new Shoostr();
+
+      try (Closeable appCleanup17 = app::close) {
+        app.routes()
+            .get(
+                "/negotiated",
+                (ignoredRequest, response) -> {
+                  var type = response.negotiate(MediaType.APPLICATION_JSON, MediaType.TEXT_PLAIN);
+                  response.body(type, type.value().getBytes(StandardCharsets.UTF_8));
+                });
+
+        try (var test = TestServer.start(app)) {
+          var result =
+              test.send(
+                  request -> request.path("/negotiated").timeout(Duration.ofSeconds(3)),
+                  HttpResponse.BodyHandlers.ofString());
+
+          assertEquals(200, result.statusCode());
+          assertEquals("application/json", result.body());
+          assertEquals(
+              "application/json", result.headers().firstValue("Content-Type").orElseThrow());
+          assertEquals("Accept", result.headers().firstValue("Vary").orElseThrow());
+        }
+      }
+    }
+  }
+
+  @Test
+  void sendsFiniteBytesWithTheSelectedCharset() throws Exception {
+    {
+      var app = new Shoostr();
+
+      try (Closeable appCleanup18 = app::close) {
+        app.routes()
+            .get(
+                "/latin",
+                (ignoredRequest, response) -> {
+                  var bytes = new byte[] {(byte) 0xe9};
+                  response.body(
+                      MediaType.TEXT_PLAIN.withCharset(StandardCharsets.ISO_8859_1), bytes);
+                  bytes[0] = 0;
+                });
+
+        try (var test = TestServer.start(app)) {
+          var result = test.send(request -> request.path("/latin").timeout(Duration.ofSeconds(3)));
+
+          assertEquals(200, result.statusCode());
+          assertEquals(
+              "text/plain; charset=ISO-8859-1",
+              result.headers().firstValue("Content-Type").orElseThrow());
+          assertArrayEquals(new byte[] {(byte) 0xe9}, result.body());
+        }
+      }
+    }
+  }
+
+  @Test
+  void streamsTypedContentWithinTheHandlerLifetime() throws Exception {
+    var release = new CountDownLatch(1);
+    var retained = new AtomicReference<Response.Stream>();
+
+    {
+      var app = new Shoostr();
+
+      try (Closeable appCleanup19 = app::close) {
+        app.routes()
+            .get(
+                "/stream",
+                (ignoredRequest, response) -> {
+                  var stream =
+                      response.startStream(
+                          MediaType.TEXT_PLAIN.withCharset(StandardCharsets.UTF_8));
+                  retained.set(stream);
+                  stream.write("first");
+                  stream.flush();
+                  if (!release.await(5, TimeUnit.SECONDS)) {
+                    throw new IllegalStateException("Timed out waiting for reader");
+                  }
+
+                  stream.write("last");
+                });
+
+        try (var test = TestServer.start(app)) {
+
+          try {
+            var result =
+                test.send(
+                    request -> request.path("/stream").timeout(Duration.ofSeconds(3)),
+                    HttpResponse.BodyHandlers.ofInputStream());
+
+            assertEquals(
+                "text/plain; charset=UTF-8",
+                result.headers().firstValue("Content-Type").orElseThrow());
+
+            try (var input = result.body()) {
+              assertEquals("first", new String(input.readNBytes(5), StandardCharsets.UTF_8));
+
+              release.countDown();
+
+              assertEquals("last", new String(input.readAllBytes(), StandardCharsets.UTF_8));
+            }
+
+            var closedStream = retained.get();
+
+            assertThrows(IllegalStateException.class, () -> closedStream.write("late"));
+          } finally {
+            release.countDown();
+          }
+        }
+      }
+    }
+  }
+
+  @Test
+  void retainsParameterizedStringContentTypes() throws Exception {
+    {
+      var app = new Shoostr();
+
+      try (Closeable appCleanup20 = app::close) {
+        app.routes()
+            .get(
+                "/custom",
+                (ignoredRequest, response) ->
+                    response.body("application/example; note=\"a b\"", new byte[] {1, 2, 3}));
+
+        try (var test = TestServer.start(app)) {
+          var result = test.send(request -> request.path("/custom").timeout(Duration.ofSeconds(3)));
+
+          assertEquals(
+              "application/example; note=\"a b\"",
+              result.headers().firstValue("Content-Type").orElseThrow());
+          assertArrayEquals(new byte[] {1, 2, 3}, result.body());
+        }
+      }
+    }
   }
 }

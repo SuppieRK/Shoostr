@@ -19,7 +19,9 @@ public final class StreamingExample {
    */
   public static void main(String[] args) throws Exception {
     var app = application();
+
     app.start();
+
     LOGGER.info("Assets and streams: http://127.0.0.1:{}/assets/greeting.txt", app.port());
   }
 
@@ -35,16 +37,20 @@ public final class StreamingExample {
         .routes(
             routes -> {
               // Shoostr serves only this classpath directory; /assets is its public URL prefix.
-              routes.classpathResources("/assets", "/public");
-              routes.get(
-                  "/download",
-                  (ignored, response) -> {
-                    // Shoostr's response stream writes incrementally; flush sends the first chunk.
-                    var output = response.startStream("text/csv; charset=utf-8");
-                    output.write("name\n").flush();
-                    output.write("Ada\n");
-                    output.write("Grace\n");
-                  });
+              routes
+                  .classpathResources("/assets", "/public")
+                  .get(
+                      "/download",
+                      (ignored, response) -> {
+                        // Shoostr's response stream writes incrementally; flush sends the first
+                        // chunk.
+                        var output = response.startStream("text/csv; charset=utf-8");
+
+                        output.write("name\n").flush();
+
+                        output.write("Ada\n");
+                        output.write("Grace\n");
+                      });
             });
   }
 }

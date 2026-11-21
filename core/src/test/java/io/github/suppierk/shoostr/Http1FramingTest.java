@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.suppierk.shoostr.http.exceptions.AuthenticationRequiredException;
+import java.io.Closeable;
 import java.io.IOException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
@@ -29,6 +30,99 @@ class Http1FramingTest {
   private static final String PROTECTED_REQUEST =
       "GET /protected/value HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer allowed\r\n\r\n";
 
+  private static Shoostr app() {
+    var configuredOptions = new Options();
+    configuredOptions.setMaxRequestBytes(1024);
+    configuredOptions.setMaxResponseBytes(1024);
+    configuredOptions.setStreamBufferBytes(256);
+    configuredOptions.setMaxParameters(1000);
+    configuredOptions.setMultipart(new MultipartOptions());
+
+    return new Shoostr(configuredOptions)
+        .modifyServer(nativeServer -> {
+          var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
+          nativeConnector.setHost("127.0.0.1");
+          nativeConnector.setPort(0);
+          nativeConnector.setIdleTimeout(30_000);
+        });
+  }
+
+  private static void protectedRoute(
+      Shoostr app, AtomicInteger authenticationCalls, AtomicInteger protectedCalls) {
+    var authentication = createAuthenticationForProtectedRoute(authenticationCalls);
+
+    app.routes()
+        .path(
+            "/protected",
+            routes ->
+                routes.get(
+                    "/value",
+                    (ignoredRequest, response) -> {
+                      protectedCalls.incrementAndGet();
+                      response.text("permitted");
+                    }),
+            extensions -> extensions.withExtension(authentication));
+  }
+
+  private static AuthenticationExtension createAuthenticationForProtectedRoute(
+      AtomicInteger authenticationCalls) {
+    return new AuthenticationExtension() {
+      @Override
+      public void handle(Request request, Response response) {
+        authenticationCalls.incrementAndGet();
+        if (!"Bearer allowed".equals(request.header("Authorization").orElse(""))) {
+          throw new AuthenticationRequiredException("Bearer realm=\"wire-test\"");
+        }
+      }
+    };
+  }
+
+  private static Socket connect(int port) throws IOException {
+    var socket = new Socket();
+
+    try {
+      socket.setSoTimeout(3000);
+      socket.connect(new InetSocketAddress(InetAddress.getAllByName("127.0.0.1")[0], port), 3000);
+
+      return socket;
+    } catch (IOException failure) {
+      socket.close();
+      throw failure;
+    }
+  }
+
+  private static void write(Socket socket, String request) throws IOException {
+    socket.getOutputStream().write(request.getBytes(StandardCharsets.US_ASCII));
+    socket.getOutputStream().flush();
+  }
+
+  private static HttpTester.Response receive(HttpTester.Input input) throws IOException {
+    var response = HttpTester.parseResponse(input);
+
+    assertNotNull(response);
+
+    return response;
+  }
+
+  private static RequestOutcome completed(LinkedBlockingQueue<RequestOutcome> outcomes)
+      throws InterruptedException {
+    var outcome = outcomes.poll(3, TimeUnit.SECONDS);
+
+    assertNotNull(outcome);
+
+    return outcome;
+  }
+
+  private static void assertHealthy(Shoostr app) throws IOException {
+    try (var socket = connect(app.port())) {
+      write(socket, "GET /healthy HTTP/1.1\r\nHost: localhost\r\n\r\n");
+      var response = receive(HttpTester.from(socket.getInputStream()));
+
+      assertEquals(200, response.getStatus());
+      assertEquals("healthy", response.getContent());
+    }
+  }
+
   @ParameterizedTest
   @ValueSource(
       strings = {
@@ -42,64 +136,75 @@ class Http1FramingTest {
     var authenticationCalls = new AtomicInteger();
     var protectedCalls = new AtomicInteger();
 
-    try (var app = app()) {
-      // Jetty 12.1.14's default RFC9110 policy rejects both ambiguous framing forms.
-      app.onRequestHeaders((ignored, ignored2) -> admissions.incrementAndGet());
-      protectedRoute(app, authenticationCalls, protectedCalls);
-      app.routes().post("/body", (request, response) -> response.text(request.bodyText()));
-      app.routes().get("/healthy", (ignored3, response) -> response.text("healthy"));
-      app.start();
+    {
+      var app = app();
 
-      try (var socket = connect(app.port())) {
-        var input = HttpTester.from(socket.getInputStream());
-        write(
-            socket,
-            "POST /body HTTP/1.1\r\nHost: localhost\r\n"
-                + headers
-                + "\r\n0\r\n\r\n"
-                + PROTECTED_REQUEST);
-        var rejected = receive(input);
-        assertTrue(rejected.getStatus() >= 400 && rejected.getStatus() < 500);
-        assertNull(HttpTester.parseResponse(input));
-        assertTrue(input.isEOF());
-        assertEquals(0, admissions.get());
-        assertEquals(0, authenticationCalls.get());
-        assertEquals(0, protectedCalls.get());
+      try (Closeable appCleanup = app::close) {
+        // Jetty 12.1.14's default RFC9110 policy rejects both ambiguous framing forms.
+        app.onRequestHeaders((ignored, ignoredResponse) -> admissions.incrementAndGet());
+        protectedRoute(app, authenticationCalls, protectedCalls);
+        app.routes().post("/body", (request, response) -> response.text(request.bodyText()));
+        app.routes().get("/healthy", (ignoredRequest, response) -> response.text("healthy"));
+        app.start();
+
+        try (var socket = connect(app.port())) {
+          var input = HttpTester.from(socket.getInputStream());
+          write(
+              socket,
+              "POST /body HTTP/1.1\r\nHost: localhost\r\n"
+                  + headers
+                  + "\r\n0\r\n\r\n"
+                  + PROTECTED_REQUEST);
+          var rejected = receive(input);
+
+          assertTrue(rejected.getStatus() >= 400 && rejected.getStatus() < 500);
+          assertNull(HttpTester.parseResponse(input));
+          assertTrue(input.isEOF());
+          assertEquals(0, admissions.get());
+          assertEquals(0, authenticationCalls.get());
+          assertEquals(0, protectedCalls.get());
+        }
+
+        assertHealthy(app);
       }
-
-      assertHealthy(app);
     }
   }
 
   @Test
-  void acceptsAChunkedBodyAndReusesTheSameHttp1Connection() throws Exception {
-    try (var app = app()) {
-      app.routes().post("/body", (request, response) -> response.text(request.bodyText()));
-      app.routes().get("/healthy", (ignored4, response) -> response.text("healthy"));
-      app.start();
+  void acceptsChunkedBodyAndReusesTheSameHttp1Connection() throws Exception {
+    {
+      var app = app();
 
-      try (var socket = connect(app.port())) {
-        var input = HttpTester.from(socket.getInputStream());
-        write(
-            socket,
-            """
-            POST /body HTTP/1.1\r
-            Host: localhost\r
-            Transfer-Encoding: chunked\r
-            \r
-            4\r
-            body\r
-            0\r
-            \r
-            """);
-        var body = receive(input);
-        assertEquals(200, body.getStatus());
-        assertEquals("body", body.getContent());
+      try (Closeable appCleanup1 = app::close) {
+        app.routes().post("/body", (request, response) -> response.text(request.bodyText()));
+        app.routes().get("/healthy", (ignoredRequest, response) -> response.text("healthy"));
+        app.start();
 
-        write(socket, "GET /healthy HTTP/1.1\r\nHost: localhost\r\n\r\n");
-        var healthy = receive(input);
-        assertEquals(200, healthy.getStatus());
-        assertEquals("healthy", healthy.getContent());
+        try (var socket = connect(app.port())) {
+          var input = HttpTester.from(socket.getInputStream());
+          write(
+              socket,
+              """
+              POST /body HTTP/1.1\r
+              Host: localhost\r
+              Transfer-Encoding: chunked\r
+              \r
+              4\r
+              body\r
+              0\r
+              \r
+              """);
+          var body = receive(input);
+
+          assertEquals(200, body.getStatus());
+          assertEquals("body", body.getContent());
+
+          write(socket, "GET /healthy HTTP/1.1\r\nHost: localhost\r\n\r\n");
+          var healthy = receive(input);
+
+          assertEquals(200, healthy.getStatus());
+          assertEquals("healthy", healthy.getContent());
+        }
       }
     }
   }
@@ -112,56 +217,69 @@ class Http1FramingTest {
     var protectedCalls = new AtomicInteger();
     var outcomes = new LinkedBlockingQueue<RequestOutcome>();
 
-    try (var app = app()) {
-      app.afterRequest(outcomes::add);
-      protectedRoute(app, authenticationCalls, protectedCalls);
-      app.exception(
-          AuthenticationRequiredException.class,
-          (ignored5, ignored6, response) -> response.text("denied"));
-      app.routes()
-          .get(
-              "/slow",
-              (ignored7, response) -> {
-                entered.countDown();
-                assertTrue(release.await(3, TimeUnit.SECONDS));
-                response.text("first");
-              });
-      app.start();
+    {
+      var app = app();
 
-      try (var socket = connect(app.port())) {
-        try {
-          var input = HttpTester.from(socket.getInputStream());
-          write(
-              socket,
-              """
-                  GET /slow HTTP/1.1\r
-                  Host: localhost\r
-                  \r
-                  GET /protected/value HTTP/1.1\r
-                  Host: localhost\r
-                  \r
-                  """
-                  + PROTECTED_REQUEST);
-          assertTrue(entered.await(3, TimeUnit.SECONDS));
-          release.countDown();
+      try (Closeable appCleanup2 = app::close) {
+        app.afterRequest(outcomes::add);
+        protectedRoute(app, authenticationCalls, protectedCalls);
+        app.exception(
+            AuthenticationRequiredException.class,
+            (ignoredFailure, ignoredRequest, response) -> response.text("denied"));
+        app.routes()
+            .get(
+                "/slow",
+                (ignoredRequest, response) -> {
+                  entered.countDown();
 
-          var first = receive(input);
-          assertEquals(200, first.getStatus());
-          assertEquals("first", first.getContent());
-          var denied = receive(input);
-          assertEquals(401, denied.getStatus());
-          assertEquals("denied", denied.getContent());
-          var permitted = receive(input);
-          assertEquals(200, permitted.getStatus());
-          assertEquals("permitted", permitted.getContent());
-          assertEquals(200, completed(outcomes).statusCode());
-          assertEquals(401, completed(outcomes).statusCode());
-          assertEquals(200, completed(outcomes).statusCode());
-          assertNull(outcomes.poll());
-          assertEquals(2, authenticationCalls.get());
-          assertEquals(1, protectedCalls.get());
-        } finally {
-          release.countDown();
+                  assertTrue(release.await(3, TimeUnit.SECONDS));
+
+                  response.text("first");
+                });
+        app.start();
+
+        try (var socket = connect(app.port())) {
+          try {
+            final var input = HttpTester.from(socket.getInputStream());
+            write(
+                socket,
+                """
+                GET /slow HTTP/1.1\r
+                Host: localhost\r
+                \r
+                GET /protected/value HTTP/1.1\r
+                Host: localhost\r
+                \r
+                """
+                    + PROTECTED_REQUEST);
+
+            assertTrue(entered.await(3, TimeUnit.SECONDS));
+
+            release.countDown();
+
+            var first = receive(input);
+
+            assertEquals(200, first.getStatus());
+            assertEquals("first", first.getContent());
+
+            var denied = receive(input);
+
+            assertEquals(401, denied.getStatus());
+            assertEquals("denied", denied.getContent());
+
+            var permitted = receive(input);
+
+            assertEquals(200, permitted.getStatus());
+            assertEquals("permitted", permitted.getContent());
+            assertEquals(200, completed(outcomes).statusCode());
+            assertEquals(401, completed(outcomes).statusCode());
+            assertEquals(200, completed(outcomes).statusCode());
+            assertNull(outcomes.poll());
+            assertEquals(2, authenticationCalls.get());
+            assertEquals(1, protectedCalls.get());
+          } finally {
+            release.countDown();
+          }
         }
       }
     }
@@ -177,130 +295,66 @@ class Http1FramingTest {
     var failures = new LinkedBlockingQueue<IOException>();
     var outcomes = new LinkedBlockingQueue<RequestOutcome>();
 
-    try (var app = app()) {
-      app.onRequestHeaders((ignored8, ignored9) -> admissions.incrementAndGet());
-      app.afterRequest(outcomes::add);
-      protectedRoute(app, authenticationCalls, protectedCalls);
-      app.routes()
-          .post(
-              "/body",
-              (request, ignored10) -> {
-                var source = request.input();
-                assertEquals('a', source.read());
-                initialRead.countDown();
-                var failure = assertThrows(IOException.class, source::read);
-                failures.add(failure);
-                throw failure;
-              });
-      app.routes().get("/healthy", (ignored11, response) -> response.text("healthy"));
-      app.start();
+    {
+      var app = app();
 
-      try (var socket = connect(app.port())) {
-        var input = HttpTester.from(socket.getInputStream());
-        write(
-            socket,
-            """
-            POST /body HTTP/1.1\r
-            Host: localhost\r
-            Transfer-Encoding: chunked\r
-            \r
-            1\r
-            a\r
-            """);
-        assertTrue(initialRead.await(3, TimeUnit.SECONDS));
-        write(socket, "Z\r\nmalformed\r\n0\r\n\r\n" + PROTECTED_REQUEST);
+      try (Closeable appCleanup3 = app::close) {
+        app.onRequestHeaders((ignoredRequest, ignoredResponse) -> admissions.incrementAndGet());
+        app.afterRequest(outcomes::add);
+        protectedRoute(app, authenticationCalls, protectedCalls);
+        app.routes()
+            .post(
+                "/body",
+                (request, ignoredResponse) -> {
+                  var source = request.input();
 
-        var rejected = receive(input);
-        assertTrue(rejected.getStatus() >= 400 && rejected.getStatus() < 600);
-        assertNull(HttpTester.parseResponse(input));
-        assertTrue(input.isEOF());
-        var failure = failures.poll(3, TimeUnit.SECONDS);
-        assertNotNull(failure);
-        assertSame(failure, completed(outcomes).applicationFailure());
-        assertNull(outcomes.poll());
-        assertEquals(1, admissions.get());
-        assertEquals(0, authenticationCalls.get());
-        assertEquals(0, protectedCalls.get());
+                  assertEquals('a', source.read());
+
+                  initialRead.countDown();
+
+                  var failure = assertThrows(IOException.class, source::read);
+
+                  failures.add(failure);
+                  throw failure;
+                });
+        app.routes().get("/healthy", (ignoredRequest, response) -> response.text("healthy"));
+        app.start();
+
+        try (var socket = connect(app.port())) {
+          final var input = HttpTester.from(socket.getInputStream());
+          write(
+              socket,
+              """
+              POST /body HTTP/1.1\r
+              Host: localhost\r
+              Transfer-Encoding: chunked\r
+              \r
+              1\r
+              a\r
+              """);
+
+          assertTrue(initialRead.await(3, TimeUnit.SECONDS));
+
+          write(socket, "Z\r\nmalformed\r\n0\r\n\r\n" + PROTECTED_REQUEST);
+
+          var rejected = receive(input);
+
+          assertTrue(rejected.getStatus() >= 400 && rejected.getStatus() < 600);
+          assertNull(HttpTester.parseResponse(input));
+          assertTrue(input.isEOF());
+
+          var failure = failures.poll(3, TimeUnit.SECONDS);
+
+          assertNotNull(failure);
+          assertSame(failure, completed(outcomes).applicationFailure());
+          assertNull(outcomes.poll());
+          assertEquals(1, admissions.get());
+          assertEquals(0, authenticationCalls.get());
+          assertEquals(0, protectedCalls.get());
+        }
+
+        assertHealthy(app);
       }
-
-      assertHealthy(app);
-    }
-  }
-
-  private static Shoostr app() {
-    return new Shoostr(new Options(1024, 1024, 256, 1000, MultipartOptions.defaults()))
-        .modifyServer(
-            nativeServer -> {
-              var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
-              nativeConnector.setHost("127.0.0.1");
-              nativeConnector.setPort(0);
-              nativeConnector.setIdleTimeout(30_000);
-            });
-  }
-
-  private static void protectedRoute(
-      Shoostr app, AtomicInteger authenticationCalls, AtomicInteger protectedCalls) {
-    var authentication =
-        new AuthenticationExtension() {
-          @Override
-          public void handle(Request request, Response response) {
-            authenticationCalls.incrementAndGet();
-            if (!"Bearer allowed".equals(request.header("Authorization").orElse(""))) {
-              throw new AuthenticationRequiredException("Bearer realm=\"wire-test\"");
-            }
-          }
-        };
-    app.authentication(authentication);
-    app.routes()
-        .path(
-            "/protected",
-            routes ->
-                routes.get(
-                    "/value",
-                    (ignored12, response) -> {
-                      protectedCalls.incrementAndGet();
-                      response.text("permitted");
-                    }),
-            extensions -> extensions.with(authentication));
-  }
-
-  private static Socket connect(int port) throws IOException {
-    var socket = new Socket();
-
-    try {
-      socket.setSoTimeout(3000);
-      socket.connect(new InetSocketAddress(InetAddress.getAllByName("127.0.0.1")[0], port), 3000);
-      return socket;
-    } catch (IOException failure) {
-      socket.close();
-      throw failure;
-    }
-  }
-
-  private static void write(Socket socket, String request) throws IOException {
-    socket.getOutputStream().write(request.getBytes(StandardCharsets.US_ASCII));
-    socket.getOutputStream().flush();
-  }
-
-  private static HttpTester.Response receive(HttpTester.Input input) throws IOException {
-    var response = HttpTester.parseResponse(input);
-    assertNotNull(response);
-    return response;
-  }
-
-  private static RequestOutcome completed(LinkedBlockingQueue<RequestOutcome> outcomes)
-      throws InterruptedException {
-    var outcome = outcomes.poll(3, TimeUnit.SECONDS);
-    assertNotNull(outcome);
-    return outcome;
-  }
-
-  private static void assertHealthy(Shoostr app) throws IOException {
-    try (var socket = connect(app.port())) {
-      write(socket, "GET /healthy HTTP/1.1\r\nHost: localhost\r\n\r\n");
-      var response = receive(HttpTester.from(socket.getInputStream()));
-      assertEquals(200, response.getStatus());
-      assertEquals("healthy", response.getContent());
     }
   }
 }

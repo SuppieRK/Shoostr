@@ -17,84 +17,25 @@ import org.jspecify.annotations.Nullable;
 /**
  * Scoped browser response sharing, resolved before authentication and request admission.
  *
- * <p>Equality compares the immutable policy. Installation and route selection identify the exact
- * extension instance independently of this value comparison.
+ * <p>Equality compares the private policy snapshot. Installation and route selection identify the
+ * exact extension instance independently of this value comparison.
  *
- * @param policy immutable cross-origin permissions
+ * @param policy mutable cross-origin configuration copied on construction
  */
-public record Cors(CorsPolicy policy) implements Extension<Cors.Configuration> {
+public record Cors(CorsPolicy policy)
+    implements ApplicationExtension<Cors.Configuration>, RouteExtension<Cors.Configuration> {
+  static final Map<String, String> OPTIONS_VARIATION = optionsVariation();
+
   private static final Map<String, String> VARIATION =
       Map.of(HttpHeaders.VARY.value(), HttpHeaders.ORIGIN.value());
-  static final Map<String, String> OPTIONS_VARIATION =
-      Map.of(
-          HttpHeaders.VARY.value(),
-          String.join(
-              ", ",
-              HttpHeaders.ORIGIN.value(),
-              HttpHeaders.ACCESS_CONTROL_REQUEST_METHOD.value(),
-              HttpHeaders.ACCESS_CONTROL_REQUEST_HEADERS.value()));
 
   /**
    * Creates immutable sharing behavior from validated permissions.
    *
-   * @param policy immutable permissions
+   * @param policy permissions to snapshot
    */
   public Cors {
-    Objects.requireNonNull(policy);
-  }
-
-  /**
-   * Returns the immutable configuration, including typed allowed/exposed headers.
-   *
-   * @return configured policy
-   */
-  @Override
-  public CorsPolicy policy() {
-    return policy;
-  }
-
-  /** {@inheritDoc} */
-  @Override
-  public Configuration configure(Extensions endpoint, @Nullable Configuration inherited) {
-    return new Configuration(endpoint, this, inherited);
-  }
-
-  /** Scope-local complete policy replacement for one installed owner. */
-  public static final class Configuration {
-    private final Extensions endpoint;
-    private final Cors cors;
-    private CorsPolicy policy;
-
-    /**
-     * Creates an independent selection.
-     *
-     * @param endpoint contribution scope
-     * @param cors installed owner
-     * @param inherited enclosing configuration, or null
-     */
-    private Configuration(Extensions endpoint, Cors cors, @Nullable Configuration inherited) {
-      this.endpoint = Objects.requireNonNull(endpoint);
-      this.cors = Objects.requireNonNull(cors);
-      policy = inherited == null ? cors.policy : inherited.policy;
-      endpoint.cors(cors, policy);
-    }
-
-    /**
-     * Replaces the complete policy without changing the selected owner.
-     *
-     * @param contribution complete immutable replacement
-     * @return this configuration
-     * @throws IllegalStateException if registration has finished
-     * @throws IllegalArgumentException if the resolved permissions are invalid
-     */
-    public Configuration policy(CorsPolicy contribution) {
-      endpoint.requireMutable();
-      var combined = Objects.requireNonNull(contribution);
-      endpoint.cors(cors, combined);
-
-      policy = combined;
-      return this;
-    }
+    policy = new CorsPolicy(Objects.requireNonNull(policy));
   }
 
   /**
@@ -105,7 +46,7 @@ public record Cors(CorsPolicy policy) implements Extension<Cors.Configuration> {
    */
   static void validatePreflight(Request request) {
     validatedOrigin(request.headers(HttpHeaders.ORIGIN.value()));
-    var methods = request.headers(HttpHeaders.ACCESS_CONTROL_REQUEST_METHOD.value());
+    final var methods = request.headers(HttpHeaders.ACCESS_CONTROL_REQUEST_METHOD.value());
     if (methods.size() != 1) {
       throw new BadRequestException();
     }
@@ -117,7 +58,7 @@ public record Cors(CorsPolicy policy) implements Extension<Cors.Configuration> {
   /**
    * Selects immutable response fields before application processing.
    *
-   * @param policy immutable effective permissions for this binding
+   * @param policy private effective permissions for this binding
    * @param request invocation input
    * @param response output receiving required sharing fields
    * @return whether this is an admitted preflight
@@ -125,18 +66,19 @@ public record Cors(CorsPolicy policy) implements Extension<Cors.Configuration> {
    * @throws ForbiddenException if cross-origin permissions are denied
    */
   static boolean prepare(CorsPolicy policy, Request request, Response response) {
-    boolean options = HttpMethods.OPTIONS.value().equals(request.method());
-    var variation = options ? OPTIONS_VARIATION : VARIATION;
+    final var options = HttpMethods.OPTIONS.value().equals(request.method());
+    final var variation = options ? OPTIONS_VARIATION : VARIATION;
     response.corsHeaders(variation);
-    var incomingOrigins = request.headers(HttpHeaders.ORIGIN.value());
+
+    final var incomingOrigins = request.headers(HttpHeaders.ORIGIN.value());
     if (incomingOrigins.isEmpty()) {
       return false;
     }
 
-    var origin = validatedOrigin(incomingOrigins);
+    final var origin = validatedOrigin(incomingOrigins);
 
-    var requestedMethods = request.headers(HttpHeaders.ACCESS_CONTROL_REQUEST_METHOD.value());
-    boolean preflight = options && !requestedMethods.isEmpty();
+    final var requestedMethods = request.headers(HttpHeaders.ACCESS_CONTROL_REQUEST_METHOD.value());
+    final var preflight = options && !requestedMethods.isEmpty();
     if (preflight && requestedMethods.size() != 1) {
       throw new BadRequestException();
     }
@@ -145,7 +87,7 @@ public record Cors(CorsPolicy policy) implements Extension<Cors.Configuration> {
       return false;
     }
 
-    var method = preflight ? requestedMethods.getFirst() : request.method();
+    final var method = preflight ? requestedMethods.getFirst() : request.method();
     validateToken(method);
     if (!policy.origins().contains(origin)
         && !policy.origins().contains(HttpCharacters.ASTERISK_STRING)) {
@@ -157,7 +99,7 @@ public record Cors(CorsPolicy policy) implements Extension<Cors.Configuration> {
       throw new ForbiddenException();
     }
 
-    Map<String, String> fields = new HashMap<>(variation);
+    final var fields = new HashMap<>(variation);
     fields.put(
         HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN.value(),
         policy.origins().contains(HttpCharacters.ASTERISK_STRING)
@@ -169,7 +111,23 @@ public record Cors(CorsPolicy policy) implements Extension<Cors.Configuration> {
 
     populateResponseHeaders(policy, fields, request, method, preflight);
     response.corsHeaders(Map.copyOf(fields));
+
     return preflight;
+  }
+
+  /**
+   * Lists the request fields that affect a preflight response.
+   *
+   * @return immutable preflight variation
+   */
+  private static Map<String, String> optionsVariation() {
+    return Map.of(
+        HttpHeaders.VARY.value(),
+        String.join(
+            ", ",
+            HttpHeaders.ORIGIN.value(),
+            HttpHeaders.ACCESS_CONTROL_REQUEST_METHOD.value(),
+            HttpHeaders.ACCESS_CONTROL_REQUEST_HEADERS.value()));
   }
 
   /**
@@ -185,7 +143,7 @@ public record Cors(CorsPolicy policy) implements Extension<Cors.Configuration> {
       throw new BadRequestException();
     }
 
-    var origin = incomingOrigins.getFirst();
+    final var origin = incomingOrigins.getFirst();
 
     try {
       Origins.validateOrigin(origin);
@@ -199,7 +157,7 @@ public record Cors(CorsPolicy policy) implements Extension<Cors.Configuration> {
   /**
    * Adds response headers that differ between preflight and ordinary CORS requests.
    *
-   * @param policy immutable effective permissions
+   * @param policy private effective permissions
    * @param fields mutable response fields
    * @param request incoming request
    * @param method validated requested method
@@ -212,7 +170,7 @@ public record Cors(CorsPolicy policy) implements Extension<Cors.Configuration> {
       String method,
       boolean preflight) {
     if (preflight) {
-      var requestedHeaders = requestedHeaders(policy, request);
+      final var requestedHeaders = requestedHeaders(policy, request);
       fields.put(HttpHeaders.ACCESS_CONTROL_ALLOW_METHODS.value(), method);
       if (!requestedHeaders.isEmpty()) {
         fields.put(
@@ -231,14 +189,14 @@ public record Cors(CorsPolicy policy) implements Extension<Cors.Configuration> {
   /**
    * Combines requested-header list fields, validates tokens and applies explicit permissions.
    *
-   * @param policy immutable effective permissions
+   * @param policy private effective permissions
    * @param request invocation input
    * @return unique lowercase header names in stable order
    * @throws ForbiddenException if a requested header is not allowed
    */
   private static Set<String> requestedHeaders(CorsPolicy policy, Request request) {
-    var names = validateRequestedHeaders(request);
-    for (var name : names) {
+    final var names = validateRequestedHeaders(request);
+    for (final var name : names) {
       if (!policy.allowedHeaders().contains(HttpHeaders.of(HttpCharacters.ASTERISK_STRING))
           && !policy.allowedHeaders().contains(HttpHeaders.of(name))) {
         throw new ForbiddenException();
@@ -255,11 +213,11 @@ public record Cors(CorsPolicy policy) implements Extension<Cors.Configuration> {
    * @throws BadRequestException if preflight fields are malformed
    */
   private static Set<String> validateRequestedHeaders(Request request) {
-    var values = request.headers(HttpHeaders.ACCESS_CONTROL_REQUEST_HEADERS.value());
-    var names = new TreeSet<String>();
-    for (var value : values) {
-      for (var token : value.split(HttpCharacters.COMMA_SIGN_STRING, -1)) {
-        var name = token.trim();
+    final var values = request.headers(HttpHeaders.ACCESS_CONTROL_REQUEST_HEADERS.value());
+    final var names = new TreeSet<String>();
+    for (final var value : values) {
+      for (final var token : value.split(HttpCharacters.COMMA_SIGN_STRING, -1)) {
+        final var name = token.trim();
         if (name.isEmpty()) {
           continue;
         }
@@ -268,6 +226,7 @@ public record Cors(CorsPolicy policy) implements Extension<Cors.Configuration> {
         names.add(name.toLowerCase(Locale.ROOT));
       }
     }
+
     if (!values.isEmpty() && names.isEmpty()) {
       throw new BadRequestException();
     }
@@ -285,6 +244,60 @@ public record Cors(CorsPolicy policy) implements Extension<Cors.Configuration> {
     if (!HttpCharacters.isValidHttpToken(token)) {
       throw new BadRequestException(
           new IllegalArgumentException("HTTP field name must be an RFC 9110 token"));
+    }
+  }
+
+  /**
+   * Returns a defensive configuration copy, including typed allowed/exposed headers.
+   *
+   * @return independent policy copy
+   */
+  @Override
+  public CorsPolicy policy() {
+    return new CorsPolicy(policy);
+  }
+
+  /** {@inheritDoc} */
+  @Override
+  public Configuration configure(Lifecycle endpoint, @Nullable Configuration inherited) {
+    return new Configuration(endpoint, this, inherited);
+  }
+
+  /** Scope-local complete policy replacement for one installed owner. */
+  public static final class Configuration {
+    private final Lifecycle endpoint;
+    private final Cors cors;
+    private CorsPolicy policy;
+
+    /**
+     * Creates an independent selection.
+     *
+     * @param endpoint contribution scope
+     * @param cors installed owner
+     * @param inherited enclosing configuration, or null
+     */
+    private Configuration(Lifecycle endpoint, Cors cors, @Nullable Configuration inherited) {
+      this.endpoint = Objects.requireNonNull(endpoint);
+      this.cors = Objects.requireNonNull(cors);
+      this.policy = inherited == null ? cors.policy : inherited.policy;
+      endpoint.cors(cors, policy);
+    }
+
+    /**
+     * Replaces the complete policy without changing the selected owner.
+     *
+     * @param contribution complete replacement copied before publication
+     * @return this configuration
+     * @throws IllegalStateException if registration has finished
+     * @throws IllegalArgumentException if the resolved permissions are invalid
+     */
+    public Configuration policy(CorsPolicy contribution) {
+      endpoint.requireMutable();
+      final var combined = new CorsPolicy(Objects.requireNonNull(contribution));
+      endpoint.cors(cors, combined);
+
+      policy = combined;
+      return this;
     }
   }
 }

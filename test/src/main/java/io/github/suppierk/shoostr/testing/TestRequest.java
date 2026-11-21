@@ -26,11 +26,11 @@ public final class TestRequest {
    */
   TestRequest(URI baseUri) {
     this.baseUri = Objects.requireNonNull(baseUri);
-    builder = HttpRequest.newBuilder(baseUri).timeout(Duration.ofSeconds(10));
-    method = "GET";
-    body = HttpRequest.BodyPublishers.noBody();
-    pathConfigured = false;
-    finished = false;
+    this.builder = HttpRequest.newBuilder(baseUri).timeout(Duration.ofSeconds(10));
+    this.method = "GET";
+    this.body = HttpRequest.BodyPublishers.noBody();
+    this.pathConfigured = false;
+    this.finished = false;
   }
 
   /**
@@ -45,7 +45,8 @@ public final class TestRequest {
    */
   public TestRequest path(String path) {
     requireOpen();
-    var relative = URI.create(Objects.requireNonNull(path));
+
+    final var relative = URI.create(Objects.requireNonNull(path));
     if (path.isEmpty()
         || relative.isAbsolute()
         || relative.getRawAuthority() != null
@@ -57,6 +58,7 @@ public final class TestRequest {
 
     builder.uri(baseUri.resolve(relative));
     pathConfigured = true;
+
     return this;
   }
 
@@ -71,8 +73,10 @@ public final class TestRequest {
    */
   public TestRequest method(String method) {
     requireOpen();
+
     builder.method(Objects.requireNonNull(method), body);
     this.method = method;
+
     return this;
   }
 
@@ -100,7 +104,9 @@ public final class TestRequest {
    */
   public TestRequest header(String name, String value) {
     requireOpen();
+
     builder.header(name, value);
+
     return this;
   }
 
@@ -128,8 +134,10 @@ public final class TestRequest {
    */
   public TestRequest body(byte[] bytes) {
     requireOpen();
+
     body = HttpRequest.BodyPublishers.ofByteArray(Objects.requireNonNull(bytes).clone());
     builder.method(method, body);
+
     return this;
   }
 
@@ -144,7 +152,9 @@ public final class TestRequest {
    */
   public TestRequest timeout(Duration timeout) {
     requireOpen();
+
     builder.timeout(timeout);
+
     return this;
   }
 
@@ -154,14 +164,17 @@ public final class TestRequest {
    * @return immutable outgoing request
    * @throws IllegalStateException if no path was configured or the callback has finished
    */
-  @SuppressWarnings("javabugs:S6416") // Missing paths deliberately fail after caller configuration.
+  @SuppressWarnings("javabugs:S6416")
+  // Missing paths deliberately fail after caller configuration.
   HttpRequest build() {
     requireOpen();
+
     if (!pathConfigured) {
       throw new IllegalStateException("Configure a relative path before sending a request");
     }
 
     finished = true;
+
     return builder.build();
   }
 

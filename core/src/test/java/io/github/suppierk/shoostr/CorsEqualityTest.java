@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.io.Closeable;
 import java.util.HashSet;
 import nl.jqno.equalsverifier.EqualsVerifier;
 import org.junit.jupiter.api.Test;
@@ -13,7 +14,13 @@ import org.junit.jupiter.api.Test;
 class CorsEqualityTest {
   @Test
   void satisfiesEqualsAndHashCodeContract() {
-    EqualsVerifier.forClass(Cors.class).withNonnullFields("policy").verify();
+    EqualsVerifier.forClass(Cors.class)
+        .withPrefabValues(
+            CorsPolicy.class,
+            CorsPolicy.builder().origins("https://first.example").build(),
+            CorsPolicy.builder().origins("https://second.example").build())
+        .withNonnullFields("policy")
+        .verify();
   }
 
   @Test
@@ -27,6 +34,7 @@ class CorsEqualityTest {
     assertEquals(first.hashCode(), second.hashCode());
 
     var owners = new HashSet<Cors>();
+
     assertTrue(owners.add(first));
     assertFalse(owners.add(second));
     assertEquals(1, owners.size());
@@ -38,21 +46,33 @@ class CorsEqualityTest {
     var first = new Cors(policy);
     var second = new Cors(policy);
 
-    try (var app = new Shoostr().extensions(first, second)) {
-      var routes = app.routes();
-      assertThrows(
-          IllegalArgumentException.class,
-          () ->
-              routes.get(
-                  "/shared",
-                  (ignored, ignored2) -> {},
-                  extensions -> {
-                    extensions.with(first);
-                    extensions.with(second);
-                  }));
-      app.routes()
-          .get("/first", (ignored3, ignored4) -> {}, extensions -> extensions.with(first))
-          .get("/second", (ignored5, ignored6) -> {}, extensions -> extensions.with(second));
+    {
+      var app = new Shoostr();
+
+      try (Closeable appCleanup = app::close) {
+        var routes = app.routes();
+
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                routes.get(
+                    "/shared",
+                    (ignored, ignoredResponse) -> {},
+                    extensions -> {
+                      extensions.withExtension(first);
+                      extensions.withExtension(second);
+                    }));
+
+        app.routes()
+            .get(
+                "/first",
+                (ignoredRequest, ignoredResponse) -> {},
+                extensions -> extensions.withExtension(first))
+            .get(
+                "/second",
+                (ignoredRequest, ignoredResponse) -> {},
+                extensions -> extensions.withExtension(second));
+      }
     }
   }
 }

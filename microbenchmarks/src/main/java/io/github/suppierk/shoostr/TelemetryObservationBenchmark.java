@@ -42,23 +42,27 @@ import org.openjdk.jmh.annotations.Warmup;
     jvmArgsAppend = {"-Xms512m", "-Xmx512m", "-XX:+UseG1GC"})
 @Threads(1)
 public class TelemetryObservationBenchmark {
+  private final List<AutoCloseable> resources;
+
+  /** Extension configuration selected for the application. */
   @Param({"minimal", "micrometer", "otelNoop", "otelDropped", "otelRecording"})
   public String configuration;
 
+  /** Whether the request carries a remote parent span. */
   @Param({"absent", "remote"})
   public String parent;
 
+  /** Request outcome measured by the benchmark. */
   @Param({"matched", "missed", "serverError"})
   public String outcome;
 
-  private final List<AutoCloseable> resources;
   private Function<Request, RequestObservation> observer;
   private Request request;
   private RequestOutcome terminal;
 
   /** Initializes ownership tracking for the dependencies created during trial setup. */
   public TelemetryObservationBenchmark() {
-    resources = new ArrayList<>();
+    this.resources = new ArrayList<>();
   }
 
   /**
@@ -69,8 +73,11 @@ public class TelemetryObservationBenchmark {
   @Benchmark
   public RequestObservation observe() {
     var observation = observer.apply(request);
+
     observation.close();
+
     observation.complete(terminal);
+
     return observation;
   }
 
@@ -87,27 +94,9 @@ public class TelemetryObservationBenchmark {
     }
 
     var fields = headers.asImmutable();
-    var delegate =
-        (org.eclipse.jetty.server.Request)
-            Proxy.newProxyInstance(
-                getClass().getClassLoader(),
-                new Class<?>[] {org.eclipse.jetty.server.Request.class},
-                (ignored, method, ignored2) ->
-                    switch (method.getName()) {
-                      case "getHeaders" -> fields;
-                      case "getMethod" -> "GET";
-                      case "addHttpStreamWrapper" -> null;
-                      default -> throw new UnsupportedOperationException(method.getName());
-                    });
-    var sink =
-        (Response)
-            Proxy.newProxyInstance(
-                getClass().getClassLoader(),
-                new Class<?>[] {Response.class},
-                (ignored3, method, ignored4) -> {
-                  throw new UnsupportedOperationException(method.getName());
-                });
-    request = Request.create(delegate, sink, Options.defaults(), Callback.NOOP);
+    var delegate = nativeRequest(fields);
+    var sink = responseSink();
+    request = Request.create(delegate, sink, new Options(), Callback.NOOP);
     terminal =
         switch (outcome) {
           case "matched" -> new RequestOutcome("GET", "/users/{id}", 200, 1_000_000, null, null);
@@ -116,8 +105,45 @@ public class TelemetryObservationBenchmark {
               new RequestOutcome("GET", "/users/{id}", 500, 1_000_000, null, null);
           default -> throw new IllegalArgumentException("Unknown outcome: " + outcome);
         };
+
     observer = configureObserver();
+
     observe();
+  }
+
+  /**
+   * Creates the native request fixture used by the benchmark.
+   *
+   * @param fields immutable benchmark request headers
+   * @return native request fixture
+   */
+  private org.eclipse.jetty.server.Request nativeRequest(HttpFields fields) {
+    return (org.eclipse.jetty.server.Request)
+        Proxy.newProxyInstance(
+            getClass().getClassLoader(),
+            new Class<?>[] {org.eclipse.jetty.server.Request.class},
+            (ignored, method, ignoredObjectValues) ->
+                switch (method.getName()) {
+                  case "getHeaders" -> fields;
+                  case "getMethod" -> "GET";
+                  case "addHttpStreamWrapper" -> null;
+                  default -> throw new UnsupportedOperationException(method.getName());
+                });
+  }
+
+  /**
+   * Creates the native response sink used by the benchmark.
+   *
+   * @return native response fixture
+   */
+  private Response responseSink() {
+    return (Response)
+        Proxy.newProxyInstance(
+            getClass().getClassLoader(),
+            new Class<?>[] {Response.class},
+            (ignoredObject, method, ignoredObjectValues) -> {
+              throw new UnsupportedOperationException(method.getName());
+            });
   }
 
   /**
@@ -142,8 +168,8 @@ public class TelemetryObservationBenchmark {
     var propagators = ContextPropagators.create(W3CTraceContextPropagator.getInstance());
     switch (configuration) {
       case "minimal":
-        RequestObservation minimal = ignored5 -> {};
-        return ignored6 -> minimal;
+        RequestObservation minimal = ignoredRequestOutcome -> {};
+        return ignoredRequest -> minimal;
       case "micrometer":
         var registry = new SimpleMeterRegistry();
         resources.add(registry::close);

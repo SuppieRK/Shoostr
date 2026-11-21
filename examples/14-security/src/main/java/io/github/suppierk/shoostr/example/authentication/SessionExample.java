@@ -10,6 +10,7 @@ import org.eclipse.jetty.http.HttpCookie;
 import org.eclipse.jetty.server.Session;
 import org.eclipse.jetty.session.DefaultSessionCache;
 import org.eclipse.jetty.session.FileSessionDataStore;
+import org.eclipse.jetty.session.SessionHandler;
 
 /** Server-side preference sessions with an explicitly configured private file store. */
 public final class SessionExample {
@@ -42,10 +43,10 @@ public final class SessionExample {
               handler.setSameSite(HttpCookie.SameSite.STRICT);
               handler.setMaxCookieAge(900);
               handler.setMaxInactiveInterval(900);
-              var store = new FileSessionDataStore();
-              store.setStoreDir(storeDirectory.toFile());
-              var cache = new DefaultSessionCache(handler);
-              cache.setSessionDataStore(store);
+
+              var store = sessionStore(storeDirectory);
+
+              var cache = sessionCache(handler, store);
               handler.setSessionCache(cache);
             })
         .routes(
@@ -81,6 +82,7 @@ public final class SessionExample {
 
                           // Rotate the identifier while preserving the existing session attributes.
                           request.renewSessionId();
+
                           response.text("renewed");
                         })
                     .post(
@@ -89,7 +91,36 @@ public final class SessionExample {
                           // Invalidation clears server-side session state, not just the browser
                           // cookie.
                           request.getSession().ifPresent(Session::invalidate);
+
                           response.text("cleared");
                         }));
+  }
+
+  /**
+   * Creates the persistent store installed in the session handler's cache.
+   *
+   * @param directory resolved private session directory
+   * @return store owned by its cache
+   */
+  private static FileSessionDataStore sessionStore(Path directory) {
+    var store = new FileSessionDataStore();
+    store.setStoreDir(directory.toFile());
+
+    return store;
+  }
+
+  /**
+   * Connects the handler's cache to its configured persistent store.
+   *
+   * @param handler owning session handler
+   * @param store persistent session storage
+   * @return cache owned by the session handler
+   */
+  private static DefaultSessionCache sessionCache(
+      SessionHandler handler, FileSessionDataStore store) {
+    var cache = new DefaultSessionCache(handler);
+    cache.setSessionDataStore(store);
+
+    return cache;
   }
 }

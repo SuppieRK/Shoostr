@@ -1,5 +1,6 @@
 local chunk = string.rep("x", 1023) .. "\n"
-local fixtures = {
+local function workloadFixtures()
+  return {
   plaintext = {200, "Hello, World!", "text/plain;charset=utf-8"},
   ["json-bytes"] = {200, '{"message":"Hello, World!"}', "application/json"},
   echo = {200, chunk, "application/octet-stream"},
@@ -11,6 +12,9 @@ local fixtures = {
   ["static-shallow"] = {200, string.rep("x", 1024), "application/octet-stream"},
   ["static-nested"] = {200, string.rep("x", 1024), "application/octet-stream"}
 }
+end
+
+local fixtures = workloadFixtures()
 local events = {}
 for index = 0, 15 do events[#events + 1] = "data: " .. index .. ":" .. string.rep("x", 128) .. "\n\n" end
 fixtures["sse-burst"] = {200, table.concat(events), "text/event-stream;charset=utf-8"}
@@ -35,6 +39,7 @@ end
 function request()
   local index = iteration
   iteration = iteration + 1
+
   if selected == "echo" then
     return wrk.format("POST", "/echo", {["Content-Type"] = "application/octet-stream"}, chunk)
   end
@@ -55,8 +60,10 @@ end
 function response(status, headers, body)
   assert(status == expected[1], "unexpected status: " .. status)
   assert(body == expected[2], "unexpected body")
+
   local normalized = {}
   for name, value in pairs(headers) do normalized[string.lower(name)] = value end
+
   assert(string.gsub(normalized["content-type"] or "", "%s", "") == expected[3], "unexpected content type")
   assert(normalized.date and string.match(normalized.date, "GMT$"), "missing HTTP date")
   if selected == "stream" or selected == "sse-burst" or selected == "sse-paced" then

@@ -39,6 +39,6 @@ public final class ConditionalRoutesExample {
                                 available ->
                                     available.get(
                                         "/preview/latest",
-                                        (ignored2, response) -> response.text("preview")))));
+                                        (ignoredRequest, response) -> response.text("preview")))));
   }
 }

@@ -6,8 +6,11 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.suppierk.shoostr.http.HttpHeaders;
+import io.github.suppierk.shoostr.http.HttpStatusCodes;
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.lang.reflect.Proxy;
 import java.nio.ByteBuffer;
 import java.nio.channels.SeekableByteChannel;
@@ -15,12 +18,65 @@ import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.eclipse.jetty.http.HttpFields;
 import org.eclipse.jetty.server.Request;
 import org.eclipse.jetty.util.Callback;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 class ResponseResourceTest {
+  private static Response response(
+      HttpFields requestHeaders, HttpFields responseHeaders, ByteArrayOutputStream body) {
+    var request = createRequestForResponse(requestHeaders);
+    var delegate = createDelegateForResponse(responseHeaders, body);
+
+    return io.github.suppierk.shoostr.Request.create(
+            request, delegate, new Options(), Callback.NOOP)
+        .response();
+  }
+
+  private static Request createRequestForResponse(HttpFields requestHeaders) {
+    return (Request)
+        Proxy.newProxyInstance(
+            ResponseResourceTest.class.getClassLoader(),
+            new Class<?>[] {Request.class},
+            (ignored, method, ignoredObjectValues) ->
+                switch (method.getName()) {
+                  case "getMethod" -> "GET";
+                  case "getHeaders" -> requestHeaders;
+                  case "getSession" -> null;
+                  case "consumeAvailable" -> true;
+                  case "addHttpStreamWrapper" -> null;
+                  default -> throw new UnsupportedOperationException(method.getName());
+                });
+  }
+
+  private static org.eclipse.jetty.server.Response createDelegateForResponse(
+      HttpFields responseHeaders, ByteArrayOutputStream body) {
+    return (org.eclipse.jetty.server.Response)
+        Proxy.newProxyInstance(
+            ResponseResourceTest.class.getClassLoader(),
+            new Class<?>[] {org.eclipse.jetty.server.Response.class},
+            (ignoredObject, method, arguments) ->
+                switch (method.getName()) {
+                  case "getStatus" -> 200;
+                  case "setStatus" -> null;
+                  case "getHeaders" -> responseHeaders;
+                  case "isCommitted" -> false;
+                  case "write" -> {
+                    var buffer = ((ByteBuffer) arguments[1]).duplicate();
+                    var bytes = new byte[buffer.remaining()];
+                    buffer.get(bytes);
+                    body.write(bytes);
+                    ((Callback) arguments[2]).succeeded();
+                    yield null;
+                  }
+                  default -> throw new UnsupportedOperationException(method.getName());
+                });
+  }
+
   @Test
   void closesTheDescriptorWhenSeekingTheSelectedResourceFails() throws Exception {
     var channel = new TrackingChannel("0123456789", true);
@@ -63,45 +119,52 @@ class ResponseResourceTest {
     assertEquals("0123456789", body.toString(StandardCharsets.UTF_8));
   }
 
-  private static Response response(
-      HttpFields requestHeaders, HttpFields responseHeaders, ByteArrayOutputStream body) {
-    var request =
-        (Request)
-            Proxy.newProxyInstance(
-                ResponseResourceTest.class.getClassLoader(),
-                new Class<?>[] {Request.class},
-                (ignored, method, ignored2) ->
-                    switch (method.getName()) {
-                      case "getMethod" -> "GET";
-                      case "getHeaders" -> requestHeaders;
-                      case "consumeAvailable" -> true;
-                      case "addHttpStreamWrapper" -> null;
-                      default -> throw new UnsupportedOperationException(method.getName());
-                    });
-    var delegate =
-        (org.eclipse.jetty.server.Response)
-            Proxy.newProxyInstance(
-                ResponseResourceTest.class.getClassLoader(),
-                new Class<?>[] {org.eclipse.jetty.server.Response.class},
-                (ignored3, method, arguments) ->
-                    switch (method.getName()) {
-                      case "getStatus" -> 200;
-                      case "setStatus" -> null;
-                      case "getHeaders" -> responseHeaders;
-                      case "isCommitted" -> false;
-                      case "write" -> {
-                        var buffer = ((ByteBuffer) arguments[1]).duplicate();
-                        var bytes = new byte[buffer.remaining()];
-                        buffer.get(bytes);
-                        body.write(bytes);
-                        ((Callback) arguments[2]).succeeded();
-                        yield null;
-                      }
-                      default -> throw new UnsupportedOperationException(method.getName());
-                    });
-    return io.github.suppierk.shoostr.Request.create(
-            request, delegate, Options.defaults(), Callback.NOOP)
-        .response();
+  @ParameterizedTest
+  @ValueSource(strings = {"redirect", "reset", "preflight"})
+  void releasesSelectedDescriptorsBeforeAllowingReplacementBodies(String replacement)
+      throws Exception {
+    var body = new ByteArrayOutputStream();
+    var channel = new TrackingChannel("0123456789", false);
+    var response = response(HttpFields.build(), HttpFields.build(), body);
+    response.resource(channel, 10, Instant.EPOCH, "text/plain");
+
+    switch (replacement) {
+      case "redirect" -> response.redirect("/replacement");
+      case "reset" -> response.reset(HttpStatusCodes.INTERNAL_SERVER_ERROR);
+      case "preflight" -> response.preflight();
+      default -> throw new IllegalArgumentException(replacement);
+    }
+
+    assertTrue(channel.closed());
+    response.status(200).text("replacement");
+    response.complete();
+
+    assertEquals("replacement", body.toString(StandardCharsets.UTF_8));
+  }
+
+  @Test
+  void closesRejectedInputWithoutReplacingTheSelectedResource() throws Exception {
+    var body = new ByteArrayOutputStream();
+    var channel = new TrackingChannel("0123456789", false);
+    var response = response(HttpFields.build(), HttpFields.build(), body);
+    response.resource(channel, 10, Instant.EPOCH, "text/plain");
+    var closed = new AtomicBoolean();
+    var input = trackedInput(closed);
+
+    assertThrows(IllegalStateException.class, () -> response.input(input, "text/plain"));
+    assertTrue(closed.get());
+    response.complete();
+
+    assertEquals("0123456789", body.toString(StandardCharsets.UTF_8));
+  }
+
+  private InputStream trackedInput(AtomicBoolean closed) {
+    return new ByteArrayInputStream("replacement".getBytes(StandardCharsets.UTF_8)) {
+      @Override
+      public void close() {
+        closed.set(true);
+      }
+    };
   }
 
   private static final class TrackingChannel implements SeekableByteChannel {
@@ -112,10 +175,10 @@ class ResponseResourceTest {
     private boolean open;
 
     private TrackingChannel(String content, boolean failPosition) {
-      bytes = content.getBytes(StandardCharsets.US_ASCII);
+      this.bytes = content.getBytes(StandardCharsets.US_ASCII);
       this.failPosition = failPosition;
-      readPositions = new ArrayList<>();
-      open = true;
+      this.readPositions = new ArrayList<>();
+      this.open = true;
     }
 
     @Override
@@ -124,6 +187,7 @@ class ResponseResourceTest {
       var length = Math.min(destination.remaining(), bytes.length - Math.toIntExact(position));
       destination.put(bytes, Math.toIntExact(position), length);
       position += length;
+
       return length;
     }
 

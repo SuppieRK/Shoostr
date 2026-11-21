@@ -6,15 +6,66 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import org.gradle.testkit.runner.BuildResult;
 import org.gradle.testkit.runner.GradleRunner;
+import org.gradle.testkit.runner.InvalidRunnerConfigurationException;
+import org.gradle.testkit.runner.UnexpectedBuildFailure;
+import org.gradle.testkit.runner.UnexpectedBuildSuccess;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
 class NullAwayFixtureTest {
+  private static Path configureProject(Path project) throws IOException {
+    Files.writeString(
+        project.resolve("settings.gradle"), "rootProject.name = 'nullaway-fixture'\n");
+    var root = Path.of("..").toAbsolutePath().normalize();
+    var nullAwayScript = root.resolve("config/gradle/nullaway.gradle");
+    var errorProneScript = root.resolve("config/gradle/errorprone.gradle");
+    var coreClasses = root.resolve("core/build/classes/java/main");
+    var httpClasses = root.resolve("http/build/classes/java/main");
+    Files.writeString(
+        project.resolve("build.gradle"),
+        """
+        plugins {
+          id 'java'
+          id 'net.ltgt.errorprone' version '5.1.1' apply false
+          id 'net.ltgt.nullaway' version '3.3.0' apply false
+        }
+        repositories { mavenCentral() }
+        dependencies {
+          implementation files('%s', '%s')
+          testCompileOnly 'org.jspecify:jspecify:1.0.1'
+        }
+        apply from: '%s'
+        apply from: '%s'
+        """
+            .formatted(
+                groovyPath(coreClasses),
+                groovyPath(httpClasses),
+                groovyPath(errorProneScript),
+                groovyPath(nullAwayScript)));
+    var sourceDirectory = project.resolve("src/main/java/io/github/suppierk/fixture");
+    Files.createDirectories(sourceDirectory);
+    Files.writeString(
+        sourceDirectory.resolve("package-info.java"),
+        """
+        @NullMarked
+        package io.github.suppierk.fixture;
+
+        import org.jspecify.annotations.NullMarked;
+        """);
+
+    return sourceDirectory;
+  }
+
+  private static String groovyPath(Path path) {
+    return path.toString().replace('\\', '/').replace("'", "\\'");
+  }
+
   @Test
-  void rejectsUnsafeNullInANullMarkedPackage(@TempDir Path project) throws IOException {
+  void rejectsUnsafeNullInNullMarkedPackage(@TempDir Path project) throws IOException {
     var sourceDirectory = configureProject(project);
     Files.writeString(
         sourceDirectory.resolve("UnsafeNull.java"),
@@ -59,11 +110,11 @@ class NullAwayFixtureTest {
         """
         package io.github.suppierk.fixture;
 
-        import io.github.suppierk.shoostr.Options;
+        import io.github.suppierk.shoostr.Shoostr;
 
         final class NullInput {
-          static Options invalidInput() {
-            return new Options(64, 128, 32, 4, null);
+          static Shoostr invalidInput() {
+            return new Shoostr(null);
           }
         }
         """);
@@ -73,6 +124,7 @@ class NullAwayFixtureTest {
             .withProjectDir(project.toFile())
             .withArguments("--console=plain", "compileTestJava")
             .build();
+
     assertFalse(result.getOutput().contains("[NullAway]"), result.getOutput());
   }
 
@@ -98,6 +150,7 @@ class NullAwayFixtureTest {
             .withProjectDir(project.toFile())
             .withArguments("--console=plain", "compileTestJava")
             .buildAndFail();
+
     assertTrue(result.getOutput().contains("[EqualsNull]"), result.getOutput());
   }
 
@@ -132,11 +185,7 @@ class NullAwayFixtureTest {
         """);
 
     var result =
-        GradleRunner.create()
-            .withProjectDir(project.toFile())
-            .withArguments(
-                "--console=plain", "main".equals(sourceSet) ? "compileJava" : "compileTestJava")
-            .buildAndFail();
+        sendResultForRejectsUnnecessaryQualifiedExpressionsInEverySourceSet(project, sourceSet);
 
     assertTrue(result.getOutput().contains("[UnnecessarilyFullyQualified]"), result.getOutput());
     assertTrue(result.getOutput().contains("QualifiedName.java:"), result.getOutput());
@@ -144,6 +193,16 @@ class NullAwayFixtureTest {
     assertTrue(
         result.getOutput().contains("return java.util.Objects::requireNonNull;"),
         result.getOutput());
+  }
+
+  private BuildResult sendResultForRejectsUnnecessaryQualifiedExpressionsInEverySourceSet(
+      Path project, String sourceSet)
+      throws InvalidRunnerConfigurationException, UnexpectedBuildSuccess {
+    return GradleRunner.create()
+        .withProjectDir(project.toFile())
+        .withArguments(
+            "--console=plain", "main".equals(sourceSet) ? "compileJava" : "compileTestJava")
+        .buildAndFail();
   }
 
   @ParameterizedTest
@@ -179,53 +238,19 @@ class NullAwayFixtureTest {
         """);
 
     var result =
-        GradleRunner.create()
-            .withProjectDir(project.toFile())
-            .withArguments(
-                "--console=plain", "main".equals(sourceSet) ? "compileJava" : "compileTestJava")
-            .build();
+        sendResultForPermitsImportsAndNecessaryNameDisambiguationInEverySourceSet(
+            project, sourceSet);
 
     assertFalse(result.getOutput().contains("[UnnecessarilyFullyQualified]"), result.getOutput());
   }
 
-  private static Path configureProject(Path project) throws IOException {
-    Files.writeString(
-        project.resolve("settings.gradle"), "rootProject.name = 'nullaway-fixture'\n");
-    var root = Path.of("..").toAbsolutePath().normalize();
-    var nullAwayScript = root.resolve("config/gradle/nullaway.gradle");
-    var errorProneScript = root.resolve("config/gradle/errorprone.gradle");
-    var coreClasses = root.resolve("core/build/classes/java/main");
-    var httpClasses = root.resolve("http/build/classes/java/main");
-    Files.writeString(
-        project.resolve("build.gradle"),
-        """
-        plugins {
-          id 'java'
-          id 'net.ltgt.errorprone' version '5.1.1' apply false
-          id 'net.ltgt.nullaway' version '3.3.0' apply false
-        }
-        repositories { mavenCentral() }
-        dependencies {
-          implementation files('%s', '%s')
-          testCompileOnly 'org.jspecify:jspecify:1.0.1'
-        }
-        apply from: '%s'
-        apply from: '%s'
-        """
-            .formatted(
-                groovyPath(coreClasses),
-                groovyPath(httpClasses),
-                groovyPath(errorProneScript),
-                groovyPath(nullAwayScript)));
-    var sourceDirectory = project.resolve("src/main/java/io/github/suppierk/fixture");
-    Files.createDirectories(sourceDirectory);
-    Files.writeString(
-        sourceDirectory.resolve("package-info.java"),
-        "@NullMarked\npackage io.github.suppierk.fixture;\n\nimport org.jspecify.annotations.NullMarked;\n");
-    return sourceDirectory;
-  }
-
-  private static String groovyPath(Path path) {
-    return path.toString().replace('\\', '/').replace("'", "\\'");
+  private BuildResult sendResultForPermitsImportsAndNecessaryNameDisambiguationInEverySourceSet(
+      Path project, String sourceSet)
+      throws InvalidRunnerConfigurationException, UnexpectedBuildFailure {
+    return GradleRunner.create()
+        .withProjectDir(project.toFile())
+        .withArguments(
+            "--console=plain", "main".equals(sourceSet) ? "compileJava" : "compileTestJava")
+        .build();
   }
 }

@@ -37,21 +37,10 @@ final class TrustedProxy {
   private static final Pattern OBFUSCATED = Pattern.compile("_[A-Za-z0-9._-]+");
   private static final Pattern DIGITS = Pattern.compile("\\d+");
   private static final QuotedStringTokenizer PARAMETERS =
-      QuotedStringTokenizer.builder()
-          .delimiters(HttpCharacters.SEMICOLON_SIGN_STRING)
-          .returnDelimiters()
-          .returnQuotes()
-          .allowEmbeddedQuotes()
-          .ignoreOptionalWhiteSpace()
-          .build();
+      forwardingTokenizer(HttpCharacters.SEMICOLON_SIGN_STRING);
   private static final QuotedStringTokenizer ELEMENTS =
-      QuotedStringTokenizer.builder()
-          .delimiters(HttpCharacters.COMMA_SIGN_STRING)
-          .returnDelimiters()
-          .returnQuotes()
-          .allowEmbeddedQuotes()
-          .ignoreOptionalWhiteSpace()
-          .build();
+      forwardingTokenizer(HttpCharacters.COMMA_SIGN_STRING);
+
   private final Predicate<InetAddress> trusted;
   private final ForwardedHeaders headers;
 
@@ -65,6 +54,413 @@ final class TrustedProxy {
   TrustedProxy(Predicate<InetAddress> trusted, ForwardedHeaders headers) {
     this.trusted = Objects.requireNonNull(trusted);
     this.headers = Objects.requireNonNull(headers);
+  }
+
+  /**
+   * Parses one physical Forwarded field without resetting the chain-wide size limit.
+   *
+   * @param header raw field value
+   * @param chain destination for parameter maps
+   * @param addresses destination for node addresses
+   * @throws IllegalArgumentException if an element or address is malformed
+   */
+  private static void parseForwardingHeader(
+      String header, List<Map<String, String>> chain, List<@Nullable InetSocketAddress> addresses) {
+    final var elements = ELEMENTS.tokenize(header);
+    var elementExpected = true;
+    while (elements.hasNext()) {
+      final var element = elements.next();
+      if (HttpCharacters.COMMA_SIGN_STRING.equals(element)) {
+        if (elementExpected) {
+          throw new IllegalArgumentException("Empty forwarding element");
+        }
+
+        elementExpected = true;
+        continue;
+      }
+
+      if (!elementExpected) {
+        throw new IllegalArgumentException("Invalid forwarding element");
+      }
+
+      final var fields = parameters(element);
+      if (chain.size() == MAX_FORWARDING_ELEMENTS) {
+        throw new IllegalArgumentException("Too many forwarding elements");
+      }
+
+      chain.add(fields);
+      addresses.add(node(fields.get("for")));
+      elementExpected = false;
+    }
+
+    if (elementExpected) {
+      throw new IllegalArgumentException("Empty forwarding element");
+    }
+  }
+
+  /**
+   * Builds forwarding tokenization rules for the supplied delimiter, retaining quotes and
+   * delimiters for validation.
+   *
+   * @param delimiter delimiter character
+   * @return immutable shared tokenization rules
+   */
+  private static QuotedStringTokenizer forwardingTokenizer(String delimiter) {
+    return QuotedStringTokenizer.builder()
+        .delimiters(delimiter)
+        .returnDelimiters()
+        .returnQuotes()
+        .allowEmbeddedQuotes()
+        .ignoreOptionalWhiteSpace()
+        .build();
+  }
+
+  /**
+   * Reads one element using Jetty's quote-aware lexical handling.
+   *
+   * @param value complete element
+   * @return parameter values
+   * @throws IllegalArgumentException if a parameter, delimiter, origin, or node is malformed
+   */
+  private static Map<String, String> parameters(String value) {
+    final var fields = new HashMap<String, String>();
+    final var tokens = PARAMETERS.tokenize(value);
+    while (tokens.hasNext()) {
+      final var token = tokens.next();
+      final var equals = token.indexOf(HttpCharacters.EQUALS_SIGN);
+      if (equals < 1) {
+        throw new IllegalArgumentException("Invalid forwarding parameter");
+      }
+
+      final var name = token.substring(0, equals).toLowerCase(Locale.ROOT);
+      final var raw = token.substring(equals + 1);
+      if (!HttpCharacters.isValidHttpToken(name)
+          || !(HttpCharacters.isValidHttpToken(raw) || validQuoted(raw))
+          || fields.putIfAbsent(name, PARAMETERS.unquote(raw)) != null) {
+        throw new IllegalArgumentException("Invalid forwarding parameter");
+      }
+
+      if (tokens.hasNext()
+          && (!HttpCharacters.SEMICOLON_SIGN_STRING.equals(tokens.next()) || !tokens.hasNext())) {
+        throw new IllegalArgumentException("Invalid forwarding delimiter");
+      }
+    }
+
+    if (fields.containsKey(PROTO_FIELD) && !Origins.isHttpScheme(fields.get(PROTO_FIELD))) {
+      throw new IllegalArgumentException("Unsupported forwarding scheme");
+    }
+
+    if (fields.containsKey("host")) {
+      host(fields.get("host"));
+    }
+
+    if (fields.containsKey("by")) {
+      node(fields.get("by"));
+    }
+
+    return fields;
+  }
+
+  /**
+   * Validates a quoted forwarding value in one pass, including its permitted escape sequences.
+   *
+   * @param value raw parameter value
+   * @return whether the value follows the HTTP quoted-string grammar
+   */
+  private static boolean validQuoted(String value) {
+    if (value.length() < 2
+        || value.charAt(0) != HttpCharacters.DOUBLE_QUOTE
+        || value.charAt(value.length() - 1) != HttpCharacters.DOUBLE_QUOTE) {
+      return false;
+    }
+
+    final var end = value.length() - 1;
+    var index = 1;
+    while (index < end) {
+      final var character = value.charAt(index);
+      if (character == HttpCharacters.BACKSLASH) {
+        index++;
+        if (index == end || !validQuotedOctet(value.charAt(index), true)) {
+          return false;
+        }
+      } else if (!validQuotedOctet(character, false)) {
+        return false;
+      }
+
+      index++;
+    }
+
+    return true;
+  }
+
+  /**
+   * Checks a quoted-string octet, allowing quote and backslash only after an escape.
+   *
+   * @param character candidate octet
+   * @param escaped whether the preceding octet was a backslash
+   * @return whether the octet is valid in this position
+   */
+  private static boolean validQuotedOctet(char character, boolean escaped) {
+    return character == HttpCharacters.TAB
+        || (character >= HttpCharacters.SPACE
+            && character <= HttpCharacters.MAX_UNSIGNED_BYTE_VALUE
+            && character != HttpCharacters.DELETE_CONTROL
+            && (escaped
+                || (character != HttpCharacters.DOUBLE_QUOTE
+                    && character != HttpCharacters.BACKSLASH)));
+  }
+
+  /**
+   * Validates every supplied legacy origin element before selecting a trusted boundary.
+   *
+   * @param hosts aligned host values, or an empty list
+   * @param protocols aligned scheme values, or an empty list
+   * @param ports aligned port values, or an empty list
+   * @throws IllegalArgumentException if any entry is malformed or inconsistent
+   */
+  private static void validateLegacyOrigins(
+      List<String> hosts, List<String> protocols, List<String> ports) {
+    if (!ports.isEmpty() && hosts.isEmpty()) {
+      throw new IllegalArgumentException("Forwarded port requires forwarded host");
+    }
+
+    for (final var protocol : protocols) {
+      if (!Origins.isHttpScheme(protocol)) {
+        throw new IllegalArgumentException("Unsupported forwarding scheme");
+      }
+    }
+
+    for (var index = 0; index < hosts.size(); index++) {
+      authority(hosts.get(index), ports.isEmpty() ? null : ports.get(index));
+    }
+  }
+
+  /**
+   * Returns an absent legacy list or rejects one that cannot align with client identities.
+   *
+   * @param lines repeated header lines
+   * @param expected required list length
+   * @return an empty or exactly aligned list
+   * @throws BadRequestException if supplied values do not align
+   */
+  private static List<String> aligned(List<String> lines, int expected) {
+    final var values = values(lines);
+    if (!values.isEmpty() && values.size() != expected) {
+      throw new BadRequestException();
+    }
+
+    return values;
+  }
+
+  /**
+   * Parses a legacy client identity, including an unbracketed IPv6 literal without a port.
+   *
+   * @param value legacy client identity
+   * @return literal client address, or null for an undisclosed identity
+   * @throws IllegalArgumentException if the value is malformed
+   */
+  private static @Nullable InetSocketAddress legacyNode(String value) {
+    if (value.indexOf(HttpCharacters.COLON_SIGN) != value.lastIndexOf(HttpCharacters.COLON_SIGN)
+        && value.charAt(0) != HttpCharacters.OPEN_SQUARE_BRACKET) {
+      if (value.indexOf(HttpCharacters.PERCENT_SIGN) >= 0) {
+        throw new IllegalArgumentException("Invalid forwarding address");
+      }
+
+      return new InetSocketAddress(literalAddress(value), 0);
+    }
+
+    return node(value);
+  }
+
+  /**
+   * Combines an aligned legacy host and port while rejecting contradictory explicit ports.
+   *
+   * @param host forwarded authority
+   * @param forwardedPort aligned port, or null when absent
+   * @return validated authority with its selected port
+   * @throws IllegalArgumentException if the host or port is malformed or conflicts
+   */
+  private static HostPort authority(String host, @Nullable String forwardedPort) {
+    final var parsed = host(host);
+    if (forwardedPort == null) {
+      return parsed;
+    }
+
+    final var port = port(forwardedPort);
+    if (parsed.hasPort()) {
+      if (parsed.getPort() != port) {
+        throw new IllegalArgumentException("Conflicting forwarded ports");
+      }
+
+      return parsed;
+    }
+
+    if (port == 0) {
+      throw new IllegalArgumentException("Invalid forwarding host port");
+    }
+
+    return new HostPort(parsed.getHost(), port);
+  }
+
+  /**
+   * Splits repeated legacy field lines into a nonempty ordered list.
+   *
+   * @param lines repeated header lines
+   * @return ordered trimmed values
+   * @throws BadRequestException if a value is empty or exceeds the work bound
+   */
+  private static List<String> values(List<String> lines) {
+    final var result = new ArrayList<String>();
+    for (final var line : lines) {
+      for (final var value : line.split(HttpCharacters.COMMA_SIGN_STRING, -1)) {
+        final var trimmed = value.trim();
+        if (trimmed.isEmpty() || result.size() == MAX_FORWARDING_ELEMENTS) {
+          throw new BadRequestException();
+        }
+
+        result.add(trimmed);
+      }
+    }
+    return result;
+  }
+
+  /**
+   * Validates a literal node and optional source port without hostname resolution.
+   *
+   * @param value unquoted RFC7239 node
+   * @return literal socket address, or null for missing/unknown/obfuscated identity
+   * @throws IllegalArgumentException if the node is not a permitted literal or port form
+   */
+  private static @Nullable InetSocketAddress node(@Nullable String value) {
+    if (value == null) {
+      return null;
+    }
+
+    final var separator =
+        value.startsWith(HttpCharacters.OPEN_SQUARE_BRACKET_STRING)
+            ? value.indexOf(HttpCharacters.CLOSE_SQUARE_BRACKET) + 1
+            : value.indexOf(HttpCharacters.COLON_SIGN);
+    var name = value;
+    var sourcePort = 0;
+    if (separator >= 0 && separator < value.length()) {
+      if (value.charAt(separator) != HttpCharacters.COLON_SIGN) {
+        throw new IllegalArgumentException("Invalid forwarding node");
+      }
+
+      name = value.substring(0, separator);
+      final var disclosedPort = value.substring(separator + 1);
+      if (!OBFUSCATED.matcher(disclosedPort).matches()) {
+        sourcePort = port(disclosedPort);
+      }
+    }
+
+    if ("unknown".equalsIgnoreCase(name) || OBFUSCATED.matcher(name).matches()) {
+      return null;
+    }
+
+    if (name.indexOf(HttpCharacters.PERCENT_SIGN) >= 0
+        || (!name.startsWith(HttpCharacters.OPEN_SQUARE_BRACKET_STRING)
+            && !IPV4.matcher(name).matches())) {
+      throw new IllegalArgumentException("Invalid forwarding address");
+    }
+
+    return new InetSocketAddress(literalAddress(name), sourcePort);
+  }
+
+  /**
+   * Parses literal addresses without allowing malformed numeric input to fall through to DNS.
+   *
+   * @param value IPv4 or IPv6 literal, optionally bracketed for IPv6
+   * @return decoded address
+   * @throws IllegalArgumentException if the literal is malformed
+   */
+  private static InetAddress literalAddress(String value) {
+    try {
+      if (IPV4.matcher(value).matches()) {
+        final var octets = value.split("\\.", -1);
+        final var bytes = new byte[4];
+        for (var index = 0; index < bytes.length; index++) {
+          final var octet = Integer.parseInt(octets[index]);
+          if (octet > 255) {
+            throw new IllegalArgumentException("Invalid forwarding address");
+          }
+
+          bytes[index] = (byte) octet;
+        }
+
+        return InetAddress.getByAddress(bytes);
+      }
+
+      var literal = value;
+      if (literal.startsWith(HttpCharacters.OPEN_SQUARE_BRACKET_STRING)
+          && literal.endsWith(HttpCharacters.CLOSE_SQUARE_BRACKET_STRING)) {
+        literal = literal.substring(1, literal.length() - 1);
+      }
+
+      if (literal.indexOf(HttpCharacters.COLON_SIGN) < 0 || !IPV6.matcher(literal).matches()) {
+        throw new IllegalArgumentException("Invalid forwarding address");
+      }
+
+      // URI validates the IPv6 grammar before a parser that can also resolve names is called.
+      final var host = URI.create("//[" + literal + "]").getHost();
+      if (host == null) {
+        throw new IllegalArgumentException("Invalid forwarding address");
+      }
+
+      return InetAddress.getByName(host);
+    } catch (UnknownHostException failure) {
+      throw new IllegalArgumentException("Invalid forwarding address", failure);
+    }
+  }
+
+  /**
+   * Validates an origin authority before passing it to the transport URI builder.
+   *
+   * @param value unquoted authority
+   * @return parsed authority
+   * @throws IllegalArgumentException if the authority is not a permitted host and port form
+   */
+  private static HostPort host(String value) {
+    if (value.isEmpty()
+        || value.endsWith(HttpCharacters.COLON_SIGN_STRING)
+        || value.indexOf(HttpCharacters.PERCENT_SIGN) >= 0
+        || value.chars().anyMatch(character -> "/?#@\\".indexOf(character) >= 0)
+        || (!value.startsWith(HttpCharacters.OPEN_SQUARE_BRACKET_STRING)
+            && value.indexOf(HttpCharacters.COLON_SIGN)
+                != value.lastIndexOf(HttpCharacters.COLON_SIGN))) {
+      throw new IllegalArgumentException("Invalid forwarding host");
+    }
+
+    final var parsed = new HostPort(value);
+    final var separator =
+        value.startsWith(HttpCharacters.OPEN_SQUARE_BRACKET_STRING)
+            ? value.indexOf(HttpCharacters.CLOSE_SQUARE_BRACKET) + 1
+            : value.indexOf(HttpCharacters.COLON_SIGN);
+    if (separator > 0 && separator < value.length() && port(value.substring(separator + 1)) == 0) {
+      throw new IllegalArgumentException("Invalid forwarding host port");
+    }
+
+    return parsed;
+  }
+
+  /**
+   * Parses a disclosed numeric TCP port without accepting signs or overflow.
+   *
+   * @param value numeric text
+   * @return port including zero when explicitly supplied
+   * @throws IllegalArgumentException if the value is not a TCP port in range
+   */
+  private static int port(String value) {
+    if (!DIGITS.matcher(value).matches()) {
+      throw new IllegalArgumentException("Invalid forwarding port");
+    }
+
+    final var port = Integer.parseInt(value);
+    if (port > 65535) {
+      throw new IllegalArgumentException("Invalid forwarding port");
+    }
+
+    return port;
   }
 
   /**
@@ -117,25 +513,27 @@ final class TrustedProxy {
    * @throws BadRequestException if forwarding metadata is malformed
    */
   private void applyRfc(Request request) {
-    var forwarding = request.headers(HttpHeaders.FORWARDED.value());
+    final var forwarding = request.headers(HttpHeaders.FORWARDED.value());
     if (forwarding.isEmpty()) {
       return;
     }
 
-    List<Map<String, String>> chain = new ArrayList<>();
-    List<@Nullable InetSocketAddress> addresses = new ArrayList<>();
+    final var chain = new ArrayList<Map<String, String>>();
+    final var addresses = new ArrayList<@Nullable InetSocketAddress>();
 
     try {
-      parseForwarding(forwarding, chain, addresses);
+      for (final var header : forwarding) {
+        parseForwardingHeader(header, chain, addresses);
+      }
     } catch (IllegalArgumentException ignored) {
       throw new BadRequestException();
     }
 
-    int selected = boundaryIndex(addresses);
-    var fields = chain.get(selected);
+    final var selected = boundaryIndex(addresses);
+    final var fields = chain.get(selected);
 
     try {
-      var uri = HttpURI.build(request.fullUrl());
+      final var uri = HttpURI.build(request.fullUrl());
       var protocol = fields.get(PROTO_FIELD);
       if (protocol != null) {
         protocol = protocol.toLowerCase(Locale.ROOT);
@@ -143,72 +541,13 @@ final class TrustedProxy {
       }
 
       if (fields.containsKey("host")) {
-        var host = host(fields.get("host"));
+        final var host = host(fields.get("host"));
         uri.authority(host.getHost(), host.getPort());
       }
 
       request.forwarded(addresses.get(selected), uri.asString(), protocol);
-    } catch (IllegalArgumentException ignored2) {
+    } catch (IllegalArgumentException ignoredFailure) {
       throw new BadRequestException();
-    }
-  }
-
-  /**
-   * Parses each physical header line into matching field and address entries.
-   *
-   * @param forwarding raw Forwarded header lines
-   * @param chain destination for parameter maps
-   * @param addresses destination for node addresses
-   * @throws IllegalArgumentException if a forwarding element or address is malformed
-   */
-  private static void parseForwarding(
-      List<String> forwarding,
-      List<Map<String, String>> chain,
-      List<@Nullable InetSocketAddress> addresses) {
-    for (var header : forwarding) {
-      parseForwardingHeader(header, chain, addresses);
-    }
-  }
-
-  /**
-   * Parses one physical Forwarded field without resetting the chain-wide size limit.
-   *
-   * @param header raw field value
-   * @param chain destination for parameter maps
-   * @param addresses destination for node addresses
-   * @throws IllegalArgumentException if an element or address is malformed
-   */
-  private static void parseForwardingHeader(
-      String header, List<Map<String, String>> chain, List<@Nullable InetSocketAddress> addresses) {
-    var elements = ELEMENTS.tokenize(header);
-    boolean elementExpected = true;
-    while (elements.hasNext()) {
-      var element = elements.next();
-      if (HttpCharacters.COMMA_SIGN_STRING.equals(element)) {
-        if (elementExpected) {
-          throw new IllegalArgumentException("Empty forwarding element");
-        }
-
-        elementExpected = true;
-        continue;
-      }
-
-      if (!elementExpected) {
-        throw new IllegalArgumentException("Invalid forwarding element");
-      }
-
-      var fields = parameters(element);
-      if (chain.size() == MAX_FORWARDING_ELEMENTS) {
-        throw new IllegalArgumentException("Too many forwarding elements");
-      }
-
-      chain.add(fields);
-      addresses.add(node(fields.get("for")));
-      elementExpected = false;
-    }
-
-    if (elementExpected) {
-      throw new IllegalArgumentException("Empty forwarding element");
     }
   }
 
@@ -219,30 +558,30 @@ final class TrustedProxy {
    * @throws BadRequestException if trusted forwarding metadata is malformed
    */
   private void applyLegacy(Request request) {
-    var forwarded = values(request.headers(X_FORWARDED_FOR));
+    final var forwarded = values(request.headers(X_FORWARDED_FOR));
     if (forwarded.isEmpty()) {
       return;
     }
 
-    var hosts = aligned(request.headers(X_FORWARDED_HOST), forwarded.size());
-    var protocols = aligned(request.headers(X_FORWARDED_PROTO), forwarded.size());
-    var ports = aligned(request.headers(X_FORWARDED_PORT), forwarded.size());
-    var addresses = new ArrayList<@Nullable InetSocketAddress>();
+    final var hosts = aligned(request.headers(X_FORWARDED_HOST), forwarded.size());
+    final var protocols = aligned(request.headers(X_FORWARDED_PROTO), forwarded.size());
+    final var ports = aligned(request.headers(X_FORWARDED_PORT), forwarded.size());
+    final var addresses = new ArrayList<@Nullable InetSocketAddress>();
 
     try {
-      for (var value : forwarded) {
+      for (final var value : forwarded) {
         addresses.add(legacyNode(value));
       }
 
       validateLegacyOrigins(hosts, protocols, ports);
-    } catch (IllegalArgumentException ignored3) {
+    } catch (IllegalArgumentException ignoredFailure) {
       throw new BadRequestException();
     }
 
-    int selected = boundaryIndex(addresses);
+    final var selected = boundaryIndex(addresses);
 
     try {
-      var uri = HttpURI.build(request.fullUrl());
+      final var uri = HttpURI.build(request.fullUrl());
       String protocol = null;
       if (!protocols.isEmpty()) {
         protocol = protocols.get(selected).toLowerCase(Locale.ROOT);
@@ -250,359 +589,15 @@ final class TrustedProxy {
       }
 
       if (!hosts.isEmpty()) {
-        var parsed =
-            host(authority(hosts.get(selected), ports.isEmpty() ? null : ports.get(selected)));
+        final var parsed =
+            authority(hosts.get(selected), ports.isEmpty() ? null : ports.get(selected));
         uri.authority(parsed.getHost(), parsed.getPort());
       }
 
       request.forwarded(addresses.get(selected), uri.asString(), protocol);
-    } catch (IllegalArgumentException ignored4) {
+    } catch (IllegalArgumentException ignoredFailure) {
       throw new BadRequestException();
     }
-  }
-
-  /**
-   * Validates every supplied legacy origin element before selecting a trusted boundary.
-   *
-   * @param hosts aligned host values, or an empty list
-   * @param protocols aligned scheme values, or an empty list
-   * @param ports aligned port values, or an empty list
-   * @throws IllegalArgumentException if any entry is malformed or inconsistent
-   */
-  private static void validateLegacyOrigins(
-      List<String> hosts, List<String> protocols, List<String> ports) {
-    if (!ports.isEmpty() && hosts.isEmpty()) {
-      throw new IllegalArgumentException("Forwarded port requires forwarded host");
-    }
-
-    for (var protocol : protocols) {
-      if (!"http".equalsIgnoreCase(protocol) && !"https".equalsIgnoreCase(protocol)) {
-        throw new IllegalArgumentException("Unsupported forwarding scheme");
-      }
-    }
-
-    for (int index = 0; index < hosts.size(); index++) {
-      host(authority(hosts.get(index), ports.isEmpty() ? null : ports.get(index)));
-    }
-  }
-
-  /**
-   * Parses a legacy client identity, including an unbracketed IPv6 literal without a port.
-   *
-   * @param value legacy client identity
-   * @return literal client address, or null for an undisclosed identity
-   * @throws IllegalArgumentException if the value is malformed
-   */
-  private static @Nullable InetSocketAddress legacyNode(String value) {
-    if (value.indexOf(HttpCharacters.COLON_SIGN) != value.lastIndexOf(HttpCharacters.COLON_SIGN)
-        && value.charAt(0) != HttpCharacters.OPEN_SQUARE_BRACKET) {
-      if (value.indexOf(HttpCharacters.PERCENT_SIGN) >= 0) {
-        throw new IllegalArgumentException("Invalid forwarding address");
-      }
-
-      return new InetSocketAddress(literalAddress(value), 0);
-    }
-
-    return node(value);
-  }
-
-  /**
-   * Combines an aligned legacy host and port while rejecting contradictory explicit ports.
-   *
-   * @param host forwarded authority
-   * @param forwardedPort aligned port, or null when absent
-   * @return validated authority with its selected port
-   * @throws IllegalArgumentException if the host or port is malformed or conflicts
-   */
-  private static String authority(String host, @Nullable String forwardedPort) {
-    var parsed = host(host);
-    if (forwardedPort == null) {
-      return host;
-    }
-
-    int port = port(forwardedPort);
-    if (parsed.hasPort()) {
-      if (parsed.getPort() != port) {
-        throw new IllegalArgumentException("Conflicting forwarded ports");
-      }
-
-      return host;
-    }
-
-    return host + HttpCharacters.COLON_SIGN + port;
-  }
-
-  /**
-   * Splits repeated legacy field lines into a nonempty ordered list.
-   *
-   * @param lines repeated header lines
-   * @return ordered trimmed values
-   * @throws BadRequestException if a value is empty or exceeds the work bound
-   */
-  private static List<String> values(List<String> lines) {
-    var result = new ArrayList<String>();
-    for (var line : lines) {
-      for (var value : line.split(HttpCharacters.COMMA_SIGN_STRING, -1)) {
-        var trimmed = value.trim();
-        if (trimmed.isEmpty() || result.size() == MAX_FORWARDING_ELEMENTS) {
-          throw new BadRequestException();
-        }
-
-        result.add(trimmed);
-      }
-    }
-    return result;
-  }
-
-  /**
-   * Returns an absent legacy list or rejects one that cannot align with client identities.
-   *
-   * @param lines repeated header lines
-   * @param expected required list length
-   * @return an empty or exactly aligned list
-   * @throws BadRequestException if supplied values do not align
-   */
-  private static List<String> aligned(List<String> lines, int expected) {
-    var values = values(lines);
-    if (!values.isEmpty() && values.size() != expected) {
-      throw new BadRequestException();
-    }
-
-    return values;
-  }
-
-  /**
-   * Reads one element using Jetty's quote-aware lexical handling.
-   *
-   * @param value complete element
-   * @return parameter values
-   * @throws IllegalArgumentException if a parameter, delimiter, origin, or node is malformed
-   */
-  private static Map<String, String> parameters(String value) {
-    Map<String, String> fields = new HashMap<>();
-    var tokens = PARAMETERS.tokenize(value);
-    while (tokens.hasNext()) {
-      var token = tokens.next();
-      int equals = token.indexOf(HttpCharacters.EQUALS_SIGN);
-      if (equals < 1) {
-        throw new IllegalArgumentException("Invalid forwarding parameter");
-      }
-
-      var name = token.substring(0, equals).toLowerCase(Locale.ROOT);
-      var raw = token.substring(equals + 1);
-      if (!HttpCharacters.isValidHttpToken(name)
-          || !(HttpCharacters.isValidHttpToken(raw) || validQuoted(raw))
-          || fields.putIfAbsent(name, PARAMETERS.unquote(raw)) != null) {
-        throw new IllegalArgumentException("Invalid forwarding parameter");
-      }
-
-      if (tokens.hasNext()
-          && (!HttpCharacters.SEMICOLON_SIGN_STRING.equals(tokens.next()) || !tokens.hasNext())) {
-        throw new IllegalArgumentException("Invalid forwarding delimiter");
-      }
-    }
-    if (fields.containsKey(PROTO_FIELD)
-        && !"http".equalsIgnoreCase(fields.get(PROTO_FIELD))
-        && !"https".equalsIgnoreCase(fields.get(PROTO_FIELD))) {
-      throw new IllegalArgumentException("Unsupported forwarding scheme");
-    }
-
-    if (fields.containsKey("host")) {
-      host(fields.get("host"));
-    }
-
-    if (fields.containsKey("by")) {
-      node(fields.get("by"));
-    }
-
-    return fields;
-  }
-
-  /**
-   * Validates a quoted forwarding value in one pass, including its permitted escape sequences.
-   *
-   * @param value raw parameter value
-   * @return whether the value follows the HTTP quoted-string grammar
-   */
-  private static boolean validQuoted(String value) {
-    if (value.length() < 2
-        || value.charAt(0) != HttpCharacters.DOUBLE_QUOTE
-        || value.charAt(value.length() - 1) != HttpCharacters.DOUBLE_QUOTE) {
-      return false;
-    }
-
-    int end = value.length() - 1;
-    int index = 1;
-    while (index < end) {
-      char character = value.charAt(index);
-      if (character == HttpCharacters.BACKSLASH) {
-        index++;
-        if (index == end || !validQuotedOctet(value.charAt(index), true)) {
-          return false;
-        }
-      } else if (!validQuotedOctet(character, false)) {
-        return false;
-      }
-
-      index++;
-    }
-
-    return true;
-  }
-
-  /**
-   * Checks a quoted-string octet, allowing quote and backslash only after an escape.
-   *
-   * @param character candidate octet
-   * @param escaped whether the preceding octet was a backslash
-   * @return whether the octet is valid in this position
-   */
-  private static boolean validQuotedOctet(char character, boolean escaped) {
-    return character == HttpCharacters.TAB
-        || (character >= 0x20
-            && character <= 0xff
-            && character != 0x7f
-            && (escaped
-                || (character != HttpCharacters.DOUBLE_QUOTE
-                    && character != HttpCharacters.BACKSLASH)));
-  }
-
-  /**
-   * Validates a literal node and optional source port without hostname resolution.
-   *
-   * @param value unquoted RFC7239 node
-   * @return literal socket address, or null for missing/unknown/obfuscated identity
-   * @throws IllegalArgumentException if the node is not a permitted literal or port form
-   */
-  private static @Nullable InetSocketAddress node(@Nullable String value) {
-    if (value == null) {
-      return null;
-    }
-
-    int separator =
-        value.startsWith(HttpCharacters.OPEN_SQUARE_BRACKET_STRING)
-            ? value.indexOf(HttpCharacters.CLOSE_SQUARE_BRACKET) + 1
-            : value.indexOf(HttpCharacters.COLON_SIGN);
-    String name = value;
-    int sourcePort = 0;
-    if (separator >= 0 && separator < value.length()) {
-      if (value.charAt(separator) != HttpCharacters.COLON_SIGN) {
-        throw new IllegalArgumentException("Invalid forwarding node");
-      }
-
-      name = value.substring(0, separator);
-      var disclosedPort = value.substring(separator + 1);
-      if (!OBFUSCATED.matcher(disclosedPort).matches()) {
-        sourcePort = port(disclosedPort);
-      }
-    }
-
-    if ("unknown".equalsIgnoreCase(name) || OBFUSCATED.matcher(name).matches()) {
-      return null;
-    }
-
-    if (name.indexOf(HttpCharacters.PERCENT_SIGN) >= 0
-        || (!name.startsWith(HttpCharacters.OPEN_SQUARE_BRACKET_STRING)
-            && !IPV4.matcher(name).matches())) {
-      throw new IllegalArgumentException("Invalid forwarding address");
-    }
-
-    return new InetSocketAddress(literalAddress(name), sourcePort);
-  }
-
-  /**
-   * Parses literal addresses without allowing malformed numeric input to fall through to DNS.
-   *
-   * @param value IPv4 or IPv6 literal, optionally bracketed for IPv6
-   * @return decoded address
-   * @throws IllegalArgumentException if the literal is malformed
-   */
-  private static InetAddress literalAddress(String value) {
-    try {
-      if (IPV4.matcher(value).matches()) {
-        var octets = value.split("\\.", -1);
-        var bytes = new byte[4];
-        for (int index = 0; index < bytes.length; index++) {
-          int octet = Integer.parseInt(octets[index]);
-          if (octet > 255) {
-            throw new IllegalArgumentException("Invalid forwarding address");
-          }
-
-          bytes[index] = (byte) octet;
-        }
-
-        return InetAddress.getByAddress(bytes);
-      }
-
-      String literal = value;
-      if (literal.startsWith("[") && literal.endsWith("]")) {
-        literal = literal.substring(1, literal.length() - 1);
-      }
-
-      if (literal.indexOf(':') < 0 || !IPV6.matcher(literal).matches()) {
-        throw new IllegalArgumentException("Invalid forwarding address");
-      }
-
-      // URI validates the IPv6 grammar before a parser that can also resolve names is called.
-      var host = URI.create("//[" + literal + "]").getHost();
-      if (host == null) {
-        throw new IllegalArgumentException("Invalid forwarding address");
-      }
-
-      return InetAddress.getByName(host);
-    } catch (UnknownHostException failure) {
-      throw new IllegalArgumentException("Invalid forwarding address", failure);
-    }
-  }
-
-  /**
-   * Validates an origin authority before passing it to the transport URI builder.
-   *
-   * @param value unquoted authority
-   * @return parsed authority
-   * @throws IllegalArgumentException if the authority is not a permitted host and port form
-   */
-  private static HostPort host(String value) {
-    if (value.isEmpty()
-        || value.endsWith(HttpCharacters.COLON_SIGN_STRING)
-        || value.indexOf(HttpCharacters.PERCENT_SIGN) >= 0
-        || value.chars().anyMatch(character -> "/?#@\\".indexOf(character) >= 0)
-        || (!value.startsWith(HttpCharacters.OPEN_SQUARE_BRACKET_STRING)
-            && value.indexOf(HttpCharacters.COLON_SIGN)
-                != value.lastIndexOf(HttpCharacters.COLON_SIGN))) {
-      throw new IllegalArgumentException("Invalid forwarding host");
-    }
-
-    var parsed = new HostPort(value);
-    int separator =
-        value.startsWith(HttpCharacters.OPEN_SQUARE_BRACKET_STRING)
-            ? value.indexOf(HttpCharacters.CLOSE_SQUARE_BRACKET) + 1
-            : value.indexOf(HttpCharacters.COLON_SIGN);
-    if (separator > 0 && separator < value.length() && port(value.substring(separator + 1)) == 0) {
-      throw new IllegalArgumentException("Invalid forwarding host port");
-    }
-
-    return parsed;
-  }
-
-  /**
-   * Parses a disclosed numeric TCP port without accepting signs or overflow.
-   *
-   * @param value numeric text
-   * @return port including zero when explicitly supplied
-   * @throws IllegalArgumentException if the value is not a TCP port in range
-   */
-  private static int port(String value) {
-    if (!DIGITS.matcher(value).matches()) {
-      throw new IllegalArgumentException("Invalid forwarding port");
-    }
-
-    int port = Integer.parseInt(value);
-    if (port > 65535) {
-      throw new IllegalArgumentException("Invalid forwarding port");
-    }
-
-    return port;
   }
 
   /**
@@ -612,9 +607,9 @@ final class TrustedProxy {
    * @return index of the selected trust boundary
    */
   private int boundaryIndex(List<@Nullable InetSocketAddress> addresses) {
-    int selected = addresses.size() - 1;
+    var selected = addresses.size() - 1;
     while (selected > 0) {
-      var address = addresses.get(selected);
+      final var address = addresses.get(selected);
       if (address == null || !trusted.test(address.getAddress())) {
         break;
       }

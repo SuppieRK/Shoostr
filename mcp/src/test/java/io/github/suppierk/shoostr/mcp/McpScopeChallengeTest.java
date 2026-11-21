@@ -14,9 +14,10 @@ class McpScopeChallengeTest {
   @ParameterizedTest
   @ValueSource(
       strings = {"", "two scopes", "quote\"", "back\\slash", "newline\n", "tab\t", "é", "\u007f"})
-  void rejectsInvalidOAuthScopeTokensBeforeCreatingAChallenge(String scope) {
+  void rejectsInvalidOauthScopeTokensBeforeCreatingChallenge(String scope) {
     var scopes = Set.of(scope);
     var metadata = URI.create("https://example.com/.well-known/oauth-protected-resource");
+
     assertThrows(
         IllegalArgumentException.class,
         () -> {
@@ -28,6 +29,7 @@ class McpScopeChallengeTest {
   void rejectsAnEmptyRequiredScopeSet() {
     Set<String> scopes = Set.of();
     var metadata = URI.create("https://example.com/.well-known/oauth-protected-resource");
+
     assertThrows(
         IllegalArgumentException.class,
         () -> {
@@ -48,6 +50,7 @@ class McpScopeChallengeTest {
   void rejectsMetadataUrlsThatCannotBeUsedForTrustedHttpsDiscovery(String metadata) {
     var scopes = Set.of("tools:read");
     var uri = URI.create(metadata);
+
     assertThrows(
         IllegalArgumentException.class,
         () -> {
@@ -62,6 +65,7 @@ class McpScopeChallengeTest {
         McpHttpSecurity.scopeDenied(
             scopes, URI.create("https://example.com/.well-known/oauth-protected-resource"));
     scopes.clear();
+
     assertEquals(
         "Bearer error=\"insufficient_scope\", scope=\"tools:read tools:write\", "
             + "resource_metadata=\"https://example.com/.well-known/oauth-protected-resource\"",

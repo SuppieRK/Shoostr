@@ -1,0 +1,263 @@
+package io.github.suppierk.shoostr;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import io.github.suppierk.shoostr.http.HttpHeaders;
+import io.github.suppierk.shoostr.http.HttpMethods;
+import io.github.suppierk.shoostr.testing.TestServer;
+import java.io.Closeable;
+import java.util.Set;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
+import org.yaml.snakeyaml.Yaml;
+
+class CorsYamlTest {
+  @Test
+  void emptyAndExplicitlyNullMappingsKeepTheEstablishedDefaults() {
+    for (var mapping : new String[] {"{}", explicitNullMapping()}) {
+      var policy = new Yaml().loadAs(mapping, CorsPolicy.class);
+
+      assertEquals(Set.of(), policy.origins());
+      assertEquals(Set.of(HttpMethods.GET, HttpMethods.HEAD), policy.methods());
+      assertFalse(policy.allMethods());
+      assertEquals(Set.of(), policy.allowedHeaders());
+      assertFalse(policy.credentials());
+      assertEquals(Set.of(), policy.exposedHeaders());
+      assertEquals(5, policy.maxAgeSeconds());
+    }
+  }
+
+  private static String explicitNullMapping() {
+    return
+        """
+        origins: null
+        methods: null
+        allMethods: null
+        allowedHeaders: null
+        credentials: null
+        exposedHeaders: null
+        maxAgeSeconds: null
+        """;
+  }
+
+  @Test
+  void wildcardMethodsAndConflictsDoNotDependOnYamlKeyOrder() {
+    for (var mapping :
+        new String[] {"methods: []\nallMethods: true", "allMethods: true\nmethods: []"}) {
+      var policy = new Yaml().loadAs(mapping, CorsPolicy.class);
+
+      assertTrue(policy.allMethods());
+      assertEquals(Set.of(), policy.methods());
+    }
+    for (var mapping :
+        new String[] {"methods: [GET]\nallMethods: true", "allMethods: true\nmethods: [GET]"}) {
+      var policy = new Yaml().loadAs(mapping, CorsPolicy.class);
+
+      assertThrows(IllegalArgumentException.class, () -> new Cors(policy));
+    }
+  }
+
+  @Test
+  void settersRestoreDefaultsAndInvalidValuesRetainPreviousSettings() {
+    var settings = createSettingsForSettersRestoreDefaultsAndInvalidValuesRetainPreviousSettings();
+    final var snapshot = new Cors(settings).policy();
+
+    var invalidOrigins = Set.of("not-an-origin");
+
+    assertThrows(IllegalArgumentException.class, () -> settings.setOrigins(invalidOrigins));
+    assertThrows(IllegalArgumentException.class, () -> settings.setMaxAgeSeconds(-1L));
+    assertEquals(Set.of("https://client.example"), settings.getOrigins());
+    assertEquals(60L, settings.getMaxAgeSeconds());
+
+    settings.setOrigins(null);
+    settings.setMethods(null);
+    settings.setAllMethods(null);
+    settings.setAllowedHeaders(null);
+    settings.setCredentials(null);
+    settings.setExposedHeaders(null);
+    settings.setMaxAgeSeconds(null);
+    var defaults = settings;
+
+    assertEquals(Set.of(), defaults.origins());
+    assertEquals(Set.of(HttpMethods.GET, HttpMethods.HEAD), defaults.methods());
+    assertFalse(defaults.allMethods());
+    assertEquals(Set.of(), defaults.allowedHeaders());
+    assertFalse(defaults.credentials());
+    assertEquals(Set.of(), defaults.exposedHeaders());
+    assertEquals(5, defaults.maxAgeSeconds());
+    assertEquals(Set.of("https://client.example"), snapshot.origins());
+    assertEquals(Set.of(HttpMethods.POST), snapshot.methods());
+    assertTrue(snapshot.credentials());
+    assertEquals(60, snapshot.maxAgeSeconds());
+  }
+
+  @Test
+  void preservesZeroPreflightCacheLifetimeWhenPublishingPolicy() {
+    var policy = new CorsPolicy();
+    policy.setMaxAgeSeconds(0L);
+
+    assertEquals(0L, policy.getMaxAgeSeconds());
+    assertEquals(0, new Cors(policy).policy().maxAgeSeconds());
+  }
+
+  private CorsPolicy
+      createSettingsForSettersRestoreDefaultsAndInvalidValuesRetainPreviousSettings() {
+    return new Yaml()
+        .loadAs(
+            """
+            origins: [https://client.example]
+            methods: [POST]
+            allowedHeaders: [X-Proof]
+            credentials: true
+            exposedHeaders: [ETag]
+            maxAgeSeconds: 60
+            """,
+            CorsPolicy.class);
+  }
+
+  @Test
+  void wildcardCredentialsRemainInvalidWhenLoadedFromYaml() {
+    for (var mapping :
+        new String[] {
+          "origins: ['*']\ncredentials: true",
+          "origins: [https://client.example]\ncredentials: true\nexposedHeaders: ['*']"
+        }) {
+      var policy = new Yaml().loadAs(mapping, CorsPolicy.class);
+
+      assertThrows(IllegalArgumentException.class, () -> new Cors(policy));
+    }
+  }
+
+  @Test
+  void mapsEveryExistingPolicyPropertyToTypedValues() {
+    var policy = createPolicyForMapsEveryExistingPolicyPropertyToTypedValues();
+
+    assertEquals(Set.of("https://client.example"), policy.origins());
+    assertEquals(Set.of(HttpMethods.POST, HttpMethods.OPTIONS), policy.methods());
+    assertFalse(policy.allMethods());
+    assertEquals(
+        Set.of(HttpHeaders.CONTENT_TYPE, HttpHeaders.of("X-Proof")), policy.allowedHeaders());
+    assertTrue(policy.credentials());
+    assertEquals(Set.of(HttpHeaders.ETAG, HttpHeaders.of("X-Request-Id")), policy.exposedHeaders());
+    assertEquals(60, policy.maxAgeSeconds());
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void exposesConfiguredPermissionsThroughBeanAccessors(boolean wildcardMethods) {
+    var policy = createPolicyForMapsEveryExistingPolicyPropertyToTypedValues();
+    if (wildcardMethods) {
+      policy.setMethods(Set.of());
+      policy.setAllMethods(true);
+    }
+
+    policy.setCredentials(wildcardMethods);
+
+    assertEquals(Set.of("https://client.example"), policy.getOrigins());
+    assertEquals(
+        wildcardMethods ? Set.of() : Set.of(HttpMethods.POST, HttpMethods.OPTIONS),
+        policy.getMethods());
+    assertEquals(wildcardMethods, policy.getAllMethods());
+    assertEquals(wildcardMethods, policy.getCredentials());
+    assertEquals(
+        Set.of(HttpHeaders.CONTENT_TYPE, HttpHeaders.of("X-Proof")), policy.getAllowedHeaders());
+    assertEquals(
+        Set.of(HttpHeaders.ETAG, HttpHeaders.of("X-Request-Id")), policy.getExposedHeaders());
+    assertEquals(60L, policy.getMaxAgeSeconds());
+  }
+
+  private CorsPolicy createPolicyForMapsEveryExistingPolicyPropertyToTypedValues() {
+    return new Yaml()
+        .loadAs(
+            """
+            origins: [https://client.example]
+            methods: [POST, OPTIONS]
+            allMethods: false
+            allowedHeaders: [Content-Type, X-Proof]
+            credentials: true
+            exposedHeaders: [ETag, X-Request-Id]
+            maxAgeSeconds: 60
+            """,
+            CorsPolicy.class);
+  }
+
+  @Test
+  void partialConfigurationPreservesTheExistingPolicyDefaults() {
+    var policy = new Yaml().loadAs("origins: [https://client.example]", CorsPolicy.class);
+
+    assertEquals(Set.of("https://client.example"), policy.origins());
+    assertEquals(Set.of(HttpMethods.GET, HttpMethods.HEAD), policy.methods());
+    assertFalse(policy.allMethods());
+    assertFalse(policy.credentials());
+    assertEquals(Set.of(), policy.allowedHeaders());
+    assertEquals(Set.of(), policy.exposedHeaders());
+    assertEquals(5, policy.maxAgeSeconds());
+  }
+
+  @Test
+  void sourceAccessorAndReplacementEditsCannotChangeRegisteredPermissions() throws Exception {
+    var source = new Yaml().loadAs("origins: [https://client.example]", CorsPolicy.class);
+    var cors = new Cors(source);
+    source.setOrigins(Set.of("https://changed.example"));
+    cors.policy().setOrigins(Set.of("https://changed.example"));
+    var replacement = CorsPolicy.builder().origins(Set.of("https://reports.example")).build();
+    var invalid = CorsPolicy.builder().origins(Set.of("*")).build();
+    invalid.setCredentials(true);
+    var app = new Shoostr();
+
+    try (Closeable cleanup = app::close) {
+      app.withExtension(cors);
+      app.routes()
+          .get("/default", (request, response) -> response.text("ok"))
+          .get(
+              "/reports",
+              (request, response) -> response.text("ok"),
+              lifecycle -> {
+                var selected = lifecycle.withExtension(cors).policy(replacement);
+
+                assertThrows(IllegalArgumentException.class, () -> selected.policy(invalid));
+              })
+          .get("/sibling", (request, response) -> response.text("ok"));
+      replacement.setOrigins(Set.of("https://changed.example"));
+
+      try (var server = TestServer.start(app)) {
+        assertEquals(
+            200,
+            server
+                .send(
+                    request -> request.path("/default").header("Origin", "https://client.example"))
+                .statusCode());
+        assertEquals(
+            200,
+            server
+                .send(
+                    request -> request.path("/sibling").header("Origin", "https://client.example"))
+                .statusCode());
+        assertEquals(
+            200,
+            server
+                .send(
+                    request -> request.path("/reports").header("Origin", "https://reports.example"))
+                .statusCode());
+        assertEquals(
+            403,
+            server
+                .send(
+                    request -> request.path("/reports").header("Origin", "https://client.example"))
+                .statusCode());
+
+        for (var path : new String[] {"/default", "/reports", "/sibling"}) {
+          assertEquals(
+              403,
+              server
+                  .send(request -> request.path(path).header("Origin", "https://changed.example"))
+                  .statusCode());
+        }
+      }
+    }
+  }
+}

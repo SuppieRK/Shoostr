@@ -9,17 +9,20 @@ capture_process_cgroup() {
     printf 'Process cgroup membership: unavailable\n'
     return
   fi
+
   relative=$(awk -F: '$1 == "0" && $2 == "" {print substr($0, 4); exit}' "$membership")
   if [[ "$relative" != /* || "/$relative/" == *'/../'* || "/$relative/" == *'/./'* ]]; then
     printf 'Process cgroup v2 path: unavailable or outside the visible namespace\n'
     return
   fi
+
   root=${root%/}
   current="$root${relative%/}"
   if [[ ! -d "$current" ]]; then
     printf 'Process cgroup directory: unavailable (%s)\n' "$current"
     return
   fi
+
   printf 'Visible process/ancestor cgroup limits; namespace-hidden limits remain unknown.\n'
   while :; do
     for file in cpu.max memory.max; do
@@ -45,6 +48,7 @@ baseline=$2
 results=$3
 expected_baseline=$4
 mkdir -p "$results"
+
 candidate_sha=$(git -C "$candidate" rev-parse HEAD)
 baseline_sha=$(git -C "$baseline" rev-parse HEAD)
 [[ "$candidate_sha" == "$GITHUB_SHA" && "$baseline_sha" == "$expected_baseline" ]]
@@ -65,6 +69,7 @@ for jar in "$libs"/*.jar; do
     baseline_cp+=":$jar"
   fi
 done
+
 printf '%s\n' "$candidate_cp" > "$results/candidate-classpath.txt"
 printf '%s\n' "$baseline_cp" > "$results/baseline-classpath.txt"
 sha256sum "$libs"/*.jar "${baseline_core[0]}" "${baseline_otel[0]}" > "$results/checksums.txt"
@@ -80,6 +85,7 @@ sha256sum "$libs"/*.jar "${baseline_core[0]}" "${baseline_otel[0]}" > "$results/
   cat /proc/self/status /proc/self/cgroup
   capture_process_cgroup /sys/fs/cgroup /proc/self/cgroup
 } > "$results/environment.txt" 2>&1
+
 {
   printf '## SDK tracing: paired JMH\n\nCandidate: %s; baseline: %s.\n\n' "$candidate_sha" "$baseline_sha"
   printf 'Same runner, fixture and dependencies; only project core/tracing jars differ. '

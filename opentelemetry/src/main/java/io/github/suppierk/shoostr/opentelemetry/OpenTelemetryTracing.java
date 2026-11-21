@@ -1,13 +1,16 @@
 package io.github.suppierk.shoostr.opentelemetry;
 
 import io.github.suppierk.shoostr.ApplicationCallbacks;
-import io.github.suppierk.shoostr.Extension;
-import io.github.suppierk.shoostr.Extensions;
+import io.github.suppierk.shoostr.ApplicationExtension;
+import io.github.suppierk.shoostr.Lifecycle;
 import io.github.suppierk.shoostr.Request;
 import io.github.suppierk.shoostr.RequestObservation;
 import io.github.suppierk.shoostr.RequestOutcome;
+import io.github.suppierk.shoostr.RouteExtension;
 import io.github.suppierk.shoostr.http.HttpMethods;
+import io.github.suppierk.shoostr.http.HttpStatusCodes;
 import io.opentelemetry.api.OpenTelemetry;
+import io.opentelemetry.api.trace.Span;
 import io.opentelemetry.api.trace.SpanKind;
 import io.opentelemetry.api.trace.StatusCode;
 import io.opentelemetry.api.trace.Tracer;
@@ -15,44 +18,24 @@ import io.opentelemetry.context.Context;
 import io.opentelemetry.context.Scope;
 import io.opentelemetry.context.propagation.TextMapGetter;
 import java.util.Objects;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Function;
 import org.jspecify.annotations.Nullable;
 
 /**
  * Optional SERVER spans with application-owned SDK, exporters and propagation configuration.
- * Equality compares the telemetry provider, tracer and registration flags through their own
- * equality contracts. Configuration and installation changes can change equality and hash codes.
+ * Equality compares the telemetry provider and tracer through their own equality contracts;
+ * activation does not change equality or hash codes.
  */
 public final class OpenTelemetryTracing
-    implements Extension<OpenTelemetryTracing>, Function<Request, RequestObservation> {
-  private static final TextMapGetter<Request> HEADERS =
-      new TextMapGetter<>() {
-        /**
-         * Retains header enumeration for propagators that use the deprecated upstream method.
-         *
-         * <p>Deprecation is suppressed because this upstream callback still serves propagators that
-         * enumerate request headers.
-         *
-         * @param carrier request providing the header names
-         * @return incoming header names
-         */
-        @Override
-        @SuppressWarnings("deprecation")
-        public Iterable<String> keys(Request carrier) {
-          return carrier.headerMap().keySet();
-        }
-
-        /** {@inheritDoc} */
-        @Override
-        public @Nullable String get(@Nullable Request carrier, String key) {
-          return carrier == null ? null : carrier.header(key).orElse(null);
-        }
-      };
+    implements ApplicationExtension<OpenTelemetryTracing>,
+        RouteExtension<OpenTelemetryTracing>,
+        Function<Request, RequestObservation> {
+  private static final TextMapGetter<Request> HEADERS = headerGetter();
 
   private final OpenTelemetry telemetry;
   private final Tracer tracer;
-  private boolean allRequests;
-  private boolean installed;
+  private final ReentrantLock registrationLock;
 
   /**
    * Uses an explicit provider without installing globals or owning its lifetime.
@@ -61,11 +44,77 @@ public final class OpenTelemetryTracing
    */
   public OpenTelemetryTracing(OpenTelemetry telemetry) {
     this.telemetry = Objects.requireNonNull(telemetry);
-    tracer = telemetry.getTracer("io.github.suppierk.shoostr");
+    this.tracer = telemetry.getTracer("io.github.suppierk.shoostr");
+    this.registrationLock = new ReentrantLock();
   }
 
   /**
-   * Compares all stored collaborators and registration state.
+   * Adapts immutable request headers to OpenTelemetry context propagation.
+   *
+   * @return request-header propagation reader
+   */
+  private static TextMapGetter<Request> headerGetter() {
+    return new TextMapGetter<>() {
+      /**
+       * Retains header enumeration for propagators that use the deprecated upstream method.
+       *
+       * <p>Deprecation is suppressed because this upstream callback still serves propagators that
+       * enumerate request headers.
+       *
+       * @param carrier request providing the header names
+       * @return incoming header names
+       */
+      @Override
+      @SuppressWarnings("deprecation")
+      public Iterable<String> keys(Request carrier) {
+        return carrier.headerMap().keySet();
+      }
+
+      /** {@inheritDoc} */
+      @Override
+      public @Nullable String get(@Nullable Request carrier, String key) {
+        return carrier == null ? null : carrier.header(key).orElse(null);
+      }
+    };
+  }
+
+  /**
+   * Captures admission context without changing it or creating a span.
+   *
+   * @return observation restoring the worker's exact previous context after attachment
+   */
+  private static RequestObservation admissionContext() {
+    final var captured = Context.current();
+
+    return new RequestObservation() {
+      /**
+       * Replaces unrelated worker context for this invocation only.
+       *
+       * <p>The returned SDK scope is owned and closed by Shoostr on the attaching thread;
+       * MustBeClosedChecker cannot follow that ownership transfer.
+       *
+       * @return scope restoring the worker's previous context on close
+       */
+      @Override
+      @SuppressWarnings("MustBeClosedChecker")
+      public AutoCloseable attach() {
+        return captured.makeCurrent();
+      }
+
+      /**
+       * Carries context only; there is no SERVER span to record or end.
+       *
+       * @param outcome terminal snapshot
+       */
+      @Override
+      public void complete(RequestOutcome outcome) {
+        // This observation carries context only and owns no span to complete.
+      }
+    };
+  }
+
+  /**
+   * Compares all stored collaborators.
    *
    * @param other candidate provider
    * @return whether both providers have equal stored state
@@ -74,19 +123,17 @@ public final class OpenTelemetryTracing
   public boolean equals(@Nullable Object other) {
     return other instanceof OpenTelemetryTracing provider
         && telemetry.equals(provider.telemetry)
-        && tracer.equals(provider.tracer)
-        && allRequests == provider.allRequests
-        && installed == provider.installed;
+        && tracer.equals(provider.tracer);
   }
 
   /**
-   * Hashes the same collaborators and registration state used by equality.
+   * Hashes the same collaborators used by equality.
    *
    * @return hash of the current provider state
    */
   @Override
   public int hashCode() {
-    return Objects.hash(telemetry, tracer, allRequests, installed);
+    return Objects.hash(telemetry, tracer);
   }
 
   /**
@@ -97,14 +144,17 @@ public final class OpenTelemetryTracing
    * @return this installed provider, which has no mutable scope-local settings
    */
   @Override
-  public synchronized OpenTelemetryTracing configure(
-      Extensions endpoint, @Nullable OpenTelemetryTracing inherited) {
-    endpoint.requireInstalled(this);
-    if (!allRequests) {
-      endpoint.lifecycle().observe(this);
-    }
+  public OpenTelemetryTracing configure(
+      Lifecycle endpoint, @Nullable OpenTelemetryTracing inherited) {
+    registrationLock.lock();
 
-    return this;
+    try {
+      endpoint.observe(this);
+
+      return this;
+    } finally {
+      registrationLock.unlock();
+    }
   }
 
   /**
@@ -117,17 +167,12 @@ public final class OpenTelemetryTracing
   @SuppressWarnings(
       "MustBeClosedChecker") // Shoostr closes the returned observation on this thread.
   public RequestObservation apply(Request request) {
-    var parent =
+    final var parent =
         telemetry.getPropagators().getTextMapPropagator().extract(Context.root(), request, HEADERS);
-    var method = HttpMethods.httpMethod(request.method()).map(HttpMethods::value).orElse("_OTHER");
-    var span =
-        tracer
-            .spanBuilder(method)
-            .setSpanKind(SpanKind.SERVER)
-            .setParent(parent)
-            .setAttribute("http.request.method", method)
-            .startSpan();
-    var spanContext = parent.with(span);
+    final var method =
+        HttpMethods.httpMethod(request.method()).map(HttpMethods::value).orElse("_OTHER");
+    final var span = startSpan(method, parent);
+    final var spanContext = parent.with(span);
     Scope scope;
 
     try {
@@ -162,30 +207,7 @@ public final class OpenTelemetryTracing
       @Override
       public void complete(RequestOutcome outcome) {
         try {
-          if (outcome.routePattern() != null) {
-            span.updateName(method + " " + outcome.routePattern());
-            span.setAttribute("http.route", outcome.routePattern());
-          }
-
-          if (outcome.statusCode() != 0) {
-            span.setAttribute("http.response.status_code", outcome.statusCode());
-          }
-
-          if (outcome.transportFailure() != null
-              || outcome.statusCode() >= 500
-              || (outcome.statusCode() == 0 && outcome.applicationFailure() != null)) {
-            span.setStatus(StatusCode.ERROR);
-            String errorType;
-            if (outcome.transportFailure() != null) {
-              errorType = "transport";
-            } else if (outcome.statusCode() >= 500) {
-              errorType = Integer.toString(outcome.statusCode());
-            } else {
-              errorType = "application";
-            }
-
-            span.setAttribute("error.type", errorType);
-          }
+          recordTerminalAttributes(span, method, outcome);
         } finally {
           span.end();
         }
@@ -194,18 +216,64 @@ public final class OpenTelemetryTracing
   }
 
   /**
-   * Enables app-wide instrumentation explicitly before extension installation.
+   * Records route, response status and any error on the server span at completion.
    *
-   * @return this extension
-   * @throws IllegalStateException if already installed
+   * @param span server span for the exchange
+   * @param method HTTP method token used in the span name
+   * @param outcome detached terminal request outcome
    */
-  public synchronized OpenTelemetryTracing allRequests() {
-    if (installed) {
-      throw new IllegalStateException("Configure instrumentation before installation");
+  private static void recordTerminalAttributes(Span span, String method, RequestOutcome outcome) {
+    final var route = outcome.routePattern();
+    if (route != null) {
+      span.updateName(method + " " + route);
+      span.setAttribute("http.route", route);
     }
 
-    allRequests = true;
-    return this;
+    final var status = outcome.statusCode();
+    if (status != 0) {
+      span.setAttribute("http.response.status_code", status);
+    }
+
+    final var errorType = errorType(outcome);
+    if (errorType != null) {
+      span.setStatus(StatusCode.ERROR);
+      span.setAttribute("error.type", errorType);
+    }
+  }
+
+  /**
+   * Classifies terminal errors in transport, server status and application order.
+   *
+   * @param outcome detached terminal request outcome
+   * @return error type, or null when the span status and error tag should be left untouched
+   */
+  private static @Nullable String errorType(RequestOutcome outcome) {
+    if (outcome.transportFailure() != null) {
+      return "transport";
+    }
+
+    final var status = outcome.statusCode();
+    if (status >= HttpStatusCodes.INTERNAL_SERVER_ERROR.value()) {
+      return Integer.toString(status);
+    }
+
+    return status == 0 && outcome.applicationFailure() != null ? "application" : null;
+  }
+
+  /**
+   * Starts a server span with the incoming method and propagated parent context.
+   *
+   * @param method HTTP method token
+   * @param parent propagated parent context
+   * @return span completed by the request observation
+   */
+  private Span startSpan(String method, Context parent) {
+    return tracer
+        .spanBuilder(method)
+        .setSpanKind(SpanKind.SERVER)
+        .setParent(parent)
+        .setAttribute("http.request.method", method)
+        .startSpan();
   }
 
   /**
@@ -216,46 +284,13 @@ public final class OpenTelemetryTracing
    * @param callbacks registration-only application callbacks
    */
   @Override
-  public synchronized void install(ApplicationCallbacks callbacks) {
-    installed = true;
-    if (allRequests) {
-      callbacks.observe(this);
-    } else {
+  public void install(ApplicationCallbacks callbacks) {
+    registrationLock.lock();
+
+    try {
       callbacks.observe(ignored -> admissionContext());
+    } finally {
+      registrationLock.unlock();
     }
-  }
-
-  /**
-   * Captures admission context without changing it or creating a span.
-   *
-   * @return observation restoring the worker's exact previous context after attachment
-   */
-  private static RequestObservation admissionContext() {
-    var captured = Context.current();
-    return new RequestObservation() {
-      /**
-       * Replaces unrelated worker context for this invocation only.
-       *
-       * <p>The returned SDK scope is owned and closed by Shoostr on the attaching thread;
-       * MustBeClosedChecker cannot follow that ownership transfer.
-       *
-       * @return scope restoring the worker's previous context on close
-       */
-      @Override
-      @SuppressWarnings("MustBeClosedChecker")
-      public AutoCloseable attach() {
-        return captured.makeCurrent();
-      }
-
-      /**
-       * Carries context only; there is no SERVER span to record or end.
-       *
-       * @param outcome terminal snapshot
-       */
-      @Override
-      public void complete(RequestOutcome outcome) {
-        // This observation carries context only and owns no span to complete.
-      }
-    };
   }
 }

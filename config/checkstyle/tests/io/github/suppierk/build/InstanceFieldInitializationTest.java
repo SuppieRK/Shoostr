@@ -32,7 +32,20 @@ class InstanceFieldInitializationTest {
         "class Example { void run() { var obj = new Object() { Object field = new Object(); }; } }",
         "enum Example { VALUE; private final Object field = new Object(); }",
         "enum Example { VALUE { private final Object field = new Object(); }; }",
-        "class Example { Object field; { field = new Object(); } }"
+        "class Example { Object field; { field = new Object(); } }",
+        "package io.github.suppierk.fixture; class Options { int port = 8080; }",
+        "package github.io.suppierk.shoostr; class Options { int port = 8080; }",
+        "package io.github.suppierk.shoostr; class Example { int port = 8080; }",
+        "package io.github.suppierk.shoostr; class Options { class Nested { int port = 8080; } }",
+        "package io.github.suppierk.shoostr; class Example { class Options { int port = 8080; } }",
+        "package io.github.suppierk.shoostr; class CorsPolicy { class Builder { int value = 1; } }",
+        "package io.github.suppierk.fixture; class Csrf { int value = 1; }",
+        "package io.github.suppierk.shoostr; class CorsPolicy { class Nested { int value = 1; } }",
+        "package io.github.suppierk.shoostr.mcp; class Mcp "
+            + "{ static class Options { int value = 1; } }",
+        "package io.github.suppierk.shoostr; class Csrf { Object value; { value = null; } }",
+        "package io.github.suppierk.shoostr; class Options "
+            + "{ Object field; { field = new Object(); } }"
       })
   void rejectsInstanceInitializationOutsideConstructors(String source) throws Exception {
     assertEquals(1, violations(source), source);
@@ -43,7 +56,9 @@ class InstanceFieldInitializationTest {
       strings = {
         "class Example { final Object field; Example() { field = new Object(); } }",
         "class Example { final Object field; Example(Object value) { field = value; } }",
-        "class Example { final Object field; Example() { this(new Object()); } Example(Object value) { field = value; } }",
+        "class Example { final Object field; Example() { "
+            + "this(new Object()); } Example(Object value) { "
+            + "field = value; } }",
         "class Example { static final Object VALUE = new Object(); }",
         "class Example { static Object value = create(); }",
         "class Example { static Object value; static { value = new Object(); } }",
@@ -52,7 +67,15 @@ class InstanceFieldInitializationTest {
         "interface Example { Object VALUE = new Object(); }",
         "@interface Example { String VALUE = \"value\"; String value() default \"value\"; }",
         "record Example(Object value) { Example { value = new Object(); } }",
-        "enum Example { VALUE; final Object field; Example() { field = new Object(); } }"
+        "enum Example { VALUE; final Object field; Example() { field = new Object(); } }",
+        "package io.github.suppierk.shoostr; class CorsPolicy { int maxAgeSeconds = 5; }",
+        "package io.github.suppierk.shoostr; class Csrf { Object trustedOrigins = null; }",
+        "package io.github.suppierk.shoostr.mcp; class "
+            + "McpSessionLimits { int maxSessions = 1024; }",
+        "package io.github.suppierk.shoostr; class Options "
+            + "{ private String host = \"0.0.0.0\"; private "
+            + "Integer port = 8080; private Boolean "
+            + "virtualThreads = false; }"
       })
   void permitsConstructorsStaticFieldsAndLocalVariables(String source) throws Exception {
     assertEquals(0, violations(source), source);
@@ -67,7 +90,9 @@ class InstanceFieldInitializationTest {
             .newXPath()
             .evaluate(
                 "/module/module/module[@name='MatchXpath']/property[@name='query']/@value", rules);
+
     assertFalse(query.isBlank(), "The configured field-initialization rule must exist");
+
     var file = Files.createTempFile(temporaryDirectory, "instance-fields-", ".java");
     var checker = new Checker();
 
@@ -81,6 +106,7 @@ class InstanceFieldInitializationTest {
       configuration.addChild(walker);
       checker.setModuleClassLoader(InstanceFieldInitializationTest.class.getClassLoader());
       checker.configure(configuration);
+
       return checker.process(List.of(file.toFile()));
     } finally {
       checker.destroy();

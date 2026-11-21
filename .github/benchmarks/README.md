@@ -16,7 +16,7 @@ warmup and 180-second measurement. Up to ten workload jobs run concurrently.
 The stream fixture writes sixteen 1 KiB pieces through Shoostr’s default 8 KiB
 buffer, without explicit per-piece flushes. The configured buffer fills and flushes
 automatically; handler completion finishes the response. Application callers can
-change this boundary with `Options.withStreamBufferBytes(...)`, or call `flush()`
+change this boundary with `options.setStreamBufferBytes(...)` before constructing the application, or call `flush()`
 when earlier transport submission is required. This workload replaces the historical
 fixture that explicitly flushed every 1 KiB write; its results need a new baseline.
 

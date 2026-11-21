@@ -84,6 +84,7 @@ class StreamBufferBenchmarkTest {
     var fixedTotal = new StreamBufferBenchmark.FixedTotalWriteState();
     fixedTotal.configure(chunkBytes, bufferBytes, explicitFlush);
     fixedTotal.setupTrial();
+
     return fixedTotal;
   }
 }

@@ -9,9 +9,12 @@ import io.github.suppierk.shoostr.Shoostr;
 import io.github.suppierk.shoostr.testing.TestServer;
 import io.modelcontextprotocol.common.McpTransportContext;
 import io.modelcontextprotocol.json.McpJsonDefaults;
+import io.modelcontextprotocol.server.McpAsyncServer;
 import io.modelcontextprotocol.server.McpServer;
 import io.modelcontextprotocol.spec.McpSchema;
 import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
@@ -20,128 +23,81 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import reactor.core.publisher.Sinks;
+import reactor.core.publisher.Sinks.Empty;
 
 class McpNotificationCleanupTest {
   @ParameterizedTest
   @ValueSource(strings = {"session deletion", "application shutdown"})
   @Timeout(20)
-  void cancelsAPendingNativeNotificationWhenItsOwnerTerminates(String termination)
-      throws Exception {
+  void cancelsPendingNativeNotificationWhenItsOwnerTerminates(String termination) throws Exception {
     var release = Sinks.<Void>empty();
     var pending = new CountDownLatch(1);
     var cancelled = new CountDownLatch(1);
     var cancellations = new AtomicInteger();
     var mcp =
-        Mcp.async(
-            new McpHttpSecurity(
-                Set.of(),
-                ignored -> new McpIdentity("public", McpTransportContext.EMPTY, null),
-                (ignored2, ignored3) -> {}),
-            transport ->
-                McpServer.async(transport)
-                    .requestTimeout(Duration.ofSeconds(5))
-                    .rootsChangeHandler(
-                        (ignored4, ignored5) ->
-                            release
-                                .asMono()
-                                .doOnSubscribe(ignored6 -> pending.countDown())
-                                .doOnCancel(
-                                    () -> {
-                                      cancellations.incrementAndGet();
-                                      cancelled.countDown();
-                                    }))
-                    .build());
+        createMcpForCancelsPendingNativeNotificationWhenItsOwnerTerminates(
+            release, pending, cancellations, cancelled);
     var app = new Shoostr();
-    app.extensions(mcp).routes(routes -> routes.path("/mcp", mcp::routes));
+    app.routes(routes -> routes.path("/mcp", mcp::routes));
 
     try (var callers = Executors.newVirtualThreadPerTaskExecutor();
         var test = TestServer.start(app)) {
       try {
         var initialized =
-            test.send(
-                request ->
-                    request
-                        .path("/mcp")
-                        .method("POST")
-                        .header("Content-Type", "application/json")
-                        .header("Accept", "application/json, text/event-stream")
-                        .body(
-                            """
-                {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
-                  "protocolVersion":"2025-11-25","capabilities":{"roots":{"listChanged":true}},
-                  "clientInfo":{"name":"notification-cleanup","version":"1.0"}}}
-                """
-                                .getBytes(StandardCharsets.UTF_8)));
+            sendInitializedRequestForCancelsPendingNativeNotificationWhenItsOwnerTerminates(test);
         var session = initialized.headers().firstValue("Mcp-Session-Id").orElseThrow();
         var listening =
-            test.send(
-                request ->
-                    request
-                        .path("/mcp")
-                        .header("Accept", "text/event-stream")
-                        .header("Mcp-Session-Id", session),
-                HttpResponse.BodyHandlers.ofInputStream());
+            sendListeningRequestForCancelsPendingNativeNotificationWhenItsOwnerTerminates(
+                test, session);
 
         try (var reader =
             new BufferedReader(new InputStreamReader(listening.body(), StandardCharsets.UTF_8))) {
-          var notification =
-              callers.submit(
-                  () ->
-                      test.send(
-                          request ->
-                              request
-                                  .path("/mcp")
-                                  .method("POST")
-                                  .header("Content-Type", "application/json")
-                                  .header("Accept", "application/json, text/event-stream")
-                                  .header("Mcp-Session-Id", session)
-                                  .body(
-                                      "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/roots/list_changed\"}"
-                                          .getBytes(StandardCharsets.UTF_8))));
+          final var notification =
+              submitNotificationForCancelsPendingNativeNotificationWhenItsOwnerTerminates(
+                  callers, test, session);
           String line;
           do {
             line = reader.readLine();
+
             assertNotNull(line, "The SDK must request current roots");
           } while (!line.startsWith("data:"));
+
           var roots =
               assertInstanceOf(
                   McpSchema.JSONRPCRequest.class,
                   McpSchema.deserializeJsonRpcMessage(
                       McpJsonDefaults.getMapper(), line.substring(5).strip()));
           assertEquals("roots/list", roots.method());
+
           var reply =
               McpJsonDefaults.getMapper()
                   .writeValueAsBytes(
                       McpSchema.JSONRPCResponse.result(roots.id(), Map.of("roots", List.of())));
           var replied =
-              test.send(
-                  request ->
-                      request
-                          .path("/mcp")
-                          .method("POST")
-                          .header("Content-Type", "application/json")
-                          .header("Accept", "application/json, text/event-stream")
-                          .header("Mcp-Session-Id", session)
-                          .body(reply));
+              sendRepliedRequestForCancelsPendingNativeNotificationWhenItsOwnerTerminates(
+                  test, session, reply);
+
           assertEquals(202, replied.statusCode());
           assertTrue(pending.await(3, TimeUnit.SECONDS));
           assertEquals(
               202,
               notification.get(3, TimeUnit.SECONDS).statusCode(),
               "HTTP acceptance must not await the pending native callback");
+
           if ("session deletion".equals(termination)) {
             assertEquals(
                 200,
-                test.send(
-                        request ->
-                            request.path("/mcp").method("DELETE").header("Mcp-Session-Id", session))
+                test.send(request ->
+                        request.path("/mcp").method("DELETE").header("Mcp-Session-Id", session))
                     .statusCode());
           } else {
             app.close();
@@ -156,5 +112,88 @@ class McpNotificationCleanupTest {
         release.tryEmitEmpty();
       }
     }
+  }
+
+  private Mcp<McpAsyncServer> createMcpForCancelsPendingNativeNotificationWhenItsOwnerTerminates(
+      Empty<Void> release,
+      CountDownLatch pending,
+      AtomicInteger cancellations,
+      CountDownLatch cancelled) {
+    return Mcp.async(
+        new McpHttpSecurity(
+            Set.of(),
+            ignored -> new McpIdentity("public", McpTransportContext.EMPTY, null),
+            (ignoredMcpIdentity, ignoredJsonRpcMessage) -> {}),
+        transport ->
+            McpServer.async(transport)
+                .requestTimeout(Duration.ofSeconds(5))
+                .rootsChangeHandler((ignoredMcpAsyncServerExchange, ignoredList) ->
+                    release
+                        .asMono()
+                        .doOnSubscribe(ignoredSubscription -> pending.countDown())
+                        .doOnCancel(() -> {
+                          cancellations.incrementAndGet();
+                          cancelled.countDown();
+                        }))
+                .build());
+  }
+
+  private HttpResponse<byte[]>
+      sendInitializedRequestForCancelsPendingNativeNotificationWhenItsOwnerTerminates(
+          TestServer test) throws IOException, InterruptedException {
+    return test.send(request ->
+        request
+            .path("/mcp")
+            .method("POST")
+            .header("Content-Type", "application/json")
+            .header("Accept", "application/json, text/event-stream")
+            .body(
+                """
+                {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+                  "protocolVersion":"2025-11-25","capabilities":{"roots":{"listChanged":true}},
+                  "clientInfo":{"name":"notification-cleanup","version":"1.0"}}}
+                """
+                    .getBytes(StandardCharsets.UTF_8)));
+  }
+
+  private HttpResponse<InputStream>
+      sendListeningRequestForCancelsPendingNativeNotificationWhenItsOwnerTerminates(
+          TestServer test, String session) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/mcp")
+                .header("Accept", "text/event-stream")
+                .header("Mcp-Session-Id", session),
+        HttpResponse.BodyHandlers.ofInputStream());
+  }
+
+  private Future<HttpResponse<byte[]>>
+      submitNotificationForCancelsPendingNativeNotificationWhenItsOwnerTerminates(
+          ExecutorService callers, TestServer test, String session) {
+    return callers.submit(() ->
+        test.send(request ->
+            request
+                .path("/mcp")
+                .method("POST")
+                .header("Content-Type", "application/json")
+                .header("Accept", "application/json, text/event-stream")
+                .header("Mcp-Session-Id", session)
+                .body(
+                    "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/roots/list_changed\"}"
+                        .getBytes(StandardCharsets.UTF_8))));
+  }
+
+  private HttpResponse<byte[]>
+      sendRepliedRequestForCancelsPendingNativeNotificationWhenItsOwnerTerminates(
+          TestServer test, String session, byte[] reply) throws IOException, InterruptedException {
+    return test.send(request ->
+        request
+            .path("/mcp")
+            .method("POST")
+            .header("Content-Type", "application/json")
+            .header("Accept", "application/json, text/event-stream")
+            .header("Mcp-Session-Id", session)
+            .body(reply));
   }
 }

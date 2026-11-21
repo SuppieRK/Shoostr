@@ -12,12 +12,41 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.function.BiFunction;
 import nl.jqno.equalsverifier.EqualsVerifier;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 class CoreRecordEqualityTest {
   @TempDir Path directory;
+
+  private static RadixRoutes.Endpoint endpoint(String path, String parameter, int segment) {
+    return new RadixRoutes.Endpoint(
+        segment == 1 ? HttpMethods.GET : HttpMethods.POST,
+        path,
+        path,
+        (request, response) -> response.text(parameter),
+        Map.of(parameter, segment),
+        segment + 1,
+        segment,
+        null);
+  }
+
+  private static Class<?> nested(Class<?> owner, String name) throws ClassNotFoundException {
+    return Class.forName(owner.getName() + "$" + name);
+  }
+
+  private static Object constructRecord(Class<?> type, Object... components)
+      throws ReflectiveOperationException {
+    var signature =
+        Arrays.stream(type.getRecordComponents())
+            .map(RecordComponent::getType)
+            .toArray(Class<?>[]::new);
+    var constructor = type.getDeclaredConstructor(signature);
+    constructor.setAccessible(true);
+
+    return constructor.newInstance(components);
+  }
 
   @Test
   void acceptParametersCompareAllComponents() throws ReflectiveOperationException {
@@ -74,8 +103,8 @@ class CoreRecordEqualityTest {
           .withPrefabValues(HttpMethods.class, HttpMethods.GET, HttpMethods.POST)
           .withPrefabValues(
               Csrf.class,
-              new Csrf(Set.of("https://first.example")),
-              new Csrf(Set.of("https://second.example")))
+              Csrf.builder().trustedOrigins(Set.of("https://first.example")).build(),
+              Csrf.builder().trustedOrigins(Set.of("https://second.example")).build())
           .withPrefabValues(ExecutorService.class, firstExecutor, secondExecutor)
           .withNonnullFields("method", "pattern", "routePattern", "handler", "parameters")
           .verify();
@@ -83,16 +112,10 @@ class CoreRecordEqualityTest {
   }
 
   @Test
-  void routeConstraintComparesMembershipBoundsAndEndpointRanks()
-      throws ReflectiveOperationException {
+  void routeConstraintComparesMembershipAndRepetitionBounds() throws ReflectiveOperationException {
     var type = nested(RadixRoutes.class, "Constraint");
-    var first = endpoint("/first/:id", "id", 1);
-    var second = endpoint("/second/:name", "name", 2);
     EqualsVerifier.forExamples(
-            constructRecord(type, "[0-9]+", 1L, 2L, 1, 10, Map.of(first, 1)),
-            constructRecord(type, "[a-z]+", 4L, 8L, 2, 20, Map.of(second, 2)))
-        .withPrefabValues(RadixRoutes.Endpoint.class, first, second)
-        .withNonnullFields("expression", "ranks")
+            constructRecord(type, 1L, 2L, 1, 10), constructRecord(type, 4L, 8L, 2, 20))
         .verify();
   }
 
@@ -152,17 +175,29 @@ class CoreRecordEqualityTest {
   @Test
   void extensionSelectionComparesConfigurationContributionAndInclusion()
       throws ReflectiveOperationException {
-    var first = new Extensions(Set.of(), null);
-    var second = new Extensions(Set.of(), null);
-    first.lifecycle().onRouteMatched((request, response) -> {});
-    second.lifecycle().afterRouteHandler((request, response) -> {});
-    var type = nested(Extensions.class, "Selection");
+    var first = new Lifecycle(Set.of(), ignored -> {}, null);
+    var second = new Lifecycle(Set.of(), ignored -> {}, null);
+    first.onRouteMatched((request, response) -> {});
+    second.afterRouteHandler((request, response) -> {});
+    var firstConfigure = new FixtureConfiguration("first");
+    var secondConfigure = new FixtureConfiguration("second");
+    var type = nested(Lifecycle.class, "Selection");
     EqualsVerifier.forExamples(
-            constructRecord(type, "first", first, false),
-            constructRecord(type, "second", second, true))
-        .withPrefabValues(Extensions.class, first, second)
-        .withNonnullFields("configuration", "contribution")
+            constructRecord(type, "first", first, false, firstConfigure),
+            constructRecord(type, "second", second, true, secondConfigure))
+        .withPrefabValues(Lifecycle.class, first, second)
+        .withNonnullFields("configuration", "contribution", "configure")
+        .withPrefabValues(BiFunction.class, firstConfigure, secondConfigure)
         .verify();
+  }
+
+  // EqualsVerifier loads fixture classes by name, which Java lambda classes do not support.
+  private record FixtureConfiguration(String value)
+      implements BiFunction<Lifecycle, Object, Object> {
+    @Override
+    public Object apply(Lifecycle scope, Object inherited) {
+      return value;
+    }
   }
 
   @Test
@@ -173,32 +208,5 @@ class CoreRecordEqualityTest {
   @Test
   void bodyRepresentationUsesEnumEquality() throws ClassNotFoundException {
     EqualsVerifier.forClass(nested(Request.class, "BodyRepresentation")).verify();
-  }
-
-  private static RadixRoutes.Endpoint endpoint(String path, String parameter, int segment) {
-    return new RadixRoutes.Endpoint(
-        segment == 1 ? HttpMethods.GET : HttpMethods.POST,
-        path,
-        path,
-        (request, response) -> response.text(parameter),
-        Map.of(parameter, segment),
-        segment + 1,
-        segment,
-        null);
-  }
-
-  private static Class<?> nested(Class<?> owner, String name) throws ClassNotFoundException {
-    return Class.forName(owner.getName() + "$" + name);
-  }
-
-  private static Object constructRecord(Class<?> type, Object... components)
-      throws ReflectiveOperationException {
-    var signature =
-        Arrays.stream(type.getRecordComponents())
-            .map(RecordComponent::getType)
-            .toArray(Class<?>[]::new);
-    var constructor = type.getDeclaredConstructor(signature);
-    constructor.setAccessible(true);
-    return constructor.newInstance(components);
   }
 }

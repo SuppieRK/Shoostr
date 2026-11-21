@@ -14,6 +14,25 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
 class RouteLookupBenchmarkTest {
+  private static Stream<Arguments> catchAllCases() {
+    return Stream.of(5, 5000)
+        .flatMap(count ->
+            Stream.of("catchAllHit", "catchAllFallback", "catchAllWrongMethod", "catchAllMiss")
+                .map(outcome -> Arguments.of(count, outcome)));
+  }
+
+  private static Stream<Arguments> cases() {
+    return Stream.of(5, 50, 500, 5000)
+        .flatMap(count ->
+            Stream.of("shared", "divergent", "prefix")
+                .flatMap(shape ->
+                    Stream.of("hit", "earlyMiss", "lateMiss", "wrongMethod", "mixed")
+                        .flatMap(outcome ->
+                            Stream.of("uniform", "hot")
+                                .map(distribution ->
+                                    Arguments.of(count, shape, outcome, distribution)))));
+  }
+
   @ParameterizedTest
   @MethodSource("cases")
   void bothIndexesResolveEveryQueryIdentically(
@@ -24,22 +43,26 @@ class RouteLookupBenchmarkTest {
     fixture.outcome = outcome;
     fixture.distribution = distribution;
     fixture.setup();
+
     var expected = new Object[16384];
-    for (int i = 0; i < expected.length; i++) {
-      expected[i] = fixture.mapReused();
+    for (int index = 0; index < expected.length; index++) {
+      expected[index] = fixture.mapReused();
       switch (outcome) {
-        case "hit" -> assertInstanceOf(Handler.class, expected[i]);
-        case "earlyMiss", "lateMiss" -> assertSame(RouteLookupBenchmark.NOT_FOUND, expected[i]);
-        case "wrongMethod" -> assertSame(RouteLookupBenchmark.METHOD_NOT_ALLOWED, expected[i]);
-        default -> assertNotNull(expected[i]);
+        case "hit" -> assertInstanceOf(Handler.class, expected[index]);
+        case "earlyMiss", "lateMiss" -> assertSame(RouteLookupBenchmark.NOT_FOUND, expected[index]);
+        case "wrongMethod" -> assertSame(RouteLookupBenchmark.METHOD_NOT_ALLOWED, expected[index]);
+        default -> assertNotNull(expected[index]);
       }
     }
+
     for (Object value : expected) {
       assertSame(value, fixture.radixReused());
     }
+
     for (Object value : expected) {
       assertSame(value, fixture.mapFresh());
     }
+
     for (Object value : expected) {
       assertSame(value, fixture.radixFresh());
     }
@@ -61,10 +84,12 @@ class RouteLookupBenchmarkTest {
         assertEquals(Set.of(), fixture.radix.allowedMethods(path));
       } else {
         var endpoint = fixture.radix.match(path, HttpMethods.GET);
+
         assertNotNull(endpoint);
         assertEquals(
             "/api/v1/accounts/" + path.split("/")[4] + "/orders/" + path.split("/")[6] + "/{*tail}",
             endpoint.routePattern());
+
         if ("catchAllWrongMethod".equals(outcome)) {
           assertEquals(
               Set.of(HttpMethods.GET, HttpMethods.POST), fixture.radix.allowedMethods(path));
@@ -82,6 +107,7 @@ class RouteLookupBenchmarkTest {
         assertInstanceOf(Handler.class, value);
       }
     }
+
     for (int index = 0; index < fixture.paths.length; index++) {
       Object value = fixture.radixFresh();
       if ("catchAllMiss".equals(outcome)) {
@@ -92,30 +118,5 @@ class RouteLookupBenchmarkTest {
         assertInstanceOf(Handler.class, value);
       }
     }
-  }
-
-  private static Stream<Arguments> catchAllCases() {
-    return Stream.of(5, 5000)
-        .flatMap(
-            count ->
-                Stream.of("catchAllHit", "catchAllFallback", "catchAllWrongMethod", "catchAllMiss")
-                    .map(outcome -> Arguments.of(count, outcome)));
-  }
-
-  private static Stream<Arguments> cases() {
-    return Stream.of(5, 50, 500, 5000)
-        .flatMap(
-            count ->
-                Stream.of("shared", "divergent", "prefix")
-                    .flatMap(
-                        shape ->
-                            Stream.of("hit", "earlyMiss", "lateMiss", "wrongMethod", "mixed")
-                                .flatMap(
-                                    outcome ->
-                                        Stream.of("uniform", "hot")
-                                            .map(
-                                                distribution ->
-                                                    Arguments.of(
-                                                        count, shape, outcome, distribution)))));
   }
 }

@@ -20,18 +20,19 @@ public final class RequestHooksExample {
   public static Shoostr application(Consumer<String> phases, Consumer<RequestOutcome> completed) {
     Objects.requireNonNull(phases);
     Objects.requireNonNull(completed);
+
     return new Shoostr()
         // Header admission can run before an endpoint is selected or for an unmatched request.
         .onRequestHeaders(
             (request, ignored) ->
                 phases.accept("headers:" + request.routePattern().orElse("unmatched")))
         .onRouteMatched(
-            (request, ignored2) ->
+            (request, ignoredResponse) ->
                 phases.accept("app:matched:" + request.routePattern().orElseThrow()))
-        .beforeRouteHandler((ignored3, ignored4) -> phases.accept("app:before"))
-        .afterRouteHandler((ignored5, ignored6) -> phases.accept("app:after"))
-        .beforeResponseFlush((ignored7, ignored8) -> phases.accept("app:before-flush"))
-        .afterResponseFlush((ignored9, ignored10) -> phases.accept("app:after-flush"))
+        .beforeRouteHandler((ignoredRequest, ignoredResponse) -> phases.accept("app:before"))
+        .afterRouteHandler((ignoredRequest, ignoredResponse) -> phases.accept("app:after"))
+        .beforeResponseFlush((ignoredRequest, ignoredResponse) -> phases.accept("app:before-flush"))
+        .afterResponseFlush((ignoredRequest, ignoredResponse) -> phases.accept("app:after-flush"))
         .afterRequest(
             outcome -> {
               // This detached terminal summary remains usable after live request access ends.
@@ -45,7 +46,7 @@ public final class RequestHooksExample {
                     jobs ->
                         jobs.get(
                                 "/failure",
-                                (ignored11, ignored12) -> {
+                                (ignoredRequest, ignoredResponse) -> {
                                   phases.accept("handler");
                                   throw new IllegalStateException("job failed");
                                 })
@@ -53,22 +54,25 @@ public final class RequestHooksExample {
                                 "/{id}",
                                 (request, response) -> {
                                   phases.accept("handler");
+
                                   response.text("job " + request.pathParam("id").orElseThrow());
                                 }),
-                    extensions ->
+                    lifecycle ->
                         // These local phases compose with the application phases for /jobs only.
-                        extensions
-                            .lifecycle()
+                        lifecycle
                             .onRouteMatched(
-                                (ignored13, ignored14) -> phases.accept("local:matched"))
+                                (ignoredRequest, ignoredResponse) -> phases.accept("local:matched"))
                             .beforeRouteHandler(
-                                (ignored15, ignored16) -> phases.accept("local:before"))
+                                (ignoredRequest, ignoredResponse) -> phases.accept("local:before"))
                             .afterRouteHandler(
-                                (ignored17, ignored18) -> phases.accept("local:after"))
+                                (ignoredRequest, ignoredResponse) -> phases.accept("local:after"))
                             .beforeResponseFlush(
-                                (ignored19, ignored20) -> phases.accept("local:before-flush"))
+                                (ignoredRequest, ignoredResponse) ->
+                                    phases.accept("local:before-flush"))
                             .afterResponseFlush(
-                                (ignored21, ignored22) -> phases.accept("local:after-flush"))
-                            .afterRequest(ignored23 -> phases.accept("local:completed"))));
+                                (ignoredRequest, ignoredResponse) ->
+                                    phases.accept("local:after-flush"))
+                            .afterRequest(
+                                ignoredRequestOutcome -> phases.accept("local:completed"))));
   }
 }

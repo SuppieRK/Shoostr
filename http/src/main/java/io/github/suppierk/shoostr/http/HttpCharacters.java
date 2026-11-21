@@ -64,43 +64,43 @@ public final class HttpCharacters {
   /** Semicolon. */
   public static final char SEMICOLON_SIGN = ';';
 
-  /** String equivalent of {@link #SEMICOLON_SIGN} */
+  /** String equivalent of {@link #SEMICOLON_SIGN}. */
   public static final String SEMICOLON_SIGN_STRING = "" + SEMICOLON_SIGN;
 
   /** Colon. */
   public static final char COLON_SIGN = ':';
 
-  /** String equivalent of {@link #COLON_SIGN} */
+  /** String equivalent of {@link #COLON_SIGN}. */
   public static final String COLON_SIGN_STRING = "" + COLON_SIGN;
 
   /** Open square bracket. */
   public static final char OPEN_SQUARE_BRACKET = '[';
 
-  /** String equivalent of {@link #OPEN_SQUARE_BRACKET} */
+  /** String equivalent of {@link #OPEN_SQUARE_BRACKET}. */
   public static final String OPEN_SQUARE_BRACKET_STRING = "" + OPEN_SQUARE_BRACKET;
 
   /** Close square bracket. */
   public static final char CLOSE_SQUARE_BRACKET = ']';
 
-  /** String equivalent of {@link #CLOSE_SQUARE_BRACKET} */
+  /** String equivalent of {@link #CLOSE_SQUARE_BRACKET}. */
   public static final String CLOSE_SQUARE_BRACKET_STRING = "" + CLOSE_SQUARE_BRACKET;
 
   /** Equals. */
   public static final char EQUALS_SIGN = '=';
 
-  /** String equivalent of {@link #EQUALS_SIGN} */
+  /** String equivalent of {@link #EQUALS_SIGN}. */
   public static final String EQUALS_SIGN_STRING = "" + EQUALS_SIGN;
 
   /** Double quote. */
   public static final char DOUBLE_QUOTE = '"';
 
-  /** String equivalent of {@link #DOUBLE_QUOTE} */
+  /** String equivalent of {@link #DOUBLE_QUOTE}. */
   public static final String DOUBLE_QUOTE_STRING = "" + DOUBLE_QUOTE;
 
   /** Dot. */
   public static final char DOT = '.';
 
-  /** String equivalent of {@link #DOT} */
+  /** String equivalent of {@link #DOT}. */
   public static final String DOT_STRING = "" + DOT;
 
   /** Parent directory. */
@@ -109,29 +109,70 @@ public final class HttpCharacters {
   /** Dash. */
   public static final char DASH = '-';
 
-  /** String equivalent of {@link #DASH} */
+  /** String equivalent of {@link #DASH}. */
   public static final String DASH_STRING = "" + DASH;
 
   /** Underscore. */
   public static final char UNDERSCORE = '_';
 
-  /** String equivalent of {@link #UNDERSCORE} */
+  /** String equivalent of {@link #UNDERSCORE}. */
   public static final String UNDERSCORE_STRING = "" + UNDERSCORE;
 
   /** Backslash. */
   public static final char BACKSLASH = '\\';
 
-  /** String equivalent of {@link #BACKSLASH} */
+  /** String equivalent of {@link #BACKSLASH}. */
   public static final String BACKSLASH_STRING = "" + BACKSLASH;
 
   /** Tab. */
   public static final char TAB = '\t';
 
-  /** String equivalent of {@link #TAB} */
+  /** String equivalent of {@link #TAB}. */
   public static final String TAB_STRING = "" + TAB;
+
+  /** Space. */
+  public static final char SPACE = ' ';
+
+  /** String equivalent of {@link #SPACE}. */
+  public static final String SPACE_STRING = " ";
+
+  /** ASCII shift-in control character ({@code 0x0F}). */
+  public static final char SHIFT_IN_CONTROL = 0xF;
+
+  /** ASCII delete control character ({@code 0x7F}). */
+  public static final char DELETE_CONTROL = 0x7F;
+
+  /** Tilde ({@code ~}). */
+  public static final char TILDE = '~';
+
+  /** Exclamation mark ({@code !}). */
+  public static final char EXCLAMATION_MARK = '!';
+
+  /** Maximum unsigned byte value ({@code 255}). */
+  public static final char MAX_UNSIGNED_BYTE_VALUE = 0xFF;
+
+  /** Uppercase letter Z. */
+  public static final char Z_UPPERCASE = 'Z';
 
   /** Prevents instances of this HTTP syntax utility class. */
   private HttpCharacters() {}
+
+  /**
+   * Checks whether a value follows the RFC 9110 HTTP token grammar.
+   *
+   * <p>A token is an ASCII letter, digit, or {@code !#$%&'*+-.^_`|~}. No trimming, case conversion,
+   * or registry lookup is performed.
+   *
+   * @param value candidate HTTP token
+   * @return true for a nonempty HTTP token, or false for empty or invalid input
+   * @throws NullPointerException if value is null
+   */
+  public static boolean isValidHttpToken(char value) {
+    return (value >= '0' && value <= '9')
+        || (value >= 'A' && value <= 'Z')
+        || (value >= 'a' && value <= 'z')
+        || "!#$%&'*+-.^_`|~".indexOf(value) >= 0;
+  }
 
   /**
    * Checks whether a value follows the RFC 9110 HTTP token grammar.
@@ -150,11 +191,7 @@ public final class HttpCharacters {
     }
 
     for (var index = 0; index < value.length(); index++) {
-      var character = value.charAt(index);
-      if (!(character >= '0' && character <= '9')
-          && !(character >= 'A' && character <= 'Z')
-          && !(character >= 'a' && character <= 'z')
-          && "!#$%&'*+-.^_`|~".indexOf(character) < 0) {
+      if (!isValidHttpToken(value.charAt(index))) {
         return false;
       }
     }

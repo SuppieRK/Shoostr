@@ -5,8 +5,12 @@ import io.modelcontextprotocol.json.McpJsonDefaults;
 import io.modelcontextprotocol.server.McpServerFeatures;
 import io.modelcontextprotocol.server.McpSyncServerExchange;
 import io.modelcontextprotocol.spec.McpSchema;
+import io.modelcontextprotocol.spec.McpSchema.CallToolRequest;
+import io.modelcontextprotocol.spec.McpSchema.CreateMessageResult;
+import io.modelcontextprotocol.spec.McpSchema.ElicitResult;
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.BiFunction;
@@ -34,7 +38,9 @@ final class CompatibilityFixtures {
   private static final Map<String, Object> NO_ARGUMENTS =
       Map.of("type", OBJECT, PROPERTIES, Map.of());
   private static final String PNG =
-      "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAIklEQVR4XmOQ9bsBRP9PhAMRMpsBpwSmEISNWwJTiOp2AAA9XmwheCyshQAAAABJRU5ErkJggg==";
+      "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAIk"
+          + "lEQVR4XmOQ9bsBRP9PhAMRMpsBpwSmEISNWwJTiOp2AAA9Xmwh"
+          + "eCyshQAAAABJRU5ErkJggg==";
   private static final String WAV =
       "UklGRqQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YYAAAAAAAPAH8A4sFAUXJheJFH8PoAi8AML4"
           + "o/E37CHpwOge6/XvsvaI/okGxg1iE7MWVRc0FZIQ+gk0Aiz61PIK7X/pnOh+6uvuXfUR/RwFjgyEEkoWbRf"
@@ -55,35 +61,36 @@ final class CompatibilityFixtures {
         tool(
             "test_simple_text",
             NO_ARGUMENTS,
-            (ignored, ignored2) ->
+            (ignored, ignoredCallToolRequest) ->
                 McpSchema.CallToolResult.builder()
                     .addTextContent("Welcome to Shoostr's MCP example.")
                     .build()),
         tool(
             "test_image_content",
             NO_ARGUMENTS,
-            (ignored3, ignored4) ->
+            (ignoredMcpSyncServerExchange, ignoredCallToolRequest) ->
                 McpSchema.CallToolResult.builder()
                     .content(List.of(McpSchema.ImageContent.builder(PNG, PNG_TYPE.value()).build()))
                     .build()),
         tool(
             "test_audio_content",
             NO_ARGUMENTS,
-            (ignored5, ignored6) ->
+            (ignoredMcpSyncServerExchange, ignoredCallToolRequest) ->
                 McpSchema.CallToolResult.builder()
                     .content(List.of(McpSchema.AudioContent.builder(WAV, "audio/wav").build()))
                     .build()),
         tool(
             "test_embedded_resource",
             NO_ARGUMENTS,
-            (ignored7, ignored8) ->
+            (ignoredMcpSyncServerExchange, ignoredCallToolRequest) ->
                 McpSchema.CallToolResult.builder()
                     .content(
                         List.of(
                             McpSchema.EmbeddedResource.builder(
                                     McpSchema.TextResourceContents.builder(
                                             "shoostr://guide",
-                                            "This resource travels inside the tool result; it is not an HTTP download.")
+                                            "This resource travels inside the tool result; it "
+                                                + "is not an HTTP download.")
                                         .mimeType(MediaType.TEXT_PLAIN.value())
                                         .build())
                                 .build()))
@@ -91,7 +98,7 @@ final class CompatibilityFixtures {
         tool(
             "test_multiple_content_types",
             NO_ARGUMENTS,
-            (ignored9, ignored10) ->
+            (ignoredMcpSyncServerExchange, ignoredCallToolRequest) ->
                 McpSchema.CallToolResult.builder()
                     .content(
                         List.of(
@@ -109,7 +116,7 @@ final class CompatibilityFixtures {
         tool(
             "test_error_handling",
             NO_ARGUMENTS,
-            (ignored11, ignored12) ->
+            (ignoredMcpSyncServerExchange, ignoredCallToolRequest) ->
                 McpSchema.CallToolResult.builder()
                     .isError(true)
                     .addTextContent("Demonstration rejected: no parcel was created or changed.")
@@ -117,7 +124,7 @@ final class CompatibilityFixtures {
         tool(
             "test_tool_with_logging",
             NO_ARGUMENTS,
-            (exchange, ignored13) -> {
+            (exchange, ignoredCallToolRequest) -> {
               // The SDK exchange sends protocol notifications to the connected MCP client.
               for (var message :
                   List.of(
@@ -153,27 +160,11 @@ final class CompatibilityFixtures {
             }),
         tool(
             "test_sampling",
-            Map.of(
-                "type",
-                OBJECT,
-                PROPERTIES,
-                Map.of(PROMPT, Map.of("type", STRING)),
-                REQUIRED,
-                List.of(PROMPT)),
+            toolSchema(),
             (exchange, request) -> {
               // Sampling asks the MCP client to generate a message; this server supplies no LLM.
-              var sampled =
-                  exchange.createMessage(
-                      McpSchema.CreateMessageRequest.builder(
-                              List.of(
-                                  McpSchema.SamplingMessage.builder(
-                                          McpSchema.Role.USER,
-                                          McpSchema.TextContent.builder(
-                                                  stringArgument(request.arguments(), PROMPT))
-                                              .build())
-                                      .build()),
-                              128)
-                          .build());
+              var sampled = sampleToolText(exchange, request);
+
               return McpSchema.CallToolResult.builder()
                   .addTextContent(
                       "Client-generated answer: "
@@ -182,40 +173,12 @@ final class CompatibilityFixtures {
             }),
         tool(
             "test_elicitation",
-            Map.of(
-                "type",
-                OBJECT,
-                PROPERTIES,
-                Map.of(MESSAGE, Map.of("type", STRING)),
-                REQUIRED,
-                List.of(MESSAGE)),
+            elicitationToolInputSchema(),
             (exchange, request) -> {
               // Elicitation asks the MCP client to collect user input using this explicit form
               // schema.
-              var result =
-                  exchange.createElicitation(
-                      McpSchema.ElicitFormRequest.builder(
-                              stringArgument(request.arguments(), MESSAGE),
-                              Map.of(
-                                  "type",
-                                  OBJECT,
-                                  PROPERTIES,
-                                  Map.of(
-                                      "username",
-                                      Map.of(
-                                          "type",
-                                          STRING,
-                                          "description",
-                                          "Name to display in the delivery preview"),
-                                      EMAIL,
-                                      Map.of(
-                                          "type",
-                                          STRING,
-                                          "description",
-                                          "Example reply address; no email is sent")),
-                                  REQUIRED,
-                                  List.of("username", EMAIL)))
-                          .build());
+              var result = elicitToolInput(exchange, request);
+
               return McpSchema.CallToolResult.builder()
                   .addTextContent(
                       ACTION_PREFIX + result.action() + CONTENT_SEPARATOR + result.content())
@@ -224,12 +187,13 @@ final class CompatibilityFixtures {
         tool(
             "test_elicitation_sep1034_defaults",
             NO_ARGUMENTS,
-            (exchange, ignored14) -> {
+            (exchange, ignoredCallToolRequest) -> {
               var result =
                   exchange.createElicitation(
                       McpSchema.ElicitFormRequest.builder(
                               "Try each default type and submit your own values", defaults())
                           .build());
+
               return McpSchema.CallToolResult.builder()
                   .addTextContent(
                       ACTION_PREFIX + result.action() + CONTENT_SEPARATOR + result.content())
@@ -238,12 +202,13 @@ final class CompatibilityFixtures {
         tool(
             "test_elicitation_sep1330_enums",
             NO_ARGUMENTS,
-            (exchange, ignored15) -> {
+            (exchange, ignoredCallToolRequest) -> {
               var result =
                   exchange.createElicitation(
                       McpSchema.ElicitFormRequest.builder(
                               "Choose from the single- and multi-select delivery examples", enums())
                           .build());
+
               return McpSchema.CallToolResult.builder()
                   .addTextContent(
                       ACTION_PREFIX + result.action() + CONTENT_SEPARATOR + result.content())
@@ -252,10 +217,95 @@ final class CompatibilityFixtures {
         tool(
             "json_schema_2020_12_tool",
             jsonSchema(),
-            (ignored16, ignored17) ->
+            (ignoredMcpSyncServerExchange, ignoredCallToolRequest) ->
                 McpSchema.CallToolResult.builder()
                     .addTextContent("Parcel delivery schema example; no shipment was created.")
                     .build()));
+  }
+
+  /**
+   * Builds the tool schema.
+   *
+   * @return an immutable map of configured entries
+   */
+  private static Map<String, Object> toolSchema() {
+    var entries = new LinkedHashMap<String, Object>();
+    entries.put("type", OBJECT);
+    entries.put(PROPERTIES, Map.of(PROMPT, Map.of("type", STRING)));
+    entries.put(REQUIRED, List.of(PROMPT));
+
+    return Map.copyOf(entries);
+  }
+
+  /**
+   * Requests client-side text generation for the current tool call.
+   *
+   * @param exchange current native MCP exchange
+   * @param request current native MCP tool request
+   * @return client sampling result
+   */
+  private static CreateMessageResult sampleToolText(
+      McpSyncServerExchange exchange, CallToolRequest request) {
+    return exchange.createMessage(
+        McpSchema.CreateMessageRequest.builder(
+                List.of(
+                    McpSchema.SamplingMessage.builder(
+                            McpSchema.Role.USER,
+                            McpSchema.TextContent.builder(
+                                    stringArgument(request.arguments(), PROMPT))
+                                .build())
+                        .build()),
+                128)
+            .build());
+  }
+
+  /**
+   * Builds the elicitation tool's input schema.
+   *
+   * @return an immutable map of configured entries
+   */
+  private static Map<String, Object> elicitationToolInputSchema() {
+    var entries = new LinkedHashMap<String, Object>();
+    entries.put("type", OBJECT);
+    entries.put(PROPERTIES, Map.of(MESSAGE, Map.of("type", STRING)));
+    entries.put(REQUIRED, List.of(MESSAGE));
+
+    return Map.copyOf(entries);
+  }
+
+  /**
+   * Requests the client's form response for the current tool call.
+   *
+   * @param exchange current native MCP exchange
+   * @param request current native MCP tool request
+   * @return client elicitation result
+   */
+  private static ElicitResult elicitToolInput(
+      McpSyncServerExchange exchange, CallToolRequest request) {
+    return exchange.createElicitation(
+        McpSchema.ElicitFormRequest.builder(
+                stringArgument(request.arguments(), MESSAGE), elicitationFormSchema())
+            .build());
+  }
+
+  /**
+   * Builds the form schema requested from the MCP client.
+   *
+   * @return an immutable map of configured entries
+   */
+  private static Map<String, Object> elicitationFormSchema() {
+    var entries = new LinkedHashMap<String, Object>();
+    entries.put("type", OBJECT);
+    entries.put(
+        PROPERTIES,
+        Map.of(
+            "username",
+            Map.of("type", STRING, "description", "Name to display in the delivery preview"),
+            EMAIL,
+            Map.of("type", STRING, "description", "Example reply address; no email is sent")));
+    entries.put(REQUIRED, List.of("username", EMAIL));
+
+    return Map.copyOf(entries);
   }
 
   /**
@@ -271,12 +321,13 @@ final class CompatibilityFixtures {
                 .description("A short guide to the three MCP feature types")
                 .mimeType(MediaType.TEXT_PLAIN.value())
                 .build(),
-            (ignored18, request) ->
+            (ignoredMcpSyncServerExchange, request) ->
                 McpSchema.ReadResourceResult.builder(
                         List.of(
                             McpSchema.TextResourceContents.builder(
                                     request.uri(),
-                                    "Call tools to run operations, read resources for data, and request prompts for messages.")
+                                    "Call tools to run operations, read resources for "
+                                        + "data, and request prompts for messages.")
                                 .mimeType(MediaType.TEXT_PLAIN.value())
                                 .build()))
                     .build()),
@@ -285,7 +336,7 @@ final class CompatibilityFixtures {
                 .description("An eight-by-eight blue and amber image generated for this example")
                 .mimeType(PNG_TYPE.value())
                 .build(),
-            (ignored19, request) ->
+            (ignoredMcpSyncServerExchange, request) ->
                 McpSchema.ReadResourceResult.builder(
                         List.of(
                             McpSchema.BlobResourceContents.builder(request.uri(), PNG)
@@ -297,7 +348,7 @@ final class CompatibilityFixtures {
                 .description("A fixed status resource that accepts subscriptions")
                 .mimeType(MediaType.TEXT_PLAIN.value())
                 .build(),
-            (ignored20, request) ->
+            (ignoredMcpSyncServerExchange, request) ->
                 McpSchema.ReadResourceResult.builder(
                         List.of(
                             McpSchema.TextResourceContents.builder(
@@ -320,15 +371,13 @@ final class CompatibilityFixtures {
                 .description("An illustrative parcel record containing the supplied identifier")
                 .mimeType(MediaType.APPLICATION_JSON.value())
                 .build(),
-            (ignored21, request) -> {
+            (ignoredMcpSyncServerExchange, request) -> {
               var uri = request.uri();
               var id = uri.substring("test://template/".length(), uri.lastIndexOf('/'));
 
               try {
-                var json =
-                    McpJsonDefaults.getMapper()
-                        .writeValueAsString(
-                            Map.of("parcelId", id, DELIVERY, PICKUP, COLLECTION_POINT, "P7"));
+                var json = McpJsonDefaults.getMapper().writeValueAsString(templateValues(id));
+
                 return McpSchema.ReadResourceResult.builder(
                         List.of(
                             McpSchema.TextResourceContents.builder(uri, json)
@@ -339,6 +388,21 @@ final class CompatibilityFixtures {
                 throw new UncheckedIOException(failure);
               }
             }));
+  }
+
+  /**
+   * Builds the template values.
+   *
+   * @param id value included in the configuration
+   * @return an immutable map of configured entries
+   */
+  private static Map<String, String> templateValues(String id) {
+    var entries = new LinkedHashMap<String, String>();
+    entries.put("parcelId", id);
+    entries.put(DELIVERY, PICKUP);
+    entries.put(COLLECTION_POINT, "P7");
+
+    return Map.copyOf(entries);
   }
 
   /**
@@ -353,13 +417,14 @@ final class CompatibilityFixtures {
             McpSchema.Prompt.builder("test_simple_prompt")
                 .description("Ask the client to explain the MCP feature types")
                 .build(),
-            (ignored22, ignored23) ->
+            (ignoredMcpSyncServerExchange, ignoredGetPromptRequest) ->
                 McpSchema.GetPromptResult.builder(
                         List.of(
                             McpSchema.PromptMessage.builder(
                                     McpSchema.Role.USER,
                                     McpSchema.TextContent.builder(
-                                            "Explain how Shoostr exposes MCP tools, resources and prompts over HTTP.")
+                                            "Explain how Shoostr exposes MCP tools, resources "
+                                                + "and prompts over HTTP.")
                                         .build())
                                 .build()))
                     .build()),
@@ -372,7 +437,7 @@ final class CompatibilityFixtures {
                         McpSchema.PromptArgument.builder("arg1").required(true).build(),
                         McpSchema.PromptArgument.builder("arg2").required(true).build()))
                 .build(),
-            (ignored24, request) ->
+            (ignoredMcpSyncServerExchange, request) ->
                 McpSchema.GetPromptResult.builder(
                         List.of(
                             McpSchema.PromptMessage.builder(
@@ -392,26 +457,18 @@ final class CompatibilityFixtures {
                 .arguments(
                     List.of(McpSchema.PromptArgument.builder("resourceUri").required(true).build()))
                 .build(),
-            (ignored25, request) ->
+            (ignoredMcpSyncServerExchange, request) ->
                 McpSchema.GetPromptResult.builder(
                         List.of(
                             McpSchema.PromptMessage.builder(
-                                    McpSchema.Role.USER,
-                                    McpSchema.EmbeddedResource.builder(
-                                            McpSchema.TextResourceContents.builder(
-                                                    stringArgument(
-                                                        request.arguments(), "resourceUri"),
-                                                    "Review the delivery guidance attached to this message.")
-                                                .mimeType(MediaType.TEXT_PLAIN.value())
-                                                .build())
-                                        .build())
+                                    McpSchema.Role.USER, deliveryGuidance(request.arguments()))
                                 .build()))
                     .build()),
         new McpServerFeatures.SyncPromptSpecification(
             McpSchema.Prompt.builder("test_prompt_with_image")
                 .description("Present the example's generated checkerboard to the client")
                 .build(),
-            (ignored26, ignored27) ->
+            (ignoredMcpSyncServerExchange, ignoredGetPromptRequest) ->
                 McpSchema.GetPromptResult.builder(
                         List.of(
                             McpSchema.PromptMessage.builder(
@@ -444,6 +501,22 @@ final class CompatibilityFixtures {
   }
 
   /**
+   * Attaches plain-text delivery guidance at the resource URI supplied by the client.
+   *
+   * @param arguments native request arguments
+   * @return resource embedded in the prompt
+   */
+  private static McpSchema.EmbeddedResource deliveryGuidance(Map<String, Object> arguments) {
+    return McpSchema.EmbeddedResource.builder(
+            McpSchema.TextResourceContents.builder(
+                    stringArgument(arguments, "resourceUri"),
+                    "Review the delivery guidance attached to this message.")
+                .mimeType(MediaType.TEXT_PLAIN.value())
+                .build())
+        .build();
+  }
+
+  /**
    * Validates a required string argument before using it in a native callback.
    *
    * @param arguments native request arguments
@@ -465,19 +538,42 @@ final class CompatibilityFixtures {
    * @return explicit form schema
    */
   private static Map<String, Object> defaults() {
-    return Map.of(
-        "type",
-        OBJECT,
-        REQUIRED,
-        List.of("name", "age", "score", "status", "verified"),
-        PROPERTIES,
-        Map.of(
-            "name", Map.of("type", STRING, DEFAULT, "John Doe"),
-            "age", Map.of("type", "integer", DEFAULT, 30),
-            "score", Map.of("type", "number", DEFAULT, 95.5),
-            "status",
-                Map.of("type", STRING, "enum", List.of("active", "inactive"), DEFAULT, "active"),
-            "verified", Map.of("type", "boolean", DEFAULT, true)));
+    var entries = new LinkedHashMap<String, Object>();
+    entries.put("type", OBJECT);
+    entries.put(REQUIRED, List.of("name", "age", "score", "status", "verified"));
+    entries.put(PROPERTIES, defaultProperties());
+
+    return Map.copyOf(entries);
+  }
+
+  /**
+   * Builds the default properties.
+   *
+   * @return an immutable map of configured entries
+   */
+  private static Map<String, Map<String, ? extends Object>> defaultProperties() {
+    var entries = new LinkedHashMap<String, Map<String, ? extends Object>>();
+    entries.put("name", Map.of("type", STRING, DEFAULT, "John Doe"));
+    entries.put("age", Map.of("type", "integer", DEFAULT, 30));
+    entries.put("score", Map.of("type", "number", DEFAULT, 95.5));
+    entries.put("status", defaultValueSchema());
+    entries.put("verified", Map.of("type", "boolean", DEFAULT, true));
+
+    return Map.copyOf(entries);
+  }
+
+  /**
+   * Builds the default value schema.
+   *
+   * @return an immutable map of configured entries
+   */
+  private static Map<String, Object> defaultValueSchema() {
+    var entries = new LinkedHashMap<String, Object>();
+    entries.put("type", STRING);
+    entries.put("enum", List.of("active", "inactive"));
+    entries.put(DEFAULT, "active");
+
+    return Map.copyOf(entries);
   }
 
   /**
@@ -486,46 +582,68 @@ final class CompatibilityFixtures {
    * @return explicit form schema
    */
   private static Map<String, Object> enums() {
-    return Map.of(
-        "type",
-        OBJECT,
+    var entries = new LinkedHashMap<String, Object>();
+    entries.put("type", OBJECT);
+    entries.put(
         REQUIRED,
-        List.of("untitledSingle", "titledSingle", "legacyEnum", "untitledMulti", "titledMulti"),
-        PROPERTIES,
+        List.of("untitledSingle", "titledSingle", "legacyEnum", "untitledMulti", "titledMulti"));
+    entries.put(PROPERTIES, enumProperties());
+
+    return Map.copyOf(entries);
+  }
+
+  /**
+   * Builds the enum properties.
+   *
+   * @return an immutable map of configured entries
+   */
+  private static Map<String, Map<String, Object>> enumProperties() {
+    var entries = new LinkedHashMap<String, Map<String, Object>>();
+    entries.put("untitledSingle", Map.of("type", STRING, "enum", List.of("option1", "option2")));
+    entries.put(
+        "titledSingle",
         Map.of(
-            "untitledSingle", Map.of("type", STRING, "enum", List.of("option1", "option2")),
-            "titledSingle",
-                Map.of(
-                    "type",
-                    STRING,
-                    "oneOf",
-                    List.of(
-                        Map.of(CONST, "value1", TITLE, "Collect at the counter"),
-                        Map.of(CONST, "value2", TITLE, "Deliver to the destination"))),
-            "legacyEnum",
-                Map.of(
-                    "type",
-                    STRING,
-                    "enum",
-                    List.of("opt1", "opt2"),
-                    "enumNames",
-                    List.of("Normal handling", "Fragile handling")),
-            "untitledMulti",
-                Map.of(
-                    "type",
-                    "array",
-                    "items",
-                    Map.of("type", STRING, "enum", List.of("option1", "option2"))),
-            "titledMulti",
-                Map.of(
-                    "type",
-                    "array",
-                    "items",
-                    Map.of(
-                        "anyOf",
-                        List.of(
-                            Map.of(CONST, "value1", TITLE, "Add collection instructions"),
-                            Map.of(CONST, "value2", TITLE, "Add delivery instructions"))))));
+            "type",
+            STRING,
+            "oneOf",
+            List.of(
+                Map.of(CONST, "value1", TITLE, "Collect at the counter"),
+                Map.of(CONST, "value2", TITLE, "Deliver to the destination"))));
+    entries.put("legacyEnum", enumValueSchema());
+    entries.put(
+        "untitledMulti",
+        Map.of(
+            "type",
+            "array",
+            "items",
+            Map.of("type", STRING, "enum", List.of("option1", "option2"))));
+    entries.put(
+        "titledMulti",
+        Map.of(
+            "type",
+            "array",
+            "items",
+            Map.of(
+                "anyOf",
+                List.of(
+                    Map.of(CONST, "value1", TITLE, "Add collection instructions"),
+                    Map.of(CONST, "value2", TITLE, "Add delivery instructions")))));
+
+    return Map.copyOf(entries);
+  }
+
+  /**
+   * Builds the enum value schema.
+   *
+   * @return an immutable map of configured entries
+   */
+  private static Map<String, Object> enumValueSchema() {
+    var entries = new LinkedHashMap<String, Object>();
+    entries.put("type", STRING);
+    entries.put("enum", List.of("opt1", "opt2"));
+    entries.put("enumNames", List.of("Normal handling", "Fragile handling"));
+
+    return Map.copyOf(entries);
   }
 
   /**
@@ -534,53 +652,62 @@ final class CompatibilityFixtures {
    * @return explicit JSON Schema 2020-12 input schema
    */
   private static Map<String, Object> jsonSchema() {
-    return Map.of(
-        "$schema",
-        "https://json-schema.org/draft/2020-12/schema",
-        "type",
-        OBJECT,
-        "$defs",
-        Map.of(
-            "address",
-            Map.of(
-                "$anchor",
-                "parcelDestination",
-                "type",
-                OBJECT,
-                PROPERTIES,
-                Map.of(
-                    "postalCode", Map.of("type", STRING, MIN_LENGTH, 1),
-                    "countryCode", Map.of("type", STRING, "pattern", "^[A-Z]{2}$")),
-                REQUIRED,
-                List.of("postalCode", "countryCode"),
-                "additionalProperties",
-                false)),
-        PROPERTIES,
-        Map.of(
-            "recipient",
-            Map.of("type", STRING, MIN_LENGTH, 1),
-            DELIVERY,
-            Map.of("type", STRING, "enum", List.of(PICKUP, "courier")),
-            DESTINATION,
-            Map.of("$ref", "#parcelDestination"),
-            COLLECTION_POINT,
-            Map.of("type", STRING, MIN_LENGTH, 1)),
-        REQUIRED,
-        List.of("recipient", DELIVERY),
+    var entries = new LinkedHashMap<String, Object>();
+    entries.put("$schema", "https://json-schema.org/draft/2020-12/schema");
+    entries.put("type", OBJECT);
+    entries.put("$defs", Map.of("address", deliveryObjectSchema()));
+    entries.put(PROPERTIES, deliveryProperties());
+    entries.put(REQUIRED, List.of("recipient", DELIVERY));
+    entries.put(
         "allOf",
         List.of(
             Map.of(
                 "anyOf",
                 List.of(
                     Map.of(REQUIRED, List.of(DESTINATION)),
-                    Map.of(REQUIRED, List.of(COLLECTION_POINT))))),
+                    Map.of(REQUIRED, List.of(COLLECTION_POINT))))));
+    entries.put(
         "if",
-        Map.of(PROPERTIES, Map.of(DELIVERY, Map.of(CONST, PICKUP)), REQUIRED, List.of(DELIVERY)),
-        "then",
-        Map.of(REQUIRED, List.of(COLLECTION_POINT)),
-        "else",
-        Map.of(REQUIRED, List.of(DESTINATION)),
-        "additionalProperties",
-        false);
+        Map.of(PROPERTIES, Map.of(DELIVERY, Map.of(CONST, PICKUP)), REQUIRED, List.of(DELIVERY)));
+    entries.put("then", Map.of(REQUIRED, List.of(COLLECTION_POINT)));
+    entries.put("else", Map.of(REQUIRED, List.of(DESTINATION)));
+    entries.put("additionalProperties", false);
+
+    return Map.copyOf(entries);
+  }
+
+  /**
+   * Builds the delivery object schema.
+   *
+   * @return an immutable map of configured entries
+   */
+  private static Map<String, Object> deliveryObjectSchema() {
+    var entries = new LinkedHashMap<String, Object>();
+    entries.put("$anchor", "parcelDestination");
+    entries.put("type", OBJECT);
+    entries.put(
+        PROPERTIES,
+        Map.of(
+            "postalCode", Map.of("type", STRING, MIN_LENGTH, 1),
+            "countryCode", Map.of("type", STRING, "pattern", "^[A-Z]{2}$")));
+    entries.put(REQUIRED, List.of("postalCode", "countryCode"));
+    entries.put("additionalProperties", false);
+
+    return Map.copyOf(entries);
+  }
+
+  /**
+   * Builds the delivery properties.
+   *
+   * @return an immutable map of configured entries
+   */
+  private static Map<String, Map<String, ? extends Object>> deliveryProperties() {
+    var entries = new LinkedHashMap<String, Map<String, ? extends Object>>();
+    entries.put("recipient", Map.of("type", STRING, MIN_LENGTH, 1));
+    entries.put(DELIVERY, Map.of("type", STRING, "enum", List.of(PICKUP, "courier")));
+    entries.put(DESTINATION, Map.of("$ref", "#parcelDestination"));
+    entries.put(COLLECTION_POINT, Map.of("type", STRING, MIN_LENGTH, 1));
+
+    return Map.copyOf(entries);
   }
 }

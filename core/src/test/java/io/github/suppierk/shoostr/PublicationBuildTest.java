@@ -87,6 +87,7 @@ class PublicationBuildTest {
         runner("-PpublicationBinaries=true", "-PpublicationModules=mcp", ":mcp:compileJava")
             .buildAndFail()
             .getOutput();
+
     assertTrue(rejected.contains("cannot find symbol"), rejected);
 
     writeSource(
@@ -98,6 +99,7 @@ class PublicationBuildTest {
         }
         """);
     var retained = run("-PpublicationBinaries=true", "-PpublicationModules=mcp", ":mcp:probe");
+
     assertTrue(retained.contains("OLD_BINARY"), retained);
     assertFalse(retained.contains("NEW_WORKSPACE"), retained);
 
@@ -110,7 +112,9 @@ class PublicationBuildTest {
         ":core:publishMavenJavaPublicationToReleaseVerificationRepository",
         ":mcp:publishMavenJavaPublicationToReleaseVerificationRepository");
     var upgraded = run("-PpublicationBinaries=true", "-PpublicationModules=mcp", ":mcp:probe");
+
     assertTrue(upgraded.contains("NEW_WORKSPACE"), upgraded);
+
     var publication = directory.resolve("build/release-verification-repository/io/github/suppierk");
     var pom =
         Files.readString(
@@ -118,6 +122,7 @@ class PublicationBuildTest {
     var metadata =
         Files.readString(
             publication.resolve("shoostr-mcp/2026.11.4.1/shoostr-mcp-2026.11.4.1.module"));
+
     assertTrue(pom.contains("<version>2026.11.4.0</version>"), pom);
     assertTrue(metadata.contains("\"requires\": \"2026.11.4.0\""), metadata);
   }

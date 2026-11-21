@@ -8,19 +8,26 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import io.github.suppierk.shoostr.http.ForwardedHeaders;
 import io.github.suppierk.shoostr.testing.TestRequest;
 import io.github.suppierk.shoostr.testing.TestServer;
+import java.io.Closeable;
+import java.io.IOException;
 import java.net.InetAddress;
 import java.net.Socket;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.security.KeyStore;
+import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Stream;
+import javax.net.ssl.SNIHostName;
 import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLSocket;
 import javax.net.ssl.TrustManagerFactory;
 import org.eclipse.jetty.http.HttpTester;
+import org.eclipse.jetty.server.SecureRequestCustomizer;
 import org.eclipse.jetty.server.ServerConnector;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
@@ -33,212 +40,6 @@ import org.junit.jupiter.params.provider.ValueSource;
 
 @Timeout(15)
 class EffectiveSecurityTest {
-  @ParameterizedTest
-  @CsvSource({
-    "RFC7239, https, true", "RFC7239, http, false", "RFC7239, HtTpS, true",
-        "RFC7239, missing, false",
-    "X_FORWARDED, https, true", "X_FORWARDED, http, false", "X_FORWARDED, HtTpS, true",
-        "X_FORWARDED, missing, false"
-  })
-  void usesOnlyAnExplicitTrustedProtocolOnPlainTransport(
-      ForwardedHeaders family, String protocol, boolean effective) throws Exception {
-    try (var test = TestServer.start(application(family, true))) {
-      var response =
-          test.send(
-              request -> forwarding(request.path("/security"), family, protocol),
-              HttpResponse.BodyHandlers.ofString());
-      assertEquals(200, response.statusCode());
-      assertEquals("false:" + effective, response.body());
-    }
-  }
-
-  @ParameterizedTest
-  @EnumSource(ForwardedHeaders.class)
-  void ignoresUntrustedAssertionsAndFallsBackWhenNoHeadersExist(ForwardedHeaders family)
-      throws Exception {
-    try (var test = TestServer.start(application(family, false))) {
-      var supplied =
-          test.send(
-              request -> forwarding(request.path("/security"), family, "https"),
-              HttpResponse.BodyHandlers.ofString());
-      assertEquals(200, supplied.statusCode());
-      assertEquals("false:false", supplied.body());
-      var absent =
-          test.send(request -> request.path("/security"), HttpResponse.BodyHandlers.ofString());
-      assertEquals(200, absent.statusCode());
-      assertEquals("false:false", absent.body());
-    }
-  }
-
-  @ParameterizedTest
-  @EnumSource(ForwardedHeaders.class)
-  void selectsTheBoundaryProtocolInsteadOfTheNearestProxyProtocol(ForwardedHeaders family)
-      throws Exception {
-    try (var test = TestServer.start(application(family, true))) {
-      var response =
-          test.send(
-              request -> {
-                request.path("/security");
-                if (family == ForwardedHeaders.RFC7239) {
-                  request.header(
-                      "Forwarded", "for=203.0.113.7;proto=http, for=127.0.0.2;proto=https");
-                } else {
-                  request
-                      .header("X-Forwarded-For", "203.0.113.7, 127.0.0.2")
-                      .header("X-Forwarded-Proto", "http, https");
-                }
-              },
-              HttpResponse.BodyHandlers.ofString());
-      assertEquals(200, response.statusCode());
-      assertEquals("false:false", response.body());
-    }
-  }
-
-  @ParameterizedTest
-  @CsvSource({
-    "RFC7239, https, true",
-    "RFC7239, http, false",
-    "RFC7239, missing, true",
-    "X_FORWARDED, https, true",
-    "X_FORWARDED, http, false",
-    "X_FORWARDED, missing, true"
-  })
-  void allowsTrustedHttpToOverrideBackendTlsAndOtherwiseUsesTls(
-      ForwardedHeaders family, String protocol, boolean effective) throws Exception {
-    var identity = identity();
-    var trust = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
-    trust.init(identity);
-    var tls = SSLContext.getInstance("TLS");
-    tls.init(null, trust.getTrustManagers(), null);
-
-    try (var app = application(family, true)) {
-      app.tls(
-          server -> {
-            server.setKeyStore(identity);
-            server.setKeyStorePassword("changeit");
-          });
-
-      try (var test = TestServer.start(app, client -> client.sslContext(tls))) {
-        var response =
-            test.send(
-                request -> forwarding(request.path("/security"), family, protocol),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(200, response.statusCode());
-        assertEquals("true:" + effective, response.body());
-        var noForwarding =
-            test.send(request -> request.path("/security"), HttpResponse.BodyHandlers.ofString());
-        assertEquals(200, noForwarding.statusCode());
-        assertEquals("true:true", noForwarding.body());
-      }
-    }
-  }
-
-  @ParameterizedTest
-  @MethodSource("unprovenHttpsTargets")
-  void neverUsesAForgedTargetOrAnotherHopAsEvidenceOfHttps(ForwardedHeaders family, String headers)
-      throws Exception {
-    try (var test = TestServer.start(application(family, true));
-        var socket =
-            new Socket(
-                InetAddress.getByAddress(new byte[] {127, 0, 0, 1}), test.baseUri().getPort())) {
-      socket.setSoTimeout(5000);
-      socket
-          .getOutputStream()
-          .write(
-              ("GET https://virtual.example/security HTTP/1.1\r\nHost: virtual.example\r\n"
-                      + headers
-                      + "Connection: close\r\n\r\n")
-                  .getBytes(StandardCharsets.US_ASCII));
-      socket.getOutputStream().flush();
-      var response = HttpTester.parseResponse(HttpTester.from(socket.getInputStream()));
-      assertNotNull(response);
-      assertEquals(200, response.getStatus());
-      assertEquals("false:false", response.getContent());
-    }
-  }
-
-  @ParameterizedTest
-  @EnumSource(ForwardedHeaders.class)
-  void rejectsMalformedTrustedProtocolsBeforeTheHandler(ForwardedHeaders family) throws Exception {
-    try (var test = TestServer.start(application(family, true))) {
-      assertEquals(
-          400,
-          test.send(request -> forwarding(request.path("/security"), family, "ftp")).statusCode());
-    }
-  }
-
-  @ParameterizedTest
-  @ValueSource(booleans = {false, true})
-  void guardsBothProtocolAndTransportBranchesByThreadAndLifetime(boolean asserted)
-      throws Exception {
-    var saved = new AtomicReference<Request>();
-    var thread = new AtomicReference<Thread>();
-
-    try (var executor = Executors.newSingleThreadExecutor();
-        var children = Executors.newVirtualThreadPerTaskExecutor();
-        var app = application(ForwardedHeaders.RFC7239, true)) {
-      app.routes()
-          .get(
-              "/guard",
-              executor,
-              (request, response) -> {
-                saved.set(request);
-                thread.set(Thread.currentThread());
-                assertEquals(asserted, request.isEffectivelySecure());
-                children
-                    .submit(
-                        () ->
-                            assertThrows(IllegalStateException.class, request::isEffectivelySecure))
-                    .get(3, TimeUnit.SECONDS);
-                response.text("checked");
-              });
-
-      try (var test = TestServer.start(app)) {
-        var response =
-            test.send(
-                request -> {
-                  request.path("/guard");
-                  if (asserted) {
-                    request.header("Forwarded", "for=203.0.113.7;proto=https");
-                  }
-                },
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(200, response.statusCode());
-        assertEquals("checked", response.body());
-        executor
-            .submit(
-                () -> {
-                  assertSame(thread.get(), Thread.currentThread());
-                  var request = saved.get();
-                  assertThrows(IllegalStateException.class, request::isEffectivelySecure);
-                })
-            .get(3, TimeUnit.SECONDS);
-      }
-    }
-  }
-
-  @Test
-  void inheritsEffectiveSecurityInTypedRoutes() throws Exception {
-    try (var app = new Shoostr()) {
-      app.trustedProxies(InetAddress::isLoopbackAddress)
-          .codec(new TestCodec())
-          .routes()
-          .get(
-              "/security",
-              (request, response) ->
-                  response.text(request.isSecure() + ":" + request.isEffectivelySecure()));
-
-      try (var test = TestServer.start(app)) {
-        var response =
-            test.send(
-                request -> request.path("/security").header("Forwarded", "proto=https"),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(200, response.statusCode());
-        assertEquals("false:true", response.body());
-      }
-    }
-  }
-
   private static Shoostr application(ForwardedHeaders family, boolean trusted) {
     var app =
         new Shoostr()
@@ -250,6 +51,7 @@ class EffectiveSecurityTest {
             "/security",
             (request, response) ->
                 response.text(request.isSecure() + ":" + request.isEffectivelySecure()));
+
     return app;
   }
 
@@ -291,5 +93,317 @@ class EffectiveSecurityTest {
     }
 
     return identity;
+  }
+
+  @Test
+  void rejectsTlsHostMismatchBeforeInvokingTheEndpoint() throws Exception {
+    var identity = identity();
+    var context = trustedContext(identity);
+    var invoked = new AtomicInteger();
+    var app = new Shoostr();
+
+    try (Closeable appCleanup = app::close) {
+      app.modifyHttpConfiguration(
+          http -> assertNotNull(http.getCustomizer(SecureRequestCustomizer.class)));
+      app.tls(server -> {
+        server.setKeyStore(identity);
+        server.setKeyStorePassword("changeit");
+      });
+      app.routes()
+          .get(
+              "/host",
+              (request, response) -> {
+                invoked.incrementAndGet();
+                response.text("matched");
+              });
+
+      try (var test = TestServer.start(app, client -> client.sslContext(context))) {
+        var accepted = sendTlsHost(context, test.baseUri().getPort(), "localhost");
+        assertEquals(200, accepted.getStatus());
+        assertEquals("matched", accepted.getContent());
+
+        var rejected = sendTlsHost(context, test.baseUri().getPort(), "wrong.example");
+        assertEquals(400, rejected.getStatus());
+        assertEquals(1, invoked.get());
+      }
+    }
+  }
+
+  private SSLContext trustedContext(KeyStore identity) throws Exception {
+    var trust = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+    trust.init(identity);
+    var context = SSLContext.getInstance("TLS");
+    context.init(null, trust.getTrustManagers(), null);
+    return context;
+  }
+
+  private HttpTester.Response sendTlsHost(SSLContext context, int port, String host)
+      throws IOException {
+    try (var socket = (SSLSocket) context.getSocketFactory().createSocket("localhost", port)) {
+      socket.setSoTimeout(5000);
+      var parameters = socket.getSSLParameters();
+      parameters.setServerNames(List.of(new SNIHostName("localhost")));
+      socket.setSSLParameters(parameters);
+      socket.startHandshake();
+      socket
+          .getOutputStream()
+          .write(
+              ("GET /host HTTP/1.1\r\nHost: " + host + "\r\nConnection: close\r\n\r\n")
+                  .getBytes(StandardCharsets.US_ASCII));
+      socket.getOutputStream().flush();
+      return Objects.requireNonNull(
+          HttpTester.parseResponse(HttpTester.from(socket.getInputStream())));
+    }
+  }
+
+  @ParameterizedTest
+  @CsvSource({
+    "RFC7239, https, true",
+    "RFC7239, http, false",
+    "RFC7239, HtTpS, true",
+    "RFC7239, missing, false",
+    "X_FORWARDED, https, true",
+    "X_FORWARDED, http, false",
+    "X_FORWARDED, HtTpS, true",
+    "X_FORWARDED, missing, false"
+  })
+  void usesOnlyAnExplicitTrustedProtocolOnPlainTransport(
+      ForwardedHeaders family, String protocol, boolean effective) throws Exception {
+
+    try (var test = TestServer.start(application(family, true))) {
+      var response =
+          test.send(
+              request -> forwarding(request.path("/security"), family, protocol),
+              HttpResponse.BodyHandlers.ofString());
+
+      assertEquals(200, response.statusCode());
+      assertEquals("false:" + effective, response.body());
+    }
+  }
+
+  @ParameterizedTest
+  @EnumSource(ForwardedHeaders.class)
+  void ignoresUntrustedAssertionsAndFallsBackWhenNoHeadersExist(ForwardedHeaders family)
+      throws Exception {
+
+    try (var test = TestServer.start(application(family, false))) {
+      var supplied =
+          test.send(
+              request -> forwarding(request.path("/security"), family, "https"),
+              HttpResponse.BodyHandlers.ofString());
+
+      assertEquals(200, supplied.statusCode());
+      assertEquals("false:false", supplied.body());
+
+      var absent =
+          test.send(request -> request.path("/security"), HttpResponse.BodyHandlers.ofString());
+
+      assertEquals(200, absent.statusCode());
+      assertEquals("false:false", absent.body());
+    }
+  }
+
+  @ParameterizedTest
+  @EnumSource(ForwardedHeaders.class)
+  void selectsTheBoundaryProtocolInsteadOfTheNearestProxyProtocol(ForwardedHeaders family)
+      throws Exception {
+
+    try (var test = TestServer.start(application(family, true))) {
+      var response =
+          sendResponseForSelectsTheBoundaryProtocolInsteadOfTheNearestProxyProtocol(test, family);
+
+      assertEquals(200, response.statusCode());
+      assertEquals("false:false", response.body());
+    }
+  }
+
+  private HttpResponse<String>
+      sendResponseForSelectsTheBoundaryProtocolInsteadOfTheNearestProxyProtocol(
+          TestServer test, ForwardedHeaders family) throws IOException, InterruptedException {
+    return test.send(
+        request -> {
+          request.path("/security");
+          if (family == ForwardedHeaders.RFC7239) {
+            request.header("Forwarded", "for=203.0.113.7;proto=http, for=127.0.0.2;proto=https");
+          } else {
+            request
+                .header("X-Forwarded-For", "203.0.113.7, 127.0.0.2")
+                .header("X-Forwarded-Proto", "http, https");
+          }
+        },
+        HttpResponse.BodyHandlers.ofString());
+  }
+
+  @ParameterizedTest
+  @CsvSource({
+    "RFC7239, https, true",
+    "RFC7239, http, false",
+    "RFC7239, missing, true",
+    "X_FORWARDED, https, true",
+    "X_FORWARDED, http, false",
+    "X_FORWARDED, missing, true"
+  })
+  void allowsTrustedHttpToOverrideBackendTlsAndOtherwiseUsesTls(
+      ForwardedHeaders family, String protocol, boolean effective) throws Exception {
+    var identity = identity();
+    var trust = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+    trust.init(identity);
+    var tls = SSLContext.getInstance("TLS");
+    tls.init(null, trust.getTrustManagers(), null);
+
+    {
+      var app = application(family, true);
+
+      try (Closeable appCleanup = app::close) {
+        app.tls(server -> {
+          server.setKeyStore(identity);
+          server.setKeyStorePassword("changeit");
+        });
+
+        try (var test = TestServer.start(app, client -> client.sslContext(tls))) {
+          var response =
+              test.send(
+                  request -> forwarding(request.path("/security"), family, protocol),
+                  HttpResponse.BodyHandlers.ofString());
+
+          assertEquals(200, response.statusCode());
+          assertEquals("true:" + effective, response.body());
+
+          var noForwarding =
+              test.send(request -> request.path("/security"), HttpResponse.BodyHandlers.ofString());
+
+          assertEquals(200, noForwarding.statusCode());
+          assertEquals("true:true", noForwarding.body());
+        }
+      }
+    }
+  }
+
+  @ParameterizedTest
+  @MethodSource("unprovenHttpsTargets")
+  void neverUsesForgedTargetOrAnotherHopAsEvidenceOfHttps(ForwardedHeaders family, String headers)
+      throws Exception {
+
+    try (var test = TestServer.start(application(family, true));
+        var socket =
+            new Socket(
+                InetAddress.getByAddress(new byte[] {127, 0, 0, 1}), test.baseUri().getPort())) {
+      socket.setSoTimeout(5000);
+      socket
+          .getOutputStream()
+          .write(
+              ("GET https://virtual.example/security HTTP/1.1\r\nHost: virtual.example\r\n"
+                      + headers
+                      + "Connection: close\r\n\r\n")
+                  .getBytes(StandardCharsets.US_ASCII));
+      socket.getOutputStream().flush();
+      var response = HttpTester.parseResponse(HttpTester.from(socket.getInputStream()));
+
+      assertNotNull(response);
+      assertEquals(200, response.getStatus());
+      assertEquals("false:false", response.getContent());
+    }
+  }
+
+  @ParameterizedTest
+  @EnumSource(ForwardedHeaders.class)
+  void rejectsMalformedTrustedProtocolsBeforeTheHandler(ForwardedHeaders family) throws Exception {
+
+    try (var test = TestServer.start(application(family, true))) {
+      assertEquals(
+          400,
+          test.send(request -> forwarding(request.path("/security"), family, "ftp")).statusCode());
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void guardsBothProtocolAndTransportBranchesByThreadAndLifetime(boolean asserted)
+      throws Exception {
+    var saved = new AtomicReference<Request>();
+    var thread = new AtomicReference<Thread>();
+
+    try (var executor = Executors.newSingleThreadExecutor();
+        var children = Executors.newVirtualThreadPerTaskExecutor()) {
+      var app = application(ForwardedHeaders.RFC7239, true);
+
+      try (Closeable appCleanup1 = app::close) {
+        app.routes()
+            .get(
+                "/guard",
+                executor,
+                (request, response) -> {
+                  saved.set(request);
+                  thread.set(Thread.currentThread());
+
+                  assertEquals(asserted, request.isEffectivelySecure());
+
+                  children
+                      .submit(() ->
+                          assertThrows(IllegalStateException.class, request::isEffectivelySecure))
+                      .get(3, TimeUnit.SECONDS);
+                  response.text("checked");
+                });
+
+        try (var test = TestServer.start(app)) {
+          var response =
+              sendResponseForGuardsBothProtocolAndTransportBranchesByThreadAndLifetime(
+                  test, asserted);
+
+          assertEquals(200, response.statusCode());
+          assertEquals("checked", response.body());
+
+          executor
+              .submit(() -> {
+                assertSame(thread.get(), Thread.currentThread());
+
+                var request = saved.get();
+
+                assertThrows(IllegalStateException.class, request::isEffectivelySecure);
+              })
+              .get(3, TimeUnit.SECONDS);
+        }
+      }
+    }
+  }
+
+  private HttpResponse<String>
+      sendResponseForGuardsBothProtocolAndTransportBranchesByThreadAndLifetime(
+          TestServer test, boolean asserted) throws IOException, InterruptedException {
+    return test.send(
+        request -> {
+          request.path("/guard");
+          if (asserted) {
+            request.header("Forwarded", "for=203.0.113.7;proto=https");
+          }
+        },
+        HttpResponse.BodyHandlers.ofString());
+  }
+
+  @Test
+  void inheritsEffectiveSecurityInTypedRoutes() throws Exception {
+    {
+      var app = new Shoostr();
+
+      try (Closeable appCleanup2 = app::close) {
+        app.trustedProxies(InetAddress::isLoopbackAddress)
+            .codec(new TestCodec())
+            .routes()
+            .get(
+                "/security",
+                (request, response) ->
+                    response.text(request.isSecure() + ":" + request.isEffectivelySecure()));
+
+        try (var test = TestServer.start(app)) {
+          var response =
+              test.send(
+                  request -> request.path("/security").header("Forwarded", "proto=https"),
+                  HttpResponse.BodyHandlers.ofString());
+
+          assertEquals(200, response.statusCode());
+          assertEquals("false:true", response.body());
+        }
+      }
+    }
   }
 }

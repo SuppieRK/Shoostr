@@ -14,11 +14,13 @@ import org.junit.jupiter.params.provider.ValueSource;
 @Timeout(15)
 class GeneratedStatusExampleTest {
   @Test
-  void usesTheLocalRendererForASelectedButUnavailableRoute() throws Exception {
+  void usesTheLocalRendererForSelectedButUnavailableRoute() throws Exception {
+
     try (var test = TestServer.start(GeneratedStatusExample.application())) {
       var response =
           test.send(
               request -> request.path("/reports/daily"), HttpResponse.BodyHandlers.ofString());
+
       assertEquals(404, response.statusCode());
       assertEquals("Report unavailable", response.body());
       assertEquals("no-store", response.headers().firstValue("Cache-Control").orElseThrow());
@@ -28,10 +30,12 @@ class GeneratedStatusExampleTest {
   @ParameterizedTest
   @ValueSource(strings = {"/read-only", "/reports/daily"})
   void usesTheApplicationMethodRendererAndPreservesAllow(String path) throws Exception {
+
     try (var test = TestServer.start(GeneratedStatusExample.application())) {
       var response =
           test.send(
               request -> request.path(path).method("POST"), HttpResponse.BodyHandlers.ofString());
+
       assertEquals(405, response.statusCode());
       assertEquals("Method unavailable", response.body());
       assertEquals(
@@ -50,8 +54,10 @@ class GeneratedStatusExampleTest {
   })
   void distinguishesGeneratedThrownAndManualResponses(String path, int status, String body)
       throws Exception {
+
     try (var test = TestServer.start(GeneratedStatusExample.application())) {
       var response = test.send(request -> request.path(path), HttpResponse.BodyHandlers.ofString());
+
       assertEquals(status, response.statusCode());
       assertEquals(body, response.body());
       assertEquals(

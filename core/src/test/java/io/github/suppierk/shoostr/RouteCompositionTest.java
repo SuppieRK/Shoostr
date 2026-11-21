@@ -1,5 +1,6 @@
 package io.github.suppierk.shoostr;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertSame;
@@ -8,6 +9,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.suppierk.shoostr.http.HttpMethods;
 import io.github.suppierk.shoostr.testing.TestServer;
+import java.io.Closeable;
+import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -34,26 +37,45 @@ class RouteCompositionTest {
   private TestServer test;
 
   RouteCompositionTest() {
-    retainedScope = new AtomicReference<>();
-    retainedRequest = new AtomicReference<>();
+    this.retainedScope = new AtomicReference<>();
+    this.retainedRequest = new AtomicReference<>();
+  }
+
+  private static void orders(Routes orders) {
+    orders.get((ignoredRequest, response) -> response.text("list"));
+    orders.post((ignoredRequest, response) -> response.text("create"));
+    orders.get("/", (ignoredRequest, response) -> response.text("slash"));
+    orders.path(
+        "/{id}",
+        order -> {
+          order.get((request, response) -> response.text(request.pathParam("id").orElseThrow()));
+          order.patch((request, response) ->
+              response.text("update:" + request.pathParam("id").orElseThrow()));
+          order.delete((ignoredRequest, response) -> response.status(204));
+        });
   }
 
   @BeforeEach
   void start() throws Exception {
+    var configuredOptions = new Options();
+    configuredOptions.setMaxRequestBytes(1024);
+    configuredOptions.setMaxResponseBytes(1024);
+    configuredOptions.setStreamBufferBytes(128);
+    configuredOptions.setMaxParameters(1000);
+    configuredOptions.setMultipart(new MultipartOptions());
+
     app =
-        new Shoostr(new Options(1024, 1024, 128, 1000, MultipartOptions.defaults()))
-            .modifyServer(
-                nativeServer -> {
-                  var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
-                  nativeConnector.setHost("127.0.0.1");
-                  nativeConnector.setPort(0);
-                  nativeConnector.setIdleTimeout(5000);
-                });
-    app.onRequestHeaders(
-        (request, ignored) -> {
-          assertTrue(request.pathParam("id").isEmpty());
-          assertTrue(request.routePattern().isEmpty());
-        });
+        new Shoostr(configuredOptions)
+            .modifyServer(nativeServer -> {
+              var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
+              nativeConnector.setHost("127.0.0.1");
+              nativeConnector.setPort(0);
+              nativeConnector.setIdleTimeout(5000);
+            });
+    app.onRequestHeaders((request, ignored) -> {
+      assertTrue(request.pathParam("id").isEmpty());
+      assertTrue(request.routePattern().isEmpty());
+    });
     app.routes()
         .path(
             "/api",
@@ -66,22 +88,22 @@ class RouteCompositionTest {
                       account.path(
                           "orders/{id}",
                           order ->
-                              order.get(
-                                  (req, res) -> {
-                                    retainedRequest.set(req);
-                                    res.text(
-                                        req.pathParam("accountId").orElseThrow()
-                                            + ":"
-                                            + req.pathParam("id").orElseThrow());
-                                  })));
+                              order.get((routeRequest, response) -> {
+                                retainedRequest.set(routeRequest);
+                                response.text(
+                                    routeRequest.pathParam("accountId").orElseThrow()
+                                        + ":"
+                                        + routeRequest.pathParam("id").orElseThrow());
+                              })));
             });
     app.routes().path("v2/orders/", RouteCompositionTest::orders);
     app.routes()
         .get(
             "/flat/{id}",
-            (req, res) -> {
-              assertTrue(req.pathParam("missing").isEmpty());
-              res.text(req.pathParam("id").orElseThrow());
+            (routeRequest, response) -> {
+              assertTrue(routeRequest.pathParam("missing").isEmpty());
+
+              response.text(routeRequest.pathParam("id").orElseThrow());
             });
     app.routes()
         .path(
@@ -89,40 +111,57 @@ class RouteCompositionTest {
             group -> {
               group.get(
                   "/{id}",
-                  (req, res) -> res.text("parameter:" + req.pathParam("id").orElseThrow()));
-              group.get("/latest", (ignored2, res) -> res.text("literal"));
-              group.post("/latest", (ignored3, res) -> res.text("post"));
+                  (routeRequest, response) ->
+                      response.text("parameter:" + routeRequest.pathParam("id").orElseThrow()));
+              group.get("/latest", (ignoredRequest, response) -> response.text("literal"));
+              group.post("/latest", (ignoredRequest, response) -> response.text("post"));
             });
     app.routes()
         .path(
             "/reverse-order",
             group -> {
-              group.get("/latest", (ignored4, res) -> res.text("literal"));
+              group.get("/latest", (ignoredRequest, response) -> response.text("literal"));
               group.get(
                   "/{id}",
-                  (req, res) -> res.text("parameter:" + req.pathParam("id").orElseThrow()));
+                  (routeRequest, response) ->
+                      response.text("parameter:" + routeRequest.pathParam("id").orElseThrow()));
             });
-    app.routes().get("/fallback/fixed/x", (ignored5, res) -> res.text("x"));
+    app.routes().get("/fallback/fixed/x", (ignoredRequest, response) -> response.text("x"));
     app.routes()
-        .get("/fallback/{name}/y", (req, res) -> res.text(req.pathParam("name").orElseThrow()));
-    app.routes().route(HttpMethods.PROPFIND, "/properties", (req, res) -> res.text(req.method()));
-    app.routes().route("PROPFIND", "/string-properties", (req, res) -> res.text(req.method()));
+        .get(
+            "/fallback/{name}/y",
+            (routeRequest, response) ->
+                response.text(routeRequest.pathParam("name").orElseThrow()));
+    app.routes()
+        .route(
+            HttpMethods.PROPFIND,
+            "/properties",
+            (routeRequest, response) -> response.text(routeRequest.method()));
+    app.routes()
+        .route(
+            "PROPFIND",
+            "/string-properties",
+            (routeRequest, response) -> response.text(routeRequest.method()));
     app.routes()
         .path(
             "/string",
             group -> {
-              group.route("GET", (ignored6, res) -> res.text("group"));
+              group.route("GET", (ignoredRequest, response) -> response.text("group"));
               group.route(
-                  "POST", "/{id}", (req, res) -> res.text(req.pathParam("id").orElseThrow()));
-              group.route(HttpMethods.DELETE, (ignored7, res) -> res.status(204));
+                  "POST",
+                  "/{id}",
+                  (routeRequest, response) ->
+                      response.text(routeRequest.pathParam("id").orElseThrow()));
+              group.route(HttpMethods.DELETE, (ignoredRequest, response) -> response.status(204));
             });
-    app.routes().path("/", root -> root.get((ignored8, res) -> res.text("root")));
+    app.routes().path("/", root -> root.get((ignoredRequest, response) -> response.text("root")));
     app.routes()
         .get(
             "/unknown-param",
-            (req, res) -> {
-              assertEquals(Optional.empty(), req.pathParam("missing"));
-              res.text("checked");
+            (routeRequest, response) -> {
+              assertEquals(Optional.empty(), routeRequest.pathParam("missing"));
+
+              response.text("checked");
             });
     test = TestServer.start(app);
   }
@@ -141,6 +180,7 @@ class RouteCompositionTest {
     assertEquals(
         "root",
         test.send(request -> request.path("/"), HttpResponse.BodyHandlers.ofString()).body());
+
     for (String prefix : new String[] {"/api/orders", "/v2/orders"}) {
       assertEquals(
           "list",
@@ -180,7 +220,9 @@ class RouteCompositionTest {
                 request -> request.path("/api/accounts/a/orders/42"),
                 HttpResponse.BodyHandlers.ofString())
             .body());
+
     var closedRequest = retainedRequest.get();
+
     assertThrows(IllegalStateException.class, () -> closedRequest.pathParam("id"));
     assertEquals(
         "checked",
@@ -198,10 +240,12 @@ class RouteCompositionTest {
           test.send(
               request -> request.path("/api/orders/" + value),
               HttpResponse.BodyHandlers.ofString());
+
       assertEquals(200, flat.statusCode());
       assertEquals(200, grouped.statusCode());
       assertEquals(flat.body(), grouped.body());
     }
+
     assertEquals(
         "hello world",
         test.send(
@@ -223,19 +267,24 @@ class RouteCompositionTest {
     // An independent client preserves the exact target spelling under transport rejection tests.
     try (var client = HttpClient.newHttpClient()) {
       for (var path : new String[] {"/flat/%252F", "/api/accounts//orders/42"}) {
-        var reply =
-            client.send(
-                HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + path))
-                    .timeout(Duration.ofSeconds(5))
-                    .build(),
-                HttpResponse.BodyHandlers.ofString());
+        var reply = sendReplyRequestForRetainsTransportRejectionOfAmbiguousPaths(client, path);
+
         assertEquals(400, reply.statusCode());
       }
     }
   }
 
+  private HttpResponse<String> sendReplyRequestForRetainsTransportRejectionOfAmbiguousPaths(
+      HttpClient client, String path) throws IOException, InterruptedException {
+    return client.send(
+        HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + path))
+            .timeout(Duration.ofSeconds(5))
+            .build(),
+        HttpResponse.BodyHandlers.ofString());
+  }
+
   @Test
-  void prefersLiteralRoutesAndContinuesAfterAPathOrMethodMismatch() throws Exception {
+  void prefersLiteralRoutesAndContinuesAfterPathOrMethodMismatch() throws Exception {
     assertEquals(
         "literal",
         test.send(request -> request.path("/order/latest"), HttpResponse.BodyHandlers.ofString())
@@ -262,13 +311,17 @@ class RouteCompositionTest {
   @Test
   void distinguishesNotFoundFromMethodNotAllowedAndIncludesAllMatchingMethods() throws Exception {
     assertEquals(404, test.send(request -> request.path("/api/accounts/a/orders")).statusCode());
+
     var result = test.send(request -> request.path("/order/latest").method(HttpMethods.DELETE));
+
     assertEquals(405, result.statusCode());
     assertEquals("GET, POST", result.headers().firstValue("Allow").orElseThrow());
+
     var unknown =
         test.send(
             request -> request.path("/order/latest").method("CUSTOM"),
             HttpResponse.BodyHandlers.ofString());
+
     assertEquals(405, unknown.statusCode());
     assertEquals("GET, POST", unknown.headers().firstValue("Allow").orElseThrow());
     assertEquals(
@@ -283,18 +336,21 @@ class RouteCompositionTest {
   void freezesRetainedScopesAndRejectsEvenEmptyGroupsAfterStartup() {
     var scope = retainedScope.get();
     var routes = app.routes();
-    assertThrows(
-        IllegalStateException.class, () -> scope.get("later", (ignored9, ignored10) -> {}));
-    assertThrows(IllegalStateException.class, () -> scope.path("later", ignored11 -> {}));
-    assertThrows(IllegalStateException.class, () -> routes.path("later", ignored12 -> {}));
+
     assertThrows(
         IllegalStateException.class,
-        () -> routes.route("GET", "/later", (ignored13, ignored14) -> {}));
+        () -> scope.get("later", (ignoredRequest, ignoredResponse) -> {}));
+    assertThrows(IllegalStateException.class, () -> scope.path("later", ignoredRoutes -> {}));
+    assertThrows(IllegalStateException.class, () -> routes.path("later", ignoredRoutes -> {}));
+    assertThrows(
+        IllegalStateException.class,
+        () -> routes.route("GET", "/later", (ignoredRequest, ignoredResponse) -> {}));
   }
 
   @Test
   void exposesOneRootAndRoutesStringMethodsThroughGroupedAndFlatPaths() throws Exception {
     var rootRoutes = app.routes();
+
     assertSame(rootRoutes, app.routes());
     assertEquals(
         "PROPFIND",
@@ -313,107 +369,226 @@ class RouteCompositionTest {
             .body());
     assertEquals(
         204, test.send(request -> request.path("/string").method(HttpMethods.DELETE)).statusCode());
+
     var rejected = test.send(request -> request.path("/string").method(HttpMethods.PUT));
+
     assertEquals(405, rejected.statusCode());
     assertEquals("DELETE, GET", rejected.headers().firstValue("Allow").orElseThrow());
   }
 
   @Test
   void rootCallbackRegistersFlatAndComposedRoutesAndReturnsApplication() throws Exception {
-    try (var candidate = new Shoostr()) {
-      assertSame(
-          candidate,
-          candidate.routes(
-              routes -> {
-                assertSame(candidate.routes(), routes);
-                routes.get("/health", (ignored15, response) -> response.text("ok"));
-                routes.path(
-                    "/orders",
-                    orders -> {
-                      orders.get(
-                          "/{id}",
-                          (request, response) ->
-                              response.text("order:" + request.pathParam("id").orElseThrow()));
-                      orders.get("/latest", (ignored16, response) -> response.text("latest"));
-                    });
-              }));
+    {
+      var candidate = new Shoostr();
 
-      try (var fixture = TestServer.start(candidate)) {
-        assertEquals(
-            "ok",
-            fixture
-                .send(request -> request.path("/health"), HttpResponse.BodyHandlers.ofString())
-                .body());
-        assertEquals(
-            "latest",
-            fixture
-                .send(
-                    request -> request.path("/orders/latest"), HttpResponse.BodyHandlers.ofString())
-                .body());
-        assertEquals(
-            "order:42",
-            fixture
-                .send(request -> request.path("/orders/42"), HttpResponse.BodyHandlers.ofString())
-                .body());
+      try (Closeable candidateCleanup = candidate::close) {
+        assertSame(
+            candidate,
+            candidate.routes(routes -> {
+              assertSame(candidate.routes(), routes);
+
+              routes.get("/health", (ignoredRequest, response) -> response.text("ok"));
+              routes.path(
+                  "/orders",
+                  orders -> {
+                    orders.get(
+                        "/{id}",
+                        (request, response) ->
+                            response.text("order:" + request.pathParam("id").orElseThrow()));
+                    orders.get("/latest", (ignoredRequest, response) -> response.text("latest"));
+                  });
+            }));
+
+        try (var fixture = TestServer.start(candidate)) {
+          assertEquals(
+              "ok",
+              fixture
+                  .send(request -> request.path("/health"), HttpResponse.BodyHandlers.ofString())
+                  .body());
+          assertEquals(
+              "latest",
+              fixture
+                  .send(
+                      request -> request.path("/orders/latest"),
+                      HttpResponse.BodyHandlers.ofString())
+                  .body());
+          assertEquals(
+              "order:42",
+              fixture
+                  .send(request -> request.path("/orders/42"), HttpResponse.BodyHandlers.ofString())
+                  .body());
+        }
       }
     }
   }
 
   @Test
   void rootCallbackPropagatesFailureAndKeepsEarlierRegistrations() throws Exception {
-    try (var candidate = new Shoostr()) {
-      var failure = new IllegalArgumentException("registration failed");
-      assertSame(
-          failure,
-          assertThrows(
-              IllegalArgumentException.class,
-              () ->
-                  candidate.routes(
-                      routes -> {
-                        routes.get("/before", (ignored17, response) -> response.text("before"));
-                        throw failure;
-                      })));
+    {
+      var candidate = new Shoostr();
 
-      assertSame(
-          candidate,
-          candidate.routes(
-              routes -> routes.get("/after", (ignored18, response) -> response.text("after"))));
+      try (Closeable candidateCleanup1 = candidate::close) {
+        var failure = new IllegalArgumentException("registration failed");
 
-      try (var fixture = TestServer.start(candidate)) {
-        assertEquals(
-            "before",
-            fixture
-                .send(request -> request.path("/before"), HttpResponse.BodyHandlers.ofString())
-                .body());
-        assertEquals(
-            "after",
-            fixture
-                .send(request -> request.path("/after"), HttpResponse.BodyHandlers.ofString())
-                .body());
-        assertThrows(IllegalStateException.class, () -> candidate.routes(ignored19 -> {}));
+        assertSame(
+            failure,
+            assertThrows(
+                IllegalArgumentException.class,
+                () ->
+                    candidate.routes(routes -> {
+                      routes.get("/before", (ignoredRequest, response) -> response.text("before"));
+                      throw failure;
+                    })));
+
+        assertSame(
+            candidate,
+            candidate.routes(routes ->
+                routes.get("/after", (ignoredRequest, response) -> response.text("after"))));
+
+        try (var fixture = TestServer.start(candidate)) {
+          assertEquals(
+              "before",
+              fixture
+                  .send(request -> request.path("/before"), HttpResponse.BodyHandlers.ofString())
+                  .body());
+          assertEquals(
+              "after",
+              fixture
+                  .send(request -> request.path("/after"), HttpResponse.BodyHandlers.ofString())
+                  .body());
+          assertThrows(IllegalStateException.class, () -> candidate.routes(ignoredRoutes -> {}));
+        }
       }
     }
   }
 
   @ParameterizedTest
-  @ValueSource(strings = {"/}id", "/<id", "/>id"})
-  void rejectsIsolatedUnsupportedSymbolsDuringRouteRegistration(String pattern) throws Exception {
-    try (var candidate = new Shoostr()) {
+  @ValueSource(
+      strings = {
+        "/}id",
+        "/<id",
+        "/>id",
+        "/before{after",
+        "/before}after",
+        "/before*after",
+        "/before<after",
+        "/before>after",
+        "/before?after",
+        "/before#after"
+      })
+  void rejectsReservedSymbolsDuringRouteRegistration(String pattern) throws Exception {
+    {
+      var candidate = new Shoostr();
+
+      try (Closeable candidateCleanup2 = candidate::close) {
+        var routes = candidate.routes();
+
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> routes.get(pattern, (ignoredRequest, ignoredResponse) -> {}));
+      }
+    }
+  }
+
+  @Test
+  void rejectsEveryAsciiControlCharacterEmbeddedInLiteralSegments() throws Exception {
+    var candidate = new Shoostr();
+
+    try (Closeable candidateCleanup = candidate::close) {
+      var routes = candidate.routes();
+      for (var character = 0; character < 32; character++) {
+        var pattern = "/before" + (char) character + "after";
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> routes.get(pattern, (request, response) -> {}),
+            "ASCII character " + character);
+      }
+
+      assertThrows(
+          IllegalArgumentException.class,
+          () -> routes.get("/before\u007fafter", (request, response) -> {}));
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "/before after", "/before~after", "/before\u0080after", "/before\u009fafter",
+        "/before\u00a0after", "/beforeéafter", "/before%7Bafter", "/before%00after",
+        "/before%7Fafter"
+      })
+  void acceptsLiteralCharactersOutsideTheAsciiControlAndReservedSets(String pattern)
+      throws Exception {
+    var candidate = new Shoostr();
+
+    try (Closeable candidateCleanup = candidate::close) {
+      assertDoesNotThrow(() -> candidate.routes().get(pattern, (request, response) -> {}));
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"a", "_", "a0_-"})
+  void acceptsAndCapturesAsciiParameterNamesInPlainAndConstrainedRoutes(String name)
+      throws Exception {
+    var candidate = new Shoostr();
+
+    try (Closeable candidateCleanup = candidate::close) {
+      candidate
+          .routes()
+          .get(
+              "/plain/{" + name + "}",
+              (request, response) -> response.text(request.pathParam(name).orElseThrow()))
+          .get(
+              "/constrained/{" + name + ":[0-9]+}",
+              (request, response) -> response.text(request.pathParam(name).orElseThrow()));
+
+      try (var fixture = TestServer.start(candidate)) {
+        assertEquals(
+            "7",
+            fixture
+                .send(request -> request.path("/plain/7"), HttpResponse.BodyHandlers.ofString())
+                .body());
+        assertEquals(
+            "7",
+            fixture
+                .send(
+                    request -> request.path("/constrained/7"), HttpResponse.BodyHandlers.ofString())
+                .body());
+      }
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"", "0a", "-a", "a.b", "é"})
+  void rejectsInvalidParameterNamesInPlainAndConstrainedRoutes(String name) throws Exception {
+    var candidate = new Shoostr();
+
+    try (Closeable candidateCleanup = candidate::close) {
       var routes = candidate.routes();
       assertThrows(
-          IllegalArgumentException.class, () -> routes.get(pattern, (ignored20, ignored21) -> {}));
+          IllegalArgumentException.class,
+          () -> routes.get("/plain/{" + name + "}", (request, response) -> {}));
+      assertThrows(
+          IllegalArgumentException.class,
+          () -> routes.get("/constrained/{" + name + ":[0-9]+}", (request, response) -> {}));
     }
   }
 
   @ParameterizedTest
   @EnumSource(HttpMethods.class)
   void treatsStringAndEnumRegistrationsAsTheSameMethod(HttpMethods method) throws Exception {
-    try (var candidate = new Shoostr()) {
-      var routes = candidate.routes();
-      assertSame(routes, routes.route(method.value(), "/{id}", (ignored22, ignored23) -> {}));
-      assertThrows(
-          IllegalArgumentException.class,
-          () -> routes.route(method, "/{name}", (ignored24, ignored25) -> {}));
+    {
+      var candidate = new Shoostr();
+
+      try (Closeable candidateCleanup3 = candidate::close) {
+        var routes = candidate.routes();
+
+        assertSame(
+            routes, routes.route(method.value(), "/{id}", (ignoredRequest, ignoredResponse) -> {}));
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> routes.route(method, "/{name}", (ignoredRequest, ignoredResponse) -> {}));
+      }
     }
   }
 
@@ -421,95 +596,126 @@ class RouteCompositionTest {
   @ValueSource(
       strings = {"", "get", "Get", " GET", "GET ", "CUSTOM", "*", "BASELINE_CONTROL", "GET\r\n"})
   void rejectsUnrecognizedWireMethodsDuringRegistration(String method) throws Exception {
-    try (var candidate = new Shoostr()) {
-      var routes = candidate.routes();
-      assertThrows(
-          IllegalArgumentException.class,
-          () -> routes.route(method, "/", (ignored26, ignored27) -> {}));
+    {
+      var candidate = new Shoostr();
+
+      try (Closeable candidateCleanup4 = candidate::close) {
+        var routes = candidate.routes();
+
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> routes.route(method, "/", (ignoredRequest, ignoredResponse) -> {}));
+      }
     }
   }
 
   @ParameterizedTest
   @NullSource
   void rejectsNullStringMethod(String method) throws Exception {
-    try (var candidate = new Shoostr()) {
-      var routes = candidate.routes();
-      assertThrows(
-          NullPointerException.class,
-          () -> routes.route(method, "/", (ignored28, ignored29) -> {}));
+    {
+      var candidate = new Shoostr();
+
+      try (Closeable candidateCleanup5 = candidate::close) {
+        var routes = candidate.routes();
+
+        assertThrows(
+            NullPointerException.class,
+            () -> routes.route(method, "/", (ignoredRequest, ignoredResponse) -> {}));
+      }
     }
   }
 
   @Test
   void validatesComposedParametersAndEquivalentRouteShapes() throws Exception {
-    try (var candidate = new Shoostr()) {
-      var routes = candidate.routes();
-      Consumer<Routes> duplicateParameter =
-          group -> group.get("/{id}", (ignored30, ignored31) -> {});
-      assertThrows(IllegalArgumentException.class, () -> routes.path("/{id}", duplicateParameter));
-      routes.path("/api", group -> group.get("/{id}", (ignored32, ignored33) -> {}));
-      assertThrows(
-          IllegalArgumentException.class,
-          () -> routes.get("/api/{name}", (ignored34, ignored35) -> {}));
-      routes.post("/api/{name}", (ignored36, ignored37) -> {});
-      candidate
-          .routes()
-          .path("/api", ignored38 -> assertThrows(IllegalStateException.class, candidate::start));
-      candidate.routes().get("/after", (ignored39, ignored40) -> {});
+    {
+      var candidate = new Shoostr();
+
+      try (Closeable candidateCleanup6 = candidate::close) {
+        var routes = candidate.routes();
+        Consumer<Routes> duplicateParameter =
+            group -> group.get("/{id}", (ignoredRequest, ignoredResponse) -> {});
+
+        assertThrows(
+            IllegalArgumentException.class, () -> routes.path("/{id}", duplicateParameter));
+
+        routes.path("/api", group -> group.get("/{id}", (ignoredRequest, ignoredResponse) -> {}));
+
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> routes.get("/api/{name}", (ignoredRequest, ignoredResponse) -> {}));
+
+        routes.post("/api/{name}", (ignoredRequest, ignoredResponse) -> {});
+        candidate
+            .routes()
+            .path(
+                "/api",
+                ignoredRoutes -> assertThrows(IllegalStateException.class, candidate::start));
+        candidate.routes().get("/after", (ignoredRequest, ignoredResponse) -> {});
+      }
     }
   }
 
   @Test
   void rejectsPathParameterAccessFromAnotherThread() throws Exception {
-    try (var candidate =
-        new Shoostr(new Options(1024, 1024, 128, 1000, MultipartOptions.defaults()))
-            .modifyServer(
-                nativeServer -> {
-                  var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
-                  nativeConnector.setHost("127.0.0.1");
-                  nativeConnector.setPort(0);
-                  nativeConnector.setIdleTimeout(5000);
-                })) {
-      candidate
-          .routes()
-          .get(
-              "/{id}",
-              (req, res) -> {
-                var failure = new AtomicReference<Throwable>();
-                var thread =
-                    Thread.startVirtualThread(
-                        () -> {
-                          try {
-                            req.pathParam("id");
-                          } catch (Throwable error) {
-                            failure.set(error);
-                          }
-                        });
-                thread.join();
-                assertInstanceOf(IllegalStateException.class, failure.get());
-                res.text("checked");
-              });
+    var configuredOptions = new Options();
+    configuredOptions.setMaxRequestBytes(1024);
+    configuredOptions.setMaxResponseBytes(1024);
+    configuredOptions.setStreamBufferBytes(128);
+    configuredOptions.setMaxParameters(1000);
+    configuredOptions.setMultipart(new MultipartOptions());
 
-      try (var candidateTest = TestServer.start(candidate)) {
-        var result =
-            candidateTest.send(
-                request -> request.path("/42").timeout(Duration.ofSeconds(5)),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals("checked", result.body());
+    {
+      var candidate =
+          createCandidateForRejectsPathParameterAccessFromAnotherThread(configuredOptions);
+
+      try (Closeable candidateCleanup7 = candidate::close) {
+        candidate
+            .routes()
+            .get(
+                "/{id}",
+                (routeRequest, response) -> {
+                  var failure = new AtomicReference<Throwable>();
+                  var thread =
+                      createThreadForRejectsPathParameterAccessFromAnotherThread(
+                          routeRequest, failure);
+                  thread.join();
+
+                  assertInstanceOf(IllegalStateException.class, failure.get());
+
+                  response.text("checked");
+                });
+
+        try (var candidateTest = TestServer.start(candidate)) {
+          var result =
+              candidateTest.send(
+                  request -> request.path("/42").timeout(Duration.ofSeconds(5)),
+                  HttpResponse.BodyHandlers.ofString());
+
+          assertEquals("checked", result.body());
+        }
       }
     }
   }
 
-  private static void orders(Routes orders) {
-    orders.get((ignored41, res) -> res.text("list"));
-    orders.post((ignored42, res) -> res.text("create"));
-    orders.get("/", (ignored43, res) -> res.text("slash"));
-    orders.path(
-        "/{id}",
-        order -> {
-          order.get((req, res) -> res.text(req.pathParam("id").orElseThrow()));
-          order.patch((req, res) -> res.text("update:" + req.pathParam("id").orElseThrow()));
-          order.delete((ignored44, res) -> res.status(204));
+  private Shoostr createCandidateForRejectsPathParameterAccessFromAnotherThread(
+      Options configuredOptions) {
+    return new Shoostr(configuredOptions)
+        .modifyServer(nativeServer -> {
+          var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
+          nativeConnector.setHost("127.0.0.1");
+          nativeConnector.setPort(0);
+          nativeConnector.setIdleTimeout(5000);
         });
+  }
+
+  private Thread createThreadForRejectsPathParameterAccessFromAnotherThread(
+      Request request, AtomicReference<Throwable> failure) {
+    return Thread.startVirtualThread(() -> {
+      try {
+        request.pathParam("id");
+      } catch (Throwable error) {
+        failure.set(error);
+      }
+    });
   }
 }

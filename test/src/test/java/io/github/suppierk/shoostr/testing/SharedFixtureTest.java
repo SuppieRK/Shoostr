@@ -18,13 +18,15 @@ class SharedFixtureTest {
   @BeforeAll
   static void startSharedFixture() throws Exception {
     repository = new AtomicReference<>("caller-owned");
+
     var app = new Shoostr();
     app.routes().get("/seed", (ignored, response) -> response.cookie("token", "shared"));
     app.routes()
         .get(
             "/cookie",
             (request, response) -> response.text(request.cookie("token").orElse("absent")));
-    app.routes().get("/repository", (ignored2, response) -> response.text(repository.get()));
+    app.routes().get("/repository", (ignoredRequest, response) -> response.text(repository.get()));
+
     test = TestServer.start(app);
 
     try {

@@ -23,6 +23,7 @@ public final class MetricsExample {
    */
   public static void main(String[] args) throws Exception {
     var app = application().start();
+
     LOGGER.info("Metrics: http://127.0.0.1:{}/metrics", app.port());
   }
 
@@ -41,22 +42,25 @@ public final class MetricsExample {
     var registry = new PrometheusMeterRegistry(PrometheusConfig.DEFAULT);
     // Core's afterClose callback releases it after request drain and extension cleanup.
     app.afterClose(registry::close);
-    // Shoostr's micrometer module provides this adapter; allRequests enables instrumentation.
-    app.extensions(new MicrometerMetrics(registry).allRequests());
+    // Application activation measures all registered endpoints with this borrowed registry.
+    app.withExtension(new MicrometerMetrics(registry));
+
     app.routes(
         routes -> {
-          routes.get(
-              "/hello/{name}",
-              (request, response) ->
-                  response.text("Hello, " + request.pathParam("name").orElseThrow() + "!"));
-          routes.get(
-              "/metrics",
-              // Micrometer produces Prometheus text; this is an ordinary Shoostr HTTP handler.
-              (ignored, response) ->
-                  response.body(
-                      "text/plain; version=0.0.4; charset=utf-8",
-                      registry.scrape().getBytes(StandardCharsets.UTF_8)));
+          routes
+              .get(
+                  "/hello/{name}",
+                  (request, response) ->
+                      response.text("Hello, " + request.pathParam("name").orElseThrow() + "!"))
+              .get(
+                  "/metrics",
+                  // Micrometer produces Prometheus text; this is an ordinary Shoostr HTTP handler.
+                  (ignored, response) ->
+                      response.body(
+                          "text/plain; version=0.0.4; charset=utf-8",
+                          registry.scrape().getBytes(StandardCharsets.UTF_8)));
         });
+
     return app;
   }
 }

@@ -30,7 +30,8 @@ final class McpConfiguration {
         new McpHttpSecurity(
             Set.of(System.getenv().getOrDefault("MCP_PUBLIC_ORIGIN", "http://127.0.0.1:" + port)),
             ignored -> new McpIdentity("public-example", McpTransportContext.EMPTY, null),
-            (ignored2, ignored3) -> {});
+            (ignoredMcpIdentity, ignoredJsonRpcMessage) -> {});
+
     // Shoostr owns the HTTP transport; the official SDK configures and dispatches MCP operations.
     return Mcp.sync(
         security,
@@ -55,7 +56,7 @@ final class McpConfiguration {
                 .completions(
                     new McpServerFeatures.SyncCompletionSpecification(
                         new McpSchema.PromptReference("test_prompt_with_arguments"),
-                        (ignored4, ignored5) ->
+                        (ignoredMcpSyncServerExchange, ignoredCompleteRequest) ->
                             new McpSchema.CompleteResult(
                                 new McpSchema.CompleteResult.CompleteCompletion(
                                     List.of(), 0, false))))

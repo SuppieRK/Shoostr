@@ -103,8 +103,10 @@ jobs:
           if [[ "$MODE" == slow-client ]]; then
             [[ "$JVM_CPUS" == 1 && "$JVM_MEMORY_MIB" == 1024 ]]
           fi
+
           source .github/benchmarks/resources.sh
           configure_resources
+
           matrix=$(jq -c --arg mode "$MODE" '{workload:[to_entries[] | select($mode == "steady" or .value.ramp) | .key]}' .github/benchmarks/workloads.json)
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
       - *java

@@ -11,6 +11,15 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
 class TelemetryObservationBenchmarkTest {
+  private static Stream<Arguments> cases() {
+    return Stream.of("minimal", "micrometer", "otelNoop", "otelDropped", "otelRecording")
+        .flatMap(configuration ->
+            Stream.of("absent", "remote")
+                .flatMap(parent ->
+                    Stream.of("matched", "missed", "serverError")
+                        .map(outcome -> Arguments.of(configuration, parent, outcome))));
+  }
+
   @ParameterizedTest
   @MethodSource("cases")
   void completesEachObserverFixtureAndRestoresItsCallingContext(
@@ -23,22 +32,14 @@ class TelemetryObservationBenchmarkTest {
 
     try (var ignored = original.makeCurrent()) {
       benchmark.setup();
+
       assertSame(original, Context.current());
+
       assertNotNull(benchmark.observe());
+
       assertSame(original, Context.current());
     } finally {
       benchmark.close();
     }
-  }
-
-  private static Stream<Arguments> cases() {
-    return Stream.of("minimal", "micrometer", "otelNoop", "otelDropped", "otelRecording")
-        .flatMap(
-            configuration ->
-                Stream.of("absent", "remote")
-                    .flatMap(
-                        parent ->
-                            Stream.of("matched", "missed", "serverError")
-                                .map(outcome -> Arguments.of(configuration, parent, outcome))));
   }
 }

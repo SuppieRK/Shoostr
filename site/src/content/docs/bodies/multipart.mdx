@@ -16,6 +16,11 @@ A multipart request carries separately named parts, usually form fields and uplo
 
 This task inspects submitted fields and files inside the handler. `MultipartOptions` configures parsing limits as part of the application's `Options`; it does not decide where your application keeps accepted files.
 
+Create `new MultipartOptions()` and configure its bean properties before application construction.
+Set the per-file limit before lowering the aggregate limit below the current per-file limit; increase the aggregate first when raising the per-file limit above it.
+Setters reject invalid values without changing the previous setting. Null restores the selected default if it remains compatible with the other limits.
+`Shoostr` copies these settings when it is constructed, so later changes affect only subsequent applications. Do not mutate them concurrently with construction.
+
 Read a text field with `formParam()` and its first named upload with `file()`. Choose `files(name)` for every upload under one name, or `files()` for the complete grouped collection. A submitted empty filename still represents a file part. When the request is not multipart, file accessors return empty results. Query and URL-encoded input use the separate [parameter accessors](../../request/parameters/).
 
 Multipart parsing reads and validates the complete body before exposing fields or uploads.

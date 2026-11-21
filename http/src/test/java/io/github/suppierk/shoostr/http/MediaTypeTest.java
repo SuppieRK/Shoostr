@@ -19,6 +19,45 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
 class MediaTypeTest {
+  private static Stream<String> invalidNames() {
+    return Stream.of(
+        "",
+        "text",
+        "/plain",
+        "text/",
+        "text/plain/extra",
+        " text/plain",
+        "text/plain ",
+        "text /plain",
+        "text/ plain",
+        "text/plain; charset=UTF-8",
+        "text/plain,application/json",
+        "text/\"plain\"",
+        "text/(plain)",
+        "text/pl\tain",
+        "text/pl\rain",
+        "text/pl\nain",
+        "text/pl\0ain",
+        "text/pl\u007fain",
+        "text/pläin",
+        "text/١",
+        "text/pl\u00a0ain",
+        "*/*",
+        "text/*",
+        "*/json",
+        "application/*+json",
+        "application/a*b",
+        "text/a%b",
+        "text/a'b",
+        "text/a`b",
+        "text/a|b",
+        "text/a~b",
+        "-text/plain",
+        "text/+json",
+        "a".repeat(128) + "/plain",
+        "text/" + "a".repeat(128));
+  }
+
   @Test
   void satisfiesEqualsAndHashCodeContract() {
     // The canonical value includes the name; the separate name supports charset replacement.
@@ -66,6 +105,7 @@ class MediaTypeTest {
 
     try {
       Locale.setDefault(Locale.forLanguageTag("tr-TR"));
+
       assertEquals("application/json", MediaType.of("APPLICATION/JSON").value());
     } finally {
       Locale.setDefault(previous);
@@ -107,63 +147,28 @@ class MediaTypeTest {
 
   @Test
   void rejectsCharsetNamesRequiringQuotedValues() {
-    var charset =
-        new Charset("X-Test:Codec", new String[0]) {
-          @Override
-          public boolean contains(Charset other) {
-            return false;
-          }
-
-          @Override
-          public CharsetDecoder newDecoder() {
-            return StandardCharsets.UTF_8.newDecoder();
-          }
-
-          @Override
-          public CharsetEncoder newEncoder() {
-            return StandardCharsets.UTF_8.newEncoder();
-          }
-        };
+    var charset = createCharsetForRejectsCharsetNamesRequiringQuotedValues();
     var mediaType = MediaType.of("text/plain");
+
     assertThrows(IllegalArgumentException.class, () -> mediaType.withCharset(charset));
   }
 
-  private static Stream<String> invalidNames() {
-    return Stream.of(
-        "",
-        "text",
-        "/plain",
-        "text/",
-        "text/plain/extra",
-        " text/plain",
-        "text/plain ",
-        "text /plain",
-        "text/ plain",
-        "text/plain; charset=UTF-8",
-        "text/plain,application/json",
-        "text/\"plain\"",
-        "text/(plain)",
-        "text/pl\tain",
-        "text/pl\rain",
-        "text/pl\nain",
-        "text/pl\0ain",
-        "text/pl\u007fain",
-        "text/pläin",
-        "text/١",
-        "text/pl\u00a0ain",
-        "*/*",
-        "text/*",
-        "*/json",
-        "application/*+json",
-        "application/a*b",
-        "text/a%b",
-        "text/a'b",
-        "text/a`b",
-        "text/a|b",
-        "text/a~b",
-        "-text/plain",
-        "text/+json",
-        "a".repeat(128) + "/plain",
-        "text/" + "a".repeat(128));
+  private Charset createCharsetForRejectsCharsetNamesRequiringQuotedValues() {
+    return new Charset("X-Test:Codec", new String[0]) {
+      @Override
+      public boolean contains(Charset other) {
+        return false;
+      }
+
+      @Override
+      public CharsetDecoder newDecoder() {
+        return StandardCharsets.UTF_8.newDecoder();
+      }
+
+      @Override
+      public CharsetEncoder newEncoder() {
+        return StandardCharsets.UTF_8.newEncoder();
+      }
+    };
   }
 }

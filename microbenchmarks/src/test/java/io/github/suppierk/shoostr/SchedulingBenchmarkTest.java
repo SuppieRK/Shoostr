@@ -26,6 +26,7 @@ class SchedulingBenchmarkTest {
 
     try {
       fixture.setup();
+
       assertEquals(13, fixture.responses());
 
       for (var exchange : fixture.exchanges) {
@@ -34,8 +35,10 @@ class SchedulingBenchmarkTest {
         assertEquals(1, exchange.completions);
         assertEquals("queued-virtual".equals(pool), exchange.virtual);
         assertFalse(exchange.producedVirtually);
+
         var body = new byte[exchange.submitted.remaining()];
         exchange.submitted.duplicate().get(body);
+
         assertArrayEquals("Hello, World!".getBytes(StandardCharsets.UTF_8), body);
       }
     } finally {

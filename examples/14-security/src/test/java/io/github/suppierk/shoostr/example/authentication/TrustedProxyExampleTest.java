@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.suppierk.shoostr.http.ForwardedHeaders;
 import io.github.suppierk.shoostr.testing.TestServer;
+import java.io.IOException;
 import java.net.InetAddress;
 import java.net.http.HttpResponse;
 import java.util.HashSet;
@@ -22,25 +23,15 @@ class TrustedProxyExampleTest {
   @EnumSource(ForwardedHeaders.class)
   void readsSelectedForwardingMetadataWithoutClaimingThatTheTransportUsesTls(
       ForwardedHeaders family) throws Exception {
+
     try (var test =
         TestServer.start(
             TrustedProxyExample.application(
                 Set.of(InetAddress.getByAddress(new byte[] {127, 0, 0, 1})), family))) {
       var response =
-          test.send(
-              request -> {
-                request.path("/metadata?q=one");
-                if (family == ForwardedHeaders.RFC7239) {
-                  request.header(
-                      "Forwarded", "for=203.0.113.7;proto=https;host=\"api.example:8443\"");
-                } else {
-                  request
-                      .header("X-Forwarded-For", "203.0.113.7")
-                      .header("X-Forwarded-Proto", "https")
-                      .header("X-Forwarded-Host", "api.example:8443");
-                }
-              },
-              HttpResponse.BodyHandlers.ofString());
+          sendResponseForReadsSelectedForwardingMetadataWithoutClaimingThatTheTransportUsesTls(
+              test, family);
+
       assertEquals(200, response.statusCode());
       assertEquals(
           """
@@ -52,6 +43,24 @@ class TrustedProxyExampleTest {
               .stripTrailing(),
           response.body());
     }
+  }
+
+  private HttpResponse<String>
+      sendResponseForReadsSelectedForwardingMetadataWithoutClaimingThatTheTransportUsesTls(
+          TestServer test, ForwardedHeaders family) throws IOException, InterruptedException {
+    return test.send(
+        request -> {
+          request.path("/metadata?q=one");
+          if (family == ForwardedHeaders.RFC7239) {
+            request.header("Forwarded", "for=203.0.113.7;proto=https;host=\"api.example:8443\"");
+          } else {
+            request
+                .header("X-Forwarded-For", "203.0.113.7")
+                .header("X-Forwarded-Proto", "https")
+                .header("X-Forwarded-Host", "api.example:8443");
+          }
+        },
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @ParameterizedTest
@@ -67,7 +76,9 @@ class TrustedProxyExampleTest {
           test.send(
               request -> request.path("/metadata").header("Forwarded", "for=not-an-ip;proto=https"),
               HttpResponse.BodyHandlers.ofString());
+
       assertEquals(status, response.statusCode());
+
       if (!trusted) {
         assertTrue(response.body().contains("effectiveSecure=false\n"));
         assertTrue(response.body().endsWith("url=" + test.baseUri().resolve("/metadata")));
@@ -79,75 +90,108 @@ class TrustedProxyExampleTest {
   @EnumSource(ForwardedHeaders.class)
   void ignoresTheUnselectedForwardingFamilyRatherThanMergingAssertions(ForwardedHeaders family)
       throws Exception {
+
     try (var test =
         TestServer.start(
             TrustedProxyExample.application(
                 Set.of(InetAddress.getByAddress(new byte[] {127, 0, 0, 1})), family))) {
       var response =
-          test.send(
-              request ->
-                  request
-                      .path("/metadata")
-                      .header("Forwarded", "for=203.0.113.7;proto=https;host=\"api.example:8443\"")
-                      .header("X-Forwarded-For", "198.51.100.8")
-                      .header("X-Forwarded-Proto", "http")
-                      .header("X-Forwarded-Host", "other.example:8080"),
-              HttpResponse.BodyHandlers.ofString());
+          sendResponseForIgnoresTheUnselectedForwardingFamilyRatherThanMergingAssertions(test);
+
       assertEquals(200, response.statusCode());
+
       var client = family == ForwardedHeaders.RFC7239 ? "203.0.113.7" : "198.51.100.8";
       var url =
           family == ForwardedHeaders.RFC7239
               ? "https://api.example:8443/metadata"
               : "http://other.example:8080/metadata";
+
       assertTrue(response.body().startsWith("client=" + client + "\n"));
       assertTrue(response.body().endsWith("url=" + url));
     }
   }
 
+  private HttpResponse<String>
+      sendResponseForIgnoresTheUnselectedForwardingFamilyRatherThanMergingAssertions(
+          TestServer test) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/metadata")
+                .header("Forwarded", "for=203.0.113.7;proto=https;host=\"api.example:8443\"")
+                .header("X-Forwarded-For", "198.51.100.8")
+                .header("X-Forwarded-Proto", "http")
+                .header("X-Forwarded-Host", "other.example:8080"),
+        HttpResponse.BodyHandlers.ofString());
+  }
+
   @Test
   void stopsAtTheFirstUntrustedNodeInsteadOfAcceptingTheSpoofedLeftmostEntry() throws Exception {
+
     try (var test =
-        TestServer.start(
-            TrustedProxyExample.application(
-                Set.of(
-                    InetAddress.getByAddress(new byte[] {127, 0, 0, 1}),
-                    InetAddress.getByName("192.0.2.10")),
-                ForwardedHeaders.RFC7239))) {
+        openTestForStopsAtTheFirstUntrustedNodeInsteadOfAcceptingTheSpoofedLeftmostEntry()) {
       var response =
-          test.send(
-              request ->
-                  request
-                      .path("/metadata")
-                      .header(
-                          "Forwarded",
-                          String.join(
-                              ", ",
-                              "for=198.51.100.200;proto=http;host=evil.example",
-                              "for=203.0.113.7;proto=https;host=\"api.example:8443\"",
-                              "for=192.0.2.10;proto=https;host=internal.example")),
-              HttpResponse.BodyHandlers.ofString());
+          sendResponseForStopsAtTheFirstUntrustedNodeInsteadOfAcceptingTheSpoofedLeftmostEntry(
+              test);
+
       assertEquals(200, response.statusCode());
       assertTrue(response.body().startsWith("client=203.0.113.7\n"));
       assertTrue(response.body().endsWith("url=https://api.example:8443/metadata"));
     }
   }
 
+  private TestServer
+      openTestForStopsAtTheFirstUntrustedNodeInsteadOfAcceptingTheSpoofedLeftmostEntry()
+          throws Exception {
+    return TestServer.start(
+        TrustedProxyExample.application(
+            Set.of(
+                InetAddress.getByAddress(new byte[] {127, 0, 0, 1}),
+                InetAddress.getByName("192.0.2.10")),
+            ForwardedHeaders.RFC7239));
+  }
+
+  private HttpResponse<String>
+      sendResponseForStopsAtTheFirstUntrustedNodeInsteadOfAcceptingTheSpoofedLeftmostEntry(
+          TestServer test) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/metadata")
+                .header(
+                    "Forwarded",
+                    String.join(
+                        ", ",
+                        "for=198.51.100.200;proto=http;host=evil.example",
+                        "for=203.0.113.7;proto=https;host=\"api.example:8443\"",
+                        "for=192.0.2.10;proto=https;host=internal.example")),
+        HttpResponse.BodyHandlers.ofString());
+  }
+
   @Test
   void rejectsLegacyForwardingListsThatDoNotDescribeTheSameNumberOfHops() throws Exception {
+
     try (var test =
         TestServer.start(
             TrustedProxyExample.application(
                 Set.of(InetAddress.getByAddress(new byte[] {127, 0, 0, 1})),
                 ForwardedHeaders.X_FORWARDED))) {
       var response =
-          test.send(
-              request ->
-                  request
-                      .path("/metadata")
-                      .header("X-Forwarded-For", "203.0.113.7, 192.0.2.10")
-                      .header("X-Forwarded-Proto", "https"));
+          sendResponseForRejectsLegacyForwardingListsThatDoNotDescribeTheSameNumberOfHops(test);
+
       assertEquals(400, response.statusCode());
     }
+  }
+
+  private HttpResponse<byte[]>
+      sendResponseForRejectsLegacyForwardingListsThatDoNotDescribeTheSameNumberOfHops(
+          TestServer test) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/metadata")
+                .header("X-Forwarded-For", "203.0.113.7, 192.0.2.10")
+                .header("X-Forwarded-Proto", "https"));
   }
 
   @Test
@@ -162,6 +206,7 @@ class TrustedProxyExampleTest {
               request ->
                   request.path("/metadata").header("Forwarded", "for=203.0.113.7;proto=https"),
               HttpResponse.BodyHandlers.ofString());
+
       assertEquals(200, response.statusCode());
       assertFalse(response.body().contains("203.0.113.7"));
       assertTrue(response.body().contains("effectiveSecure=false\n"));

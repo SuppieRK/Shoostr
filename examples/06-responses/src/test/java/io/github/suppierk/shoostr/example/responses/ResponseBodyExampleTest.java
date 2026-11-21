@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.suppierk.shoostr.http.MediaType;
 import io.github.suppierk.shoostr.testing.TestServer;
+import java.io.Closeable;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.Test;
@@ -21,13 +22,18 @@ class ResponseBodyExampleTest {
   @ParameterizedTest
   @ValueSource(ints = {204, 205, 304})
   void sendsEmptyBodylessStatuses(int status) throws Exception {
-    try (var app = ResponseBodyExample.application()) {
-      app.routes().get("/empty-check", (ignored, response) -> response.status(status));
+    {
+      var app = ResponseBodyExample.application();
 
-      try (var test = TestServer.start(app)) {
-        var response = test.send(request -> request.path("/empty-check"));
-        assertEquals(status, response.statusCode());
-        assertArrayEquals(new byte[0], response.body());
+      try (Closeable appCleanup = app::close) {
+        app.routes().get("/empty-check", (ignored, response) -> response.status(status));
+
+        try (var test = TestServer.start(app)) {
+          var response = test.send(request -> request.path("/empty-check"));
+
+          assertEquals(status, response.statusCode());
+          assertArrayEquals(new byte[0], response.body());
+        }
       }
     }
   }
@@ -37,21 +43,26 @@ class ResponseBodyExampleTest {
   void rejectsNonemptyBodylessOutputDuringCompletion(int status) throws Exception {
     var staged = new AtomicBoolean();
 
-    try (var app = ResponseBodyExample.application()) {
-      app.routes()
-          .get(
-              "/invalid-check",
-              (ignored2, response) -> {
-                response.status(status).text("must not escape");
-                staged.set(true);
-              });
+    {
+      var app = ResponseBodyExample.application();
 
-      try (var test = TestServer.start(app)) {
-        var response = test.send(request -> request.path("/invalid-check"));
-        assertTrue(staged.get());
-        assertEquals(500, response.statusCode());
-        assertArrayEquals(
-            "Internal Server Error".getBytes(StandardCharsets.UTF_8), response.body());
+      try (Closeable appCleanup1 = app::close) {
+        app.routes()
+            .get(
+                "/invalid-check",
+                (ignoredRequest, response) -> {
+                  response.status(status).text("must not escape");
+                  staged.set(true);
+                });
+
+        try (var test = TestServer.start(app)) {
+          var response = test.send(request -> request.path("/invalid-check"));
+
+          assertTrue(staged.get());
+          assertEquals(500, response.statusCode());
+          assertArrayEquals(
+              "Internal Server Error".getBytes(StandardCharsets.UTF_8), response.body());
+        }
       }
     }
   }
@@ -60,58 +71,71 @@ class ResponseBodyExampleTest {
   @CsvSource({"0, true", "64, true", "65, false"})
   void enforcesTheFiniteByteLimitBeforeReplacingStagedOutput(int size, boolean accepted)
       throws Exception {
-    try (var app = ResponseBodyExample.application()) {
-      app.routes()
-          .get(
-              "/bounded-check",
-              (ignored3, response) -> {
-                response.text("kept");
-                if (accepted) {
-                  response.body(MediaType.APPLICATION_OCTET_STREAM, new byte[size]);
-                } else {
-                  assertThrows(
-                      IllegalArgumentException.class,
-                      () -> response.body(MediaType.APPLICATION_OCTET_STREAM, new byte[size]));
-                }
-              });
+    {
+      var app = ResponseBodyExample.application();
 
-      try (var test = TestServer.start(app)) {
-        var response = test.send(request -> request.path("/bounded-check"));
-        assertEquals(200, response.statusCode());
-        assertArrayEquals(
-            accepted ? new byte[size] : new byte[] {'k', 'e', 'p', 't'}, response.body());
-        assertEquals(
-            accepted ? "application/octet-stream" : "text/plain; charset=utf-8",
-            response.headers().firstValue("Content-Type").orElseThrow());
+      try (Closeable appCleanup2 = app::close) {
+        app.routes()
+            .get(
+                "/bounded-check",
+                (ignoredRequest, response) -> {
+                  response.text("kept");
+                  if (accepted) {
+                    response.body(MediaType.APPLICATION_OCTET_STREAM, new byte[size]);
+                  } else {
+                    assertThrows(
+                        IllegalArgumentException.class,
+                        () -> response.body(MediaType.APPLICATION_OCTET_STREAM, new byte[size]));
+                  }
+                });
+
+        try (var test = TestServer.start(app)) {
+          var response = test.send(request -> request.path("/bounded-check"));
+
+          assertEquals(200, response.statusCode());
+          assertArrayEquals(
+              accepted ? new byte[size] : new byte[] {'k', 'e', 'p', 't'}, response.body());
+          assertEquals(
+              accepted ? "application/octet-stream" : "text/plain; charset=utf-8",
+              response.headers().firstValue("Content-Type").orElseThrow());
+        }
       }
     }
   }
 
   @Test
   void copiesFiniteBytesWhileKeepingOutputStaged() throws Exception {
-    try (var app = ResponseBodyExample.application()) {
-      app.routes()
-          .get(
-              "/copy-check",
-              (ignored4, response) -> {
-                var bytes = new byte[] {'o', 'k'};
-                response.body(MediaType.TEXT_PLAIN, bytes);
-                bytes[0] = 'n';
-                assertFalse(response.isCommitted());
-              });
+    {
+      var app = ResponseBodyExample.application();
 
-      try (var test = TestServer.start(app)) {
-        var response = test.send(request -> request.path("/copy-check"));
-        assertEquals(200, response.statusCode());
-        assertArrayEquals(new byte[] {'o', 'k'}, response.body());
+      try (Closeable appCleanup3 = app::close) {
+        app.routes()
+            .get(
+                "/copy-check",
+                (ignoredRequest, response) -> {
+                  var bytes = new byte[] {'o', 'k'};
+                  response.body(MediaType.TEXT_PLAIN, bytes);
+                  bytes[0] = 'n';
+
+                  assertFalse(response.isCommitted());
+                });
+
+        try (var test = TestServer.start(app)) {
+          var response = test.send(request -> request.path("/copy-check"));
+
+          assertEquals(200, response.statusCode());
+          assertArrayEquals(new byte[] {'o', 'k'}, response.body());
+        }
       }
     }
   }
 
   @Test
-  void sendsNoContentWithoutAResponseBody() throws Exception {
+  void sendsNoContentWithoutResponseBody() throws Exception {
+
     try (var test = TestServer.start(ResponseBodyExample.application())) {
       var response = test.send(request -> request.path("/messages").method("DELETE"));
+
       assertEquals(204, response.statusCode());
       assertArrayEquals(new byte[0], response.body());
     }
@@ -119,9 +143,11 @@ class ResponseBodyExampleTest {
 
   @Test
   void preservesHeadMetadataWithoutSendingTheRepresentation() throws Exception {
+
     try (var test = TestServer.start(ResponseBodyExample.application())) {
       var get = test.send(request -> request.path("/message"));
       var head = test.send(request -> request.path("/message").method("HEAD"));
+
       assertEquals(200, get.statusCode());
       assertArrayEquals(new byte[] {'c', 'a', 'f', (byte) 0xc3, (byte) 0xa9}, get.body());
       assertEquals(200, head.statusCode());
@@ -134,8 +160,10 @@ class ResponseBodyExampleTest {
 
   @Test
   void encodesLatin1TextWithMatchingCharsetMetadata() throws Exception {
+
     try (var test = TestServer.start(ResponseBodyExample.application())) {
       var response = test.send(request -> request.path("/latin1"));
+
       assertEquals(200, response.statusCode());
       assertEquals(
           "text/plain; charset=ISO-8859-1",
@@ -146,8 +174,10 @@ class ResponseBodyExampleTest {
 
   @Test
   void preservesBinaryResponseBytes() throws Exception {
+
     try (var test = TestServer.start(ResponseBodyExample.application())) {
       var response = test.send(request -> request.path("/bytes"));
+
       assertEquals(200, response.statusCode());
       assertEquals(
           "application/octet-stream", response.headers().firstValue("Content-Type").orElseThrow());
@@ -157,8 +187,10 @@ class ResponseBodyExampleTest {
 
   @Test
   void sendsCreatedTextAsUtf8() throws Exception {
+
     try (var test = TestServer.start(ResponseBodyExample.application())) {
       var response = test.send(request -> request.path("/messages").method("POST"));
+
       assertEquals(201, response.statusCode());
       assertEquals(
           "text/plain; charset=utf-8", response.headers().firstValue("Content-Type").orElseThrow());

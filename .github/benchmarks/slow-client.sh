@@ -4,12 +4,15 @@ set -euo pipefail
 [[ ${JVM_CPUS:-1} == 1 && ${JVM_MEMORY_MIB:-1024} == 1024 ]] \
   || { echo 'Slow-client diagnostics require 1 CPU, 1 GiB total memory and 256 MiB heap' >&2; exit 2; }
 [[ $# == 2 ]] || { echo 'Supply a new result directory and prepared tools directory' >&2; exit 2; }
+
 destination=$1
 tools=$2
+
 [[ ! -e "$destination" ]] || { echo 'Refusing to overwrite results' >&2; exit 2; }
 mkdir -- "$destination"
 destination=$(realpath "$destination")
 printf 'FAILED\n' > "$destination/outcome.txt"
+
 [[ -x "$tools/zrk" && -d "$tools/lib" ]] \
   || { echo 'Missing prepared benchmark tools' >&2; exit 2; }
 : "${JAVA_HOME:?Set JAVA_HOME}"
@@ -22,6 +25,7 @@ for command in slowhttptest jq node curl taskset setsid top timeout; do
   command -v "$command" > /dev/null
 done
 configure_resources
+
 base=http://127.0.0.1:18080
 server_cgroup="/sys/fs/cgroup/shoostr-slow-client-$$"
 server_group=''
@@ -33,6 +37,46 @@ load_pid=''
 monitor_pid=''
 recording=0
 finished=0
+
+cleanup() {
+  local status=$?
+  trap - EXIT
+  set +e
+  stop_monitor
+
+  stop_group "$load_group" "$load_pid"
+  stop_group "$health_group" "$health_pid"
+  if [[ "$recording" == 1 ]]; then
+    timeout 10s "$JAVA_HOME/bin/jcmd" "$server_pid" JFR.stop name=slow-client \
+      filename="$destination/server.jfr" > "$destination/jfr-stop.txt" 2>&1 || status=1
+    "$JAVA_HOME/bin/jfr" print --events jdk.JavaErrorThrow "$destination/server.jfr" \
+      > "$destination/final-java-errors.txt" 2>&1 || status=1
+  fi
+
+  stop_group "$server_group" "$server_pid"
+  if [[ -d "$server_cgroup" ]]; then
+    capture_server_cgroup > "$destination/server-cgroup-after.txt"
+    cp "$server_cgroup/memory.events" "$destination/final-memory.events" || status=1
+    # Use the same OOM invariant as the per-cycle verifier, including events after shutdown.
+    node --input-type=module - "$support/slow-client-check.mjs" \
+      "$destination/final-memory.events" "$destination/server.log" \
+      "$destination/final-java-errors.txt" <<'NODE' || status=1
+import fs from 'node:fs';
+const { verifyMemory } = await import(process.argv[2]);
+const errors = process.argv.slice(4).map(file => fs.readFileSync(file, 'utf8')).join('\n');
+verifyMemory(fs.readFileSync(process.argv[3], 'utf8'), errors);
+NODE
+    sudo -n rmdir "$server_cgroup" || status=1
+  fi
+
+  if [[ "$status" == 0 && "$finished" == 1 ]]; then
+    printf 'PASS\n' > "$destination/outcome.txt"
+  else
+    printf 'FAILED\n' > "$destination/outcome.txt"
+    status=1
+  fi
+  exit "$status"
+}
 
 stop_group() {
   local group=$1 native_pid=$2 attempt
@@ -58,42 +102,6 @@ stop_monitor() {
   fi
 }
 
-cleanup() {
-  local status=$?
-  trap - EXIT
-  set +e
-  stop_monitor
-  stop_group "$load_group" "$load_pid"
-  stop_group "$health_group" "$health_pid"
-  if [[ "$recording" == 1 ]]; then
-    timeout 10s "$JAVA_HOME/bin/jcmd" "$server_pid" JFR.stop name=slow-client \
-      filename="$destination/server.jfr" > "$destination/jfr-stop.txt" 2>&1 || status=1
-    "$JAVA_HOME/bin/jfr" print --events jdk.JavaErrorThrow "$destination/server.jfr" \
-      > "$destination/final-java-errors.txt" 2>&1 || status=1
-  fi
-  stop_group "$server_group" "$server_pid"
-  if [[ -d "$server_cgroup" ]]; then
-    capture_server_cgroup > "$destination/server-cgroup-after.txt"
-    cp "$server_cgroup/memory.events" "$destination/final-memory.events" || status=1
-    # Use the same OOM invariant as the per-cycle verifier, including events after shutdown.
-    node --input-type=module - "$support/slow-client-check.mjs" \
-      "$destination/final-memory.events" "$destination/server.log" \
-      "$destination/final-java-errors.txt" <<'NODE' || status=1
-import fs from 'node:fs';
-const { verifyMemory } = await import(process.argv[2]);
-const errors = process.argv.slice(4).map(file => fs.readFileSync(file, 'utf8')).join('\n');
-verifyMemory(fs.readFileSync(process.argv[3], 'utf8'), errors);
-NODE
-    sudo -n rmdir "$server_cgroup" || status=1
-  fi
-  if [[ "$status" == 0 && "$finished" == 1 ]]; then
-    printf 'PASS\n' > "$destination/outcome.txt"
-  else
-    printf 'FAILED\n' > "$destination/outcome.txt"
-    status=1
-  fi
-  exit "$status"
-}
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
@@ -118,6 +126,7 @@ sample() {
   timestamp=$(now_ms)
   jq -ce --arg phase "$phase" --argjson timestamp "$timestamp" \
     '. + {phase:$phase,timestamp_ms:$timestamp}' <<< "$state" >> "$run_dir/state-samples.jsonl"
+
   fd_count=$(find "/proc/$server_pid/fd" -mindepth 1 -maxdepth 1 -printf '.\n' | wc -l)
   {
     printf 'timestamp_ms=%s phase=%s fd_count=%s memory_current=%s\n' \
@@ -173,7 +182,9 @@ sha256sum "$tools/zrk" "$tools"/lib/*.jar "$(command -v slowhttptest)" \
   "$support/slow-client.sh" "$support/slow-client.lua" "$support/slow-client-check.mjs" \
   "$support/resources.sh" > "$destination/sha256.txt"
 printf 'SERVER_CPUS=%s\nCLIENT_CPUS=%s\n' "$server_cpus" "$client_cpus" > "$destination/affinity.txt"
+
 create_server_cgroup
+
 setsid /usr/bin/time -v -o "$destination/server-resource.txt" \
   bash "$support/resources.sh" "$server_cgroup" \
   taskset -c "$server_cpus" "$JAVA_HOME/bin/java" -Xms256m -Xmx256m -XX:+UseG1GC \
@@ -187,6 +198,7 @@ for ((attempt=0; attempt<300; attempt++)); do
   sleep 0.1
 done
 grep -q 'READY 18080' "$destination/server.log"
+
 verify_server_cgroup "$server_pid"
 [[ $(awk '/^Cpus_allowed_list:/ {print $2}' "/proc/$server_pid/status") == "$server_cpus" ]]
 capture_server_cgroup > "$destination/server-cgroup-before.txt"
@@ -198,6 +210,7 @@ done
 timeout 10s "$JAVA_HOME/bin/jcmd" "$server_pid" VM.flags -all > "$destination/VM.flags-all.txt"
 grep -Eq 'MaxHeapSize[[:space:]]+=[[:space:]]+268435456' "$destination/VM.flags-all.txt"
 curl --silent --show-error --fail --max-time 2 "$base/configuration" > "$destination/native-configuration.txt"
+
 timeout 10s "$JAVA_HOME/bin/jcmd" "$server_pid" JFR.start name=slow-client settings=profile \
   disk=true maxsize=128m 'jdk.VirtualThreadStart#enabled=true' 'jdk.VirtualThreadEnd#enabled=true' \
   'jdk.JavaErrorThrow#enabled=true' > "$destination/jfr-start.txt"
@@ -212,6 +225,7 @@ for kind in body blocked; do
       [[ $(control arm) == armed ]]
       snapshot baseline
       date -u +%FT%TZ > "$run_dir/start-wall.txt"
+
       health_start_ms=$(now_ms)
       setsid /usr/bin/time -v -o "$run_dir/health-client-resource.txt" \
         taskset -c "$client_cpus" "$tools/zrk" -t1 -c1 -R1 -d100s --timeout 1s \
@@ -229,6 +243,7 @@ for kind in body blocked; do
       done
       jq -e -s 'any(.[]; .requests > 0)' "$run_dir/health.ndjson" > /dev/null
       health_ready_ms=$(now_ms)
+
       start_ms=$(now_ms)
       if [[ "$kind" == body ]]; then
         setsid /usr/bin/time -v -o "$run_dir/load-client-resource.txt" \
@@ -254,6 +269,7 @@ for kind in body blocked; do
           taskset -pc "$pid"
         done
       } > "$run_dir/client-placement.txt"
+
       top -b -d 1 -w 160 -p "$server_pid,$health_pid,$load_pid" > "$run_dir/process-monitor.txt" &
       monitor_pid=$!
       while kill -0 "$load_group" 2>/dev/null; do
@@ -262,6 +278,7 @@ for kind in body blocked; do
         (( elapsed_ms < 75000 )) || { echo 'Load tool exceeded its finite budget' >&2; exit 1; }
         sleep 1
       done
+
       status=0
       wait "$load_group" || status=$?
       load_group=''
@@ -269,17 +286,20 @@ for kind in body blocked; do
       printf '%s\n' "$status" > "$run_dir/load-exit-code.txt"
       [[ "$status" == 0 ]]
       load_end_ms=$(now_ms)
+
       [[ $(control release) == released ]]
       while (( $(now_ms) - load_end_ms < 30000 )); do
         sample recovery
         sleep 1
       done
+
       recovery_end_ms=$(now_ms)
       jq -n --arg kind "$kind" --argjson start "$start_ms" --argjson end "$load_end_ms" \
         --argjson recovered "$recovery_end_ms" --argjson health_start "$health_start_ms" \
         --argjson health_ready "$health_ready_ms" \
         '{kind:$kind,start_ms:$start,load_end_ms:$end,recovery_end_ms:$recovered,
           health_start_ms:$health_start,health_ready_ms:$health_ready}' > "$run_dir/phase.json"
+
       status=0
       while kill -0 "$health_group" 2>/dev/null; do
         (( $(now_ms) - start_ms < 115000 )) \
@@ -292,6 +312,7 @@ for kind in body blocked; do
       printf '%s\n' "$status" > "$run_dir/health-exit-code.txt"
       [[ "$status" == 0 ]]
       stop_monitor
+
       curl --silent --show-error --fail --max-time 2 "$base/state" > "$run_dir/recovered-state.json"
       snapshot recovered
       timeout 10s "$JAVA_HOME/bin/jcmd" "$server_pid" JFR.dump name=slow-client maxage=2m \
@@ -300,6 +321,7 @@ for kind in body blocked; do
       "$JAVA_HOME/bin/jfr" print --events jdk.JavaErrorThrow "$run_dir/server.jfr" > "$run_dir/java-errors.txt"
       cp "$server_cgroup/memory.events" "$run_dir/memory.events"
       cp "$destination/server.log" "$run_dir/server.log"
+
       node "$support/slow-client-check.mjs" "$run_dir" "$clients" | tee "$run_dir/verification.json"
       echo '::endgroup::'
     done

@@ -8,6 +8,14 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
 class SseFramingBenchmarkTest {
+  private static Stream<Arguments> cases() {
+    return Stream.of(128, 65536)
+        .flatMap(bytes ->
+            Stream.of("single", "multiline")
+                .flatMap(lines ->
+                    Stream.of("data", "metadata").map(event -> Arguments.of(bytes, lines, event))));
+  }
+
   @ParameterizedTest
   @MethodSource("cases")
   void sendsExactlyOneEventWithTheExpectedFramingBytes(
@@ -23,6 +31,7 @@ class SseFramingBenchmarkTest {
     int dataFields = "single".equals(lineShape) ? 1 : 2;
     int metadata =
         "metadata".equals(eventShape) ? "event: update\nid: cursor-7\nretry: 2000\n".length() : 0;
+
     assertEquals(
         payloadBytes + dataFields * "data: ".length() + 2 + metadata, benchmark.bytesWritten());
   }
@@ -42,16 +51,5 @@ class SseFramingBenchmarkTest {
 
     assertEquals(first, benchmark.send());
     assertEquals(bytes, benchmark.bytesWritten());
-  }
-
-  private static Stream<Arguments> cases() {
-    return Stream.of(128, 65536)
-        .flatMap(
-            bytes ->
-                Stream.of("single", "multiline")
-                    .flatMap(
-                        lines ->
-                            Stream.of("data", "metadata")
-                                .map(event -> Arguments.of(bytes, lines, event))));
   }
 }

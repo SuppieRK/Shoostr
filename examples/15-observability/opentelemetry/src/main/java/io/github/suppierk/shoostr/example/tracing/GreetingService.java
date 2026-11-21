@@ -27,8 +27,8 @@ final class GreetingService {
   String greet(String name) {
     // The SDK uses the current SERVER span as the parent; creating a span does not activate it.
     var span = tracer.spanBuilder("greeting").setSpanKind(SpanKind.INTERNAL).startSpan();
-    // Activate the child for nested calls; closing this scope restores the SERVER span.
 
+    // Activate the child for nested calls; closing this scope restores the SERVER span.
     try (var ignored = span.makeCurrent()) {
       return formatGreeting(name);
     } finally {
@@ -45,6 +45,7 @@ final class GreetingService {
    */
   private String formatGreeting(String name) {
     Span.current().addEvent("Greeting formatted");
+
     return "Hello, " + name + "!";
   }
 }

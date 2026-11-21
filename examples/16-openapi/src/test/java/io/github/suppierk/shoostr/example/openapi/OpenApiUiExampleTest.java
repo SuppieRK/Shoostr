@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import io.github.suppierk.shoostr.Options;
 import io.github.suppierk.shoostr.testing.TestServer;
 import io.swagger.v3.core.util.Json31;
+import java.io.IOException;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
@@ -14,8 +15,14 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 
 class OpenApiUiExampleTest {
+  private static String credentials() {
+    return "Basic "
+        + Base64.getEncoder().encodeToString("reader:local-only".getBytes(StandardCharsets.UTF_8));
+  }
+
   @Test
   void requiresAuthenticationForThePageEveryAssetAndTheSpecification() throws Exception {
+
     try (var test = TestServer.start(OpenApiUiExample.application())) {
       for (var path :
           List.of(
@@ -25,6 +32,7 @@ class OpenApiUiExampleTest {
               "/docs/swagger-initializer.js",
               "/openapi.json")) {
         var response = test.send(request -> request.path(path));
+
         assertEquals(401, response.statusCode(), path);
         assertTrue(
             response.headers().firstValue("WWW-Authenticate").orElseThrow().startsWith("Basic "));
@@ -34,37 +42,35 @@ class OpenApiUiExampleTest {
 
   @Test
   void servesLocalAssetsAndDisablesImplicitCredentialsForApiCalls() throws Exception {
+
     try (var test = TestServer.start(OpenApiUiExample.application())) {
       var page =
           test.send(
               request -> request.path("/docs/").header("Authorization", credentials()),
               HttpResponse.BodyHandlers.ofString());
+
       assertEquals(200, page.statusCode());
       assertTrue(page.headers().firstValue("Content-Type").orElseThrow().startsWith("text/html"));
       assertTrue(page.body().contains("src=\"swagger-ui-bundle.js\""));
       assertTrue(page.body().contains("href=\"swagger-ui.css\""));
+
       var stylesheet =
           test.send(
               request ->
                   request.path("/docs/swagger-ui.css").header("Authorization", credentials()));
+
       assertEquals(200, stylesheet.statusCode());
       assertTrue(
           stylesheet.headers().firstValue("Content-Type").orElseThrow().startsWith("text/css"));
-      var bundle =
-          test.send(
-              request ->
-                  request
-                      .path("/docs/swagger-ui-bundle.js")
-                      .header("Authorization", credentials()));
+
+      var bundle = sendBundleForServesLocalAssetsAndDisablesImplicitCredentialsForApiCalls(test);
+
       assertEquals(200, bundle.statusCode());
-      assertTrue(bundle.body().length > Options.defaults().maxResponseBytes());
+      assertTrue(bundle.body().length > new Options().getMaxResponseBytes());
+
       var initializer =
-          test.send(
-              request ->
-                  request
-                      .path("/docs/swagger-initializer.js")
-                      .header("Authorization", credentials()),
-              HttpResponse.BodyHandlers.ofString());
+          sendInitializerForServesLocalAssetsAndDisablesImplicitCredentialsForApiCalls(test);
+
       assertEquals(200, initializer.statusCode());
       assertTrue(initializer.body().contains("\"url\":\"/openapi.json\""));
       assertTrue(initializer.body().contains("\"validatorUrl\":null"));
@@ -80,8 +86,26 @@ class OpenApiUiExampleTest {
     }
   }
 
+  private HttpResponse<byte[]>
+      sendBundleForServesLocalAssetsAndDisablesImplicitCredentialsForApiCalls(TestServer test)
+          throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request.path("/docs/swagger-ui-bundle.js").header("Authorization", credentials()));
+  }
+
+  private HttpResponse<String>
+      sendInitializerForServesLocalAssetsAndDisablesImplicitCredentialsForApiCalls(TestServer test)
+          throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request.path("/docs/swagger-initializer.js").header("Authorization", credentials()),
+        HttpResponse.BodyHandlers.ofString());
+  }
+
   @Test
   void protectsTheActualApiAndDescribesItsExplicitAuthorization() throws Exception {
+
     try (var test = TestServer.start(OpenApiUiExample.application())) {
       assertEquals(401, test.send(request -> request.path("/me")).statusCode());
       assertEquals(
@@ -97,17 +121,23 @@ class OpenApiUiExampleTest {
                                       .encodeToString(
                                           "reader:wrong".getBytes(StandardCharsets.UTF_8))))
               .statusCode());
+
       var identity =
           test.send(
               request -> request.path("/me").header("Authorization", credentials()),
               HttpResponse.BodyHandlers.ofString());
+
       assertEquals(200, identity.statusCode());
       assertEquals("reader", identity.body());
+
       var specification =
           test.send(
               request -> request.path("/openapi.json").header("Authorization", credentials()));
+
       assertEquals(200, specification.statusCode());
+
       var document = Json31.mapper().readTree(specification.body());
+
       assertEquals(
           "basic",
           document
@@ -122,10 +152,5 @@ class OpenApiUiExampleTest {
       assertFalse(document.path("paths").has("/docs/{*asset}"));
       assertFalse(document.path("paths").has("/openapi.json"));
     }
-  }
-
-  private static String credentials() {
-    return "Basic "
-        + Base64.getEncoder().encodeToString("reader:local-only".getBytes(StandardCharsets.UTF_8));
   }
 }

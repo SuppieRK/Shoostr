@@ -1,8 +1,8 @@
 plugins { id 'application' }
 
 dependencies {
-	implementation project(':core')
-	testImplementation project(':test')
+	implementation dependencies.project(':core')
+	testImplementation dependencies.project(':test')
 	testImplementation 'org.awaitility:awaitility:4.3.0'
 }
 
