@@ -39,17 +39,16 @@ class TransportConfigurationTest {
       throws Exception {
     var listeners = new AtomicReference<List<ServerConnector>>();
     var app = new Shoostr();
-    app.modifyServer(
-        server -> {
-          var primary = (ServerConnector) server.getConnectors()[0];
-          var extra = new ServerConnector(server, new HttpConnectionFactory());
-          primary.setHost("0.0.0.0");
-          primary.setPort(19001);
-          extra.setHost("0.0.0.0");
-          extra.setPort(19002);
-          server.setConnectors(new Connector[] {extra, primary});
-          listeners.set(List.of(primary, extra));
-        });
+    app.modifyServer(server -> {
+      var primary = (ServerConnector) server.getConnectors()[0];
+      var extra = new ServerConnector(server, new HttpConnectionFactory());
+      primary.setHost("0.0.0.0");
+      primary.setPort(19001);
+      extra.setHost("0.0.0.0");
+      extra.setPort(19002);
+      server.setConnectors(new Connector[] {extra, primary});
+      listeners.set(List.of(primary, extra));
+    });
     app.routes().get("/value", (ignored, response) -> response.text("both listeners"));
 
     // The secondary listener is outside the harness's default request origin.
@@ -84,17 +83,16 @@ class TransportConfigurationTest {
       var app = new Shoostr();
 
       try (Closeable appCleanup = app::close) {
-        app.modifyServer(
-            server -> {
-              var primary = (ServerConnector) server.getConnectors()[0];
-              var extra = new ServerConnector(server, new HttpConnectionFactory());
-              primary.setHost("0.0.0.0");
-              primary.setPort(19001);
-              extra.setHost("0.0.0.0");
-              extra.setPort(19002);
-              server.addConnector(extra);
-              listeners.set(List.of(primary, extra));
-            });
+        app.modifyServer(server -> {
+          var primary = (ServerConnector) server.getConnectors()[0];
+          var extra = new ServerConnector(server, new HttpConnectionFactory());
+          primary.setHost("0.0.0.0");
+          primary.setPort(19001);
+          extra.setHost("0.0.0.0");
+          extra.setPort(19002);
+          server.addConnector(extra);
+          listeners.set(List.of(primary, extra));
+        });
         if (range) {
           assertThrows(
               IllegalArgumentException.class, () -> TestServer.startOnPortRange(app, 19003, 19004));
@@ -136,7 +134,7 @@ class TransportConfigurationTest {
     configuredOptions.setMaxResponseBytes(1024);
     configuredOptions.setStreamBufferBytes(64);
     configuredOptions.setMaxParameters(1000);
-    configuredOptions.setMultipart(MultipartOptions.defaults());
+    configuredOptions.setMultipart(new MultipartOptions());
 
     var app =
         createAppForPreservesApplicationBodyLimitsWhileChangingItsTestAddress(configuredOptions);
@@ -152,13 +150,12 @@ class TransportConfigurationTest {
   private Shoostr createAppForPreservesApplicationBodyLimitsWhileChangingItsTestAddress(
       Options configuredOptions) {
     return new Shoostr(configuredOptions)
-        .modifyServer(
-            nativeServer -> {
-              var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
-              nativeConnector.setHost("0.0.0.0");
-              nativeConnector.setPort(8080);
-              nativeConnector.setIdleTimeout(30000);
-            });
+        .modifyServer(nativeServer -> {
+          var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
+          nativeConnector.setHost("0.0.0.0");
+          nativeConnector.setPort(8080);
+          nativeConnector.setIdleTimeout(30000);
+        });
   }
 
   @Test
@@ -191,11 +188,10 @@ class TransportConfigurationTest {
     configuredOptions.setHttp2(true);
 
     var app = new Shoostr(configuredOptions);
-    app.tls(
-        tls -> {
-          tls.setKeyStore(store);
-          tls.setKeyStorePassword("changeit");
-        });
+    app.tls(tls -> {
+      tls.setKeyStore(store);
+      tls.setKeyStorePassword("changeit");
+    });
     app.routes().get("/value", (ignoredRequest, response) -> response.text("verified TLS"));
 
     try (var test =

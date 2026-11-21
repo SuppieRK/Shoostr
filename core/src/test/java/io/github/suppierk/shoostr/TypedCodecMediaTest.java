@@ -73,9 +73,10 @@ class TypedCodecMediaTest {
                 "/raw",
                 (ignoredTypedRequest, response) -> {
                   switch (operation) {
-                    case "string" -> response.body("text/plain", bytes);
-                    case "mediaType" -> response.body(MediaType.TEXT_PLAIN, bytes);
-                    case "text" -> response.text("plain");
+                    case "string" -> assertSame(response, response.body("text/plain", bytes));
+                    case "mediaType" ->
+                        assertSame(response, response.body(MediaType.TEXT_PLAIN, bytes));
+                    case "text" -> assertSame(response, response.text("plain"));
                     default -> throw new IllegalArgumentException(operation);
                   }
                 });
@@ -122,9 +123,9 @@ class TypedCodecMediaTest {
                 (ignoredTypedRequest, response) -> {
                   response.text("old");
                   if (typedMedia) {
-                    response.body(MediaType.APPLICATION_JSON, "Alice");
+                    assertSame(response, response.body(MediaType.APPLICATION_JSON, "Alice"));
                   } else {
-                    response.body("application/json", "Alice");
+                    assertSame(response, response.body("application/json", "Alice"));
                   }
                 });
 
@@ -270,8 +271,8 @@ class TypedCodecMediaTest {
     for (var method : Response.class.getMethods()) {
       if (method.getReturnType() == Response.class) {
         assertSame(
-            TypedResponse.class,
-            TypedResponse.class
+            Response.Typed.class,
+            Response.Typed.class
                 .getMethod(method.getName(), method.getParameterTypes())
                 .getReturnType(),
             method.toString());
@@ -289,8 +290,8 @@ class TypedCodecMediaTest {
     for (var method : Request.class.getMethods()) {
       if (method.getReturnType() == Request.class) {
         assertSame(
-            TypedRequest.class,
-            TypedRequest.class
+            Request.Typed.class,
+            Request.Typed.class
                 .getMethod(method.getName(), method.getParameterTypes())
                 .getReturnType(),
             method.toString());

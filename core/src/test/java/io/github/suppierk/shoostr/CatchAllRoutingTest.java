@@ -7,6 +7,7 @@ import io.github.suppierk.shoostr.testing.TestServer;
 import java.io.Closeable;
 import java.net.http.HttpResponse;
 import java.time.Duration;
+import java.util.Set;
 import java.util.function.Consumer;
 import org.eclipse.jetty.server.ServerConnector;
 import org.junit.jupiter.api.Test;
@@ -17,13 +18,45 @@ import org.junit.jupiter.params.provider.ValueSource;
 @Timeout(15)
 class CatchAllRoutingTest {
   @Test
+  void capturesNestedCatchAllTailsAndUnionsOnlyRegisteredMethods() throws Exception {
+    var app = new Shoostr();
+
+    try (Closeable appCleanup = app::close) {
+      app.routes()
+          .path(
+              "/api",
+              api ->
+                  api.get(
+                          "/files/{*tail}",
+                          (request, response) ->
+                              response.text(request.pathParam("tail").orElseThrow()))
+                      .post("/files/{*tail}", (request, response) -> response.text("posted")));
+
+      try (var test = TestServer.start(app)) {
+        assertEquals(
+            "a/b",
+            test.send(
+                    request -> request.path("/api/files/a/b"), HttpResponse.BodyHandlers.ofString())
+                .body());
+        var rejected = test.send(request -> request.path("/api/files/a/b").method("DELETE"));
+
+        assertEquals(405, rejected.statusCode());
+        assertEquals(
+            Set.of("GET", "POST"),
+            Set.of(rejected.headers().firstValue("Allow").orElseThrow().split(", ")));
+        assertEquals(404, test.send(request -> request.path("/api/files/")).statusCode());
+      }
+    }
+  }
+
+  @Test
   void capturesOneOrManyPathSegmentsButNotAnEmptyTail() throws Exception {
     var configuredOptions = new Options();
     configuredOptions.setMaxRequestBytes(1024);
     configuredOptions.setMaxResponseBytes(1024);
     configuredOptions.setStreamBufferBytes(128);
     configuredOptions.setMaxParameters(1000);
-    configuredOptions.setMultipart(MultipartOptions.defaults());
+    configuredOptions.setMultipart(new MultipartOptions());
 
     {
       var app = createAppForCapturesOneOrManyPathSegmentsButNotAnEmptyTail(configuredOptions);
@@ -68,13 +101,12 @@ class CatchAllRoutingTest {
   private Shoostr createAppForCapturesOneOrManyPathSegmentsButNotAnEmptyTail(
       Options configuredOptions) {
     return new Shoostr(configuredOptions)
-        .modifyServer(
-            nativeServer -> {
-              var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
-              nativeConnector.setHost("127.0.0.1");
-              nativeConnector.setPort(0);
-              nativeConnector.setIdleTimeout(5000);
-            });
+        .modifyServer(nativeServer -> {
+          var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
+          nativeConnector.setHost("127.0.0.1");
+          nativeConnector.setPort(0);
+          nativeConnector.setIdleTimeout(5000);
+        });
   }
 
   @Test
@@ -85,7 +117,7 @@ class CatchAllRoutingTest {
       configuredOptions.setMaxResponseBytes(1024);
       configuredOptions.setStreamBufferBytes(128);
       configuredOptions.setMaxParameters(1000);
-      configuredOptions.setMultipart(MultipartOptions.defaults());
+      configuredOptions.setMultipart(new MultipartOptions());
 
       {
         var app = createAppForCatchAllPrecedence(configuredOptions);
@@ -160,13 +192,12 @@ class CatchAllRoutingTest {
 
   private Shoostr createAppForCatchAllPrecedence(Options configuredOptions) {
     return new Shoostr(configuredOptions)
-        .modifyServer(
-            nativeServer -> {
-              var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
-              nativeConnector.setHost("127.0.0.1");
-              nativeConnector.setPort(0);
-              nativeConnector.setIdleTimeout(5000);
-            });
+        .modifyServer(nativeServer -> {
+          var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
+          nativeConnector.setHost("127.0.0.1");
+          nativeConnector.setPort(0);
+          nativeConnector.setIdleTimeout(5000);
+        });
   }
 
   private void registerCatchAll(Routes routes) {
@@ -191,7 +222,7 @@ class CatchAllRoutingTest {
     configuredOptions.setMaxResponseBytes(1024);
     configuredOptions.setStreamBufferBytes(128);
     configuredOptions.setMaxParameters(1000);
-    configuredOptions.setMultipart(MultipartOptions.defaults());
+    configuredOptions.setMultipart(new MultipartOptions());
 
     {
       var app =
@@ -255,13 +286,12 @@ class CatchAllRoutingTest {
   private Shoostr createAppForComposesCatchAllWithParentParametersAndPreservesDecodedTailSpelling(
       Options configuredOptions) {
     return new Shoostr(configuredOptions)
-        .modifyServer(
-            nativeServer -> {
-              var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
-              nativeConnector.setHost("127.0.0.1");
-              nativeConnector.setPort(0);
-              nativeConnector.setIdleTimeout(5000);
-            });
+        .modifyServer(nativeServer -> {
+          var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
+          nativeConnector.setHost("127.0.0.1");
+          nativeConnector.setPort(0);
+          nativeConnector.setIdleTimeout(5000);
+        });
   }
 
   @ParameterizedTest
@@ -270,6 +300,7 @@ class CatchAllRoutingTest {
         "/files/{*}",
         "/files/{*bad name}",
         "/files/{*path}/extra",
+        "/files/{*path}/",
         "/files/{*path}/{*rest}",
         "/files/{id}/{*id}",
         "/files/file-{*path}",
@@ -321,7 +352,7 @@ class CatchAllRoutingTest {
     configuredOptions.setMaxResponseBytes(1024);
     configuredOptions.setStreamBufferBytes(128);
     configuredOptions.setMaxParameters(1000);
-    configuredOptions.setMultipart(MultipartOptions.defaults());
+    configuredOptions.setMultipart(new MultipartOptions());
 
     {
       var app = createAppForServerSentEventRouteUsesTheSameCatchAllCapture(configuredOptions);
@@ -356,13 +387,12 @@ class CatchAllRoutingTest {
   private Shoostr createAppForServerSentEventRouteUsesTheSameCatchAllCapture(
       Options configuredOptions) {
     return new Shoostr(configuredOptions)
-        .modifyServer(
-            nativeServer -> {
-              var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
-              nativeConnector.setHost("127.0.0.1");
-              nativeConnector.setPort(0);
-              nativeConnector.setIdleTimeout(5000);
-            });
+        .modifyServer(nativeServer -> {
+          var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
+          nativeConnector.setHost("127.0.0.1");
+          nativeConnector.setPort(0);
+          nativeConnector.setIdleTimeout(5000);
+        });
   }
 
   @Test
@@ -372,7 +402,7 @@ class CatchAllRoutingTest {
     configuredOptions.setMaxResponseBytes(1024);
     configuredOptions.setStreamBufferBytes(128);
     configuredOptions.setMaxParameters(1000);
-    configuredOptions.setMultipart(MultipartOptions.defaults());
+    configuredOptions.setMultipart(new MultipartOptions());
 
     {
       var app =
@@ -420,12 +450,11 @@ class CatchAllRoutingTest {
   private Shoostr createAppForKeepsCaseAndTrailingSeparatorsDistinctWithoutReadingAnUnusedCapture(
       Options configuredOptions) {
     return new Shoostr(configuredOptions)
-        .modifyServer(
-            nativeServer -> {
-              var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
-              nativeConnector.setHost("127.0.0.1");
-              nativeConnector.setPort(0);
-              nativeConnector.setIdleTimeout(5000);
-            });
+        .modifyServer(nativeServer -> {
+          var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
+          nativeConnector.setHost("127.0.0.1");
+          nativeConnector.setPort(0);
+          nativeConnector.setIdleTimeout(5000);
+        });
   }
 }

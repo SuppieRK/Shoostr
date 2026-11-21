@@ -26,6 +26,7 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.EnumSource;
+import org.junit.jupiter.params.provider.ValueSource;
 
 class CsrfTest {
   @ParameterizedTest
@@ -232,12 +233,8 @@ class CsrfTest {
 
           assertEquals(
               403,
-              test.send(
-                      testRequest ->
-                          testRequest
-                              .path("/browser/submit")
-                              .method("POST")
-                              .header("Origin", origin))
+              test.send(testRequest ->
+                      testRequest.path("/browser/submit").method("POST").header("Origin", origin))
                   .statusCode());
           assertEquals(0, executions.get());
 
@@ -385,8 +382,10 @@ class CsrfTest {
         HttpResponse.BodyHandlers.ofString());
   }
 
-  @Test
-  void acceptsOneTokenInFormFieldWhenTheOriginHeaderIsUnavailable() throws Exception {
+  @ParameterizedTest
+  @ValueSource(strings = {"/form", "#section"})
+  void acceptsOneTokenInFormFieldWhenTheOriginHeaderIsUnavailable(String refererSuffix)
+      throws Exception {
     {
       var app = new Shoostr();
 
@@ -415,7 +414,7 @@ class CsrfTest {
 
           var result =
               sendResultForAcceptsOneTokenInFormFieldWhenTheOriginHeaderIsUnavailable(
-                  test, cookie, app, form);
+                  test, cookie, app, form, refererSuffix);
 
           assertEquals(200, result.statusCode());
           assertEquals("accepted", result.body());
@@ -445,14 +444,18 @@ class CsrfTest {
 
   private HttpResponse<String>
       sendResultForAcceptsOneTokenInFormFieldWhenTheOriginHeaderIsUnavailable(
-          TestServer test, String cookie, Shoostr app, HttpResponse<String> form)
+          TestServer test,
+          String cookie,
+          Shoostr app,
+          HttpResponse<String> form,
+          String refererSuffix)
           throws IOException, InterruptedException {
     return test.send(
         request ->
             request
                 .path("/submit")
                 .header("Cookie", cookie)
-                .header("Referer", "http://127.0.0.1:" + app.port() + "/form")
+                .header("Referer", "http://127.0.0.1:" + app.port() + refererSuffix)
                 .header("Content-Type", "application/x-www-form-urlencoded")
                 .method("POST")
                 .body(("_csrf=" + form.body()).getBytes(StandardCharsets.UTF_8)),
@@ -683,14 +686,32 @@ class CsrfTest {
         request ->
             request
                 .path("/submit")
+                .header("Cookie", cookie)
+                .header("X-CSRF-Token", token)
+                .header("Origin", base)
+                .header("Content-Type", "application/x-www-form-urlencoded")
+                .method("POST")
+                .body(("_csrf=" + token).getBytes(StandardCharsets.UTF_8)),
+        request ->
+            request
+                .path("/submit")
+                .header("Cookie", cookie)
+                .header("X-CSRF-Token", token)
+                .header("Referer", "/relative")
+                .method("POST"),
+        request ->
+            request
+                .path("/submit")
                 .header("Cookie", "JSESSIONID=unknown")
                 .header("X-CSRF-Token", token)
                 .header("Origin", base)
                 .method("POST"));
   }
 
-  @Test
-  void rejectsMalformedRefererWithoutCreatingSessionOrRunningBusinessCode() throws Exception {
+  @ParameterizedTest
+  @ValueSource(strings = {"http://[", "http:", "http:/"})
+  void rejectsMalformedRefererWithoutCreatingSessionOrRunningBusinessCode(String referer)
+      throws Exception {
     var executions = new AtomicInteger();
 
     {
@@ -717,7 +738,7 @@ class CsrfTest {
 
           var result =
               test.send(
-                  request -> request.path("/submit").header("Referer", "http://[").method("POST"),
+                  request -> request.path("/submit").header("Referer", referer).method("POST"),
                   HttpResponse.BodyHandlers.ofString());
 
           assertEquals(403, result.statusCode());
@@ -913,6 +934,14 @@ class CsrfTest {
                 .header("X-CSRF-Token", renewed.body())
                 .method("POST"),
         HttpResponse.BodyHandlers.ofString());
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"*", "null", "not-an-origin", "https://client.example/path"})
+  void rejectsInvalidTrustedOriginsWhenBuilding(String origin) {
+    var builder = Csrf.builder().trustedOrigins(origin);
+
+    assertThrows(IllegalArgumentException.class, builder::build);
   }
 
   @Test

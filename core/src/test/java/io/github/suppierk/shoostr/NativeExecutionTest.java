@@ -34,17 +34,15 @@ class NativeExecutionTest {
     configuredOptions.setVirtualThreads(true);
 
     return new Shoostr(configuredOptions)
-        .modifyServer(
-            server ->
-                owned.set(
-                    (ExecutorService)
-                        ((QueuedThreadPool) server.getThreadPool()).getVirtualThreadsExecutor()))
-        .routes(
-            routes ->
-                routes.get(
-                    "/thread",
-                    (request, response) ->
-                        response.text("virtual=" + Thread.currentThread().isVirtual())));
+        .modifyServer(server ->
+            owned.set(
+                (ExecutorService)
+                    ((QueuedThreadPool) server.getThreadPool()).getVirtualThreadsExecutor()))
+        .routes(routes ->
+            routes.get(
+                "/thread",
+                (request, response) ->
+                    response.text("virtual=" + Thread.currentThread().isVirtual())));
   }
 
   @ParameterizedTest
@@ -60,18 +58,16 @@ class NativeExecutionTest {
 
       try (Closeable appCleanup = app::close) {
 
-        app.modifyServer(
-            server -> {
-              var pool = assertInstanceOf(QueuedThreadPool.class, server.getThreadPool());
+        app.modifyServer(server -> {
+          var pool = assertInstanceOf(QueuedThreadPool.class, server.getThreadPool());
 
-              pool.setMaxThreads(64);
-              if (virtual) {
-                owned.set(
-                    assertInstanceOf(ExecutorService.class, pool.getVirtualThreadsExecutor()));
-              } else {
-                assertNull(pool.getVirtualThreadsExecutor());
-              }
-            });
+          pool.setMaxThreads(64);
+          if (virtual) {
+            owned.set(assertInstanceOf(ExecutorService.class, pool.getVirtualThreadsExecutor()));
+          } else {
+            assertNull(pool.getVirtualThreadsExecutor());
+          }
+        });
         app.routes()
             .get(
                 "/thread",
@@ -146,13 +142,12 @@ class NativeExecutionTest {
       boolean clear,
       ExecutorService borrowed) {
     return new Shoostr(configuredOptions)
-        .modifyServer(
-            server -> {
-              var pool = (QueuedThreadPool) server.getThreadPool();
-              nativePool.set(pool);
-              owned.set(assertInstanceOf(ExecutorService.class, pool.getVirtualThreadsExecutor()));
-              pool.setVirtualThreadsExecutor(clear ? null : borrowed);
-            });
+        .modifyServer(server -> {
+          var pool = (QueuedThreadPool) server.getThreadPool();
+          nativePool.set(pool);
+          owned.set(assertInstanceOf(ExecutorService.class, pool.getVirtualThreadsExecutor()));
+          pool.setVirtualThreadsExecutor(clear ? null : borrowed);
+        });
   }
 
   @Test
@@ -166,13 +161,12 @@ class NativeExecutionTest {
       var app = new Shoostr(configuredOptions);
 
       try (Closeable appCleanup2 = app::close) {
-        app.modifyServer(
-            server -> {
-              var pool = (QueuedThreadPool) server.getThreadPool();
-              owned.set(assertInstanceOf(ExecutorService.class, pool.getVirtualThreadsExecutor()));
-              pool.setVirtualThreadsExecutor(borrowed);
-              throw new IllegalStateException("configuration failed");
-            });
+        app.modifyServer(server -> {
+          var pool = (QueuedThreadPool) server.getThreadPool();
+          owned.set(assertInstanceOf(ExecutorService.class, pool.getVirtualThreadsExecutor()));
+          pool.setVirtualThreadsExecutor(borrowed);
+          throw new IllegalStateException("configuration failed");
+        });
 
         var failure = assertThrows(IllegalStateException.class, app::start);
         assertEquals("configuration failed", failure.getMessage());

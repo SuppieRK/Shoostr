@@ -46,6 +46,124 @@ class ApplicationCloseCallbacksTest {
     return assertThrows(AssertionError.class, () -> fail(message));
   }
 
+  @Test
+  void preservesBeforeCloseErrorWhenFinalCleanupFailsOrdinarily() throws Exception {
+    var fatal = new LinkageError("before close failed");
+    var ordinary = new IllegalStateException("final cleanup failed");
+    var order = new ArrayList<String>();
+    var app = new Shoostr();
+
+    try (Closeable appCleanup = app::close) {
+      app.beforeClose(() -> {
+        order.add("before");
+        throw fatal;
+      });
+      app.afterClose(() -> order.add("healthy"));
+      app.afterClose(() -> {
+        order.add("ordinary");
+        throw ordinary;
+      });
+
+      assertSame(fatal, assertThrows(LinkageError.class, app::close));
+      assertArrayEquals(new Throwable[] {ordinary}, fatal.getSuppressed());
+      assertEquals(List.of("before", "ordinary", "healthy"), order);
+      app.close();
+      assertEquals(List.of("before", "ordinary", "healthy"), order);
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void preservesStartupFailureAndSuppressedExtensionCleanup(boolean beforeStart) throws Exception {
+    var primary = new IllegalStateException("startup failed");
+    var cleanup = new IOException("extension cleanup failed");
+    var closes = new AtomicInteger();
+    var finalized = new AtomicInteger();
+    var app = new Shoostr();
+
+    try (Closeable appCleanup = app::close) {
+      app.withExtension(startupFailingProvider(primary, cleanup, closes, beforeStart));
+      app.afterClose(finalized::incrementAndGet);
+      if (!beforeStart) {
+        app.modifyServer(server -> {
+          throw primary;
+        });
+      }
+
+      assertSame(primary, assertThrows(IllegalStateException.class, app::start));
+      assertEquals(1, primary.getSuppressed().length);
+      var aggregate = assertInstanceOf(IOException.class, primary.getSuppressed()[0]);
+      assertSame(cleanup, aggregate.getCause());
+      assertEquals(1, closes.get());
+      assertEquals(1, finalized.get());
+      assertThrows(IllegalStateException.class, app::start);
+      app.close();
+      assertEquals(1, closes.get());
+    }
+  }
+
+  private ApplicationExtension<Object> startupFailingProvider(
+      RuntimeException primary, IOException cleanup, AtomicInteger closes, boolean beforeStart) {
+    return new ApplicationExtension<>() {
+      @Override
+      public Object configure(Lifecycle ignoredLifecycle, Object ignoredInherited) {
+        return new Object();
+      }
+
+      @Override
+      public void beforeStart() {
+        if (beforeStart) {
+          throw primary;
+        }
+      }
+
+      @Override
+      public void close() throws IOException {
+        closes.incrementAndGet();
+        throw cleanup;
+      }
+    };
+  }
+
+  @Test
+  void propagatesSingleFatalExtensionSignalAfterFinalCleanup() throws Exception {
+    var fatal = new LinkageError("signal failed");
+    var closes = new AtomicInteger();
+    var finalized = new AtomicInteger();
+    var app = new Shoostr();
+
+    try (Closeable appCleanup = app::close) {
+      app.withExtension(fatalSignalProvider(fatal, closes));
+      app.afterClose(finalized::incrementAndGet);
+
+      assertSame(fatal, assertThrows(LinkageError.class, app::close));
+      assertEquals(0, fatal.getSuppressed().length);
+      assertEquals(1, closes.get());
+      assertEquals(1, finalized.get());
+      app.close();
+      assertEquals(1, closes.get());
+    }
+  }
+
+  private ApplicationExtension<Object> fatalSignalProvider(Error fatal, AtomicInteger closes) {
+    return new ApplicationExtension<>() {
+      @Override
+      public Object configure(Lifecycle ignoredLifecycle, Object ignoredInherited) {
+        return new Object();
+      }
+
+      @Override
+      public void beforeStop() {
+        throw fatal;
+      }
+
+      @Override
+      public void close() {
+        closes.incrementAndGet();
+      }
+    };
+  }
+
   @ParameterizedTest
   @ValueSource(strings = {BEFORE_CLOSE, AFTER_CLOSE})
   void returnsTheSameApplicationWhenRegisteringCallbacks(String phase) throws Exception {
@@ -181,12 +299,11 @@ class ApplicationCloseCallbacksTest {
       try (Closeable appCleanup7 = app::close) {
         Consumer<Runnable> register =
             BEFORE_CLOSE.equals(phase) ? app::beforeClose : app::afterClose;
-        register.accept(
-            () -> {
-              invoked.incrementAndGet();
+        register.accept(() -> {
+          invoked.incrementAndGet();
 
-              assertDoesNotThrow(app::close);
-            });
+          assertDoesNotThrow(app::close);
+        });
       }
     }
 
@@ -229,14 +346,12 @@ class ApplicationCloseCallbacksTest {
       var app = new Shoostr();
 
       try (Closeable appCleanup9 = app::close) {
-        app.beforeClose(
-            () -> {
-              throw before;
-            });
-        app.afterClose(
-            () -> {
-              throw after;
-            });
+        app.beforeClose(() -> {
+          throw before;
+        });
+        app.afterClose(() -> {
+          throw after;
+        });
 
         var failure = assertThrows(IOException.class, app::close);
         assertSame(before, failure.getCause());
@@ -380,10 +495,9 @@ class ApplicationCloseCallbacksTest {
 
       try (Closeable appCleanup14 = app::close) {
         app.afterClose(invoked::incrementAndGet);
-        app.afterClose(
-            () -> {
-              throw cleanup;
-            });
+        app.afterClose(() -> {
+          throw cleanup;
+        });
 
         var extension = new FailingInstallation(rejected);
 
@@ -431,10 +545,9 @@ class ApplicationCloseCallbacksTest {
       try (Closeable appCleanup16 = app::close) {
         app.beforeClose(() -> invoked.add("stop"));
         app.afterClose(() -> invoked.add("dispose"));
-        app.modifyServer(
-            ignored -> {
-              throw rejected;
-            });
+        app.modifyServer(ignored -> {
+          throw rejected;
+        });
 
         assertSame(rejected, assertThrows(IllegalStateException.class, app::start));
       }
@@ -473,28 +586,25 @@ class ApplicationCloseCallbacksTest {
         var child = new AtomicReference<Routes>();
         root.path("/child", child::set);
         var nested = child.get();
-        app.beforeClose(
-            () -> {
-              assertAll(
-                  () ->
-                      assertThrows(
-                          IllegalStateException.class,
-                          () ->
-                              app.routes(
-                                  routes ->
-                                      routes.get(
-                                          "/late", (ignoredRequest, ignoredResponse) -> {}))),
-                  () ->
-                      assertThrows(
-                          IllegalStateException.class,
-                          () -> root.get("/late", (ignoredRequest, ignoredResponse) -> {})),
-                  () ->
-                      assertThrows(
-                          IllegalStateException.class,
-                          () -> nested.get("/late", (ignoredRequest, ignoredResponse) -> {})));
+        app.beforeClose(() -> {
+          assertAll(
+              () ->
+                  assertThrows(
+                      IllegalStateException.class,
+                      () ->
+                          app.routes(routes ->
+                              routes.get("/late", (ignoredRequest, ignoredResponse) -> {}))),
+              () ->
+                  assertThrows(
+                      IllegalStateException.class,
+                      () -> root.get("/late", (ignoredRequest, ignoredResponse) -> {})),
+              () ->
+                  assertThrows(
+                      IllegalStateException.class,
+                      () -> nested.get("/late", (ignoredRequest, ignoredResponse) -> {})));
 
-              verified.set(true);
-            });
+          verified.set(true);
+        });
       }
     }
 
@@ -511,10 +621,9 @@ class ApplicationCloseCallbacksTest {
 
       try (Closeable appCleanup19 = app::close) {
         app.afterClose(() -> disposed.set(true));
-        app.beforeClose(
-            () -> {
-              throw rejected;
-            });
+        app.beforeClose(() -> {
+          throw rejected;
+        });
 
         var failure = assertThrows(IOException.class, app::close);
         assertSame(rejected, failure.getCause());
@@ -572,21 +681,19 @@ class ApplicationCloseCallbacksTest {
 
       try (Closeable appCleanup22 = app::close;
           var client = HttpClient.newHttpClient()) {
-        app.modifyServer(
-            server -> {
-              nativeServer.set(server);
-              ((ServerConnector) server.getConnectors()[0]).setPort(0);
-              executor.set(
-                  (ExecutorService)
-                      ((QueuedThreadPool) server.getThreadPool()).getVirtualThreadsExecutor());
-            });
+        app.modifyServer(server -> {
+          nativeServer.set(server);
+          ((ServerConnector) server.getConnectors()[0]).setPort(0);
+          executor.set(
+              (ExecutorService)
+                  ((QueuedThreadPool) server.getThreadPool()).getVirtualThreadsExecutor());
+        });
         app.withExtension(
             new ClaimingExtension(() -> {}, () -> {}, () -> extensionClosed.set(true)));
         app.afterClose(() -> finalCallback.set(true));
-        app.beforeClose(
-            () -> {
-              throw rejected;
-            });
+        app.beforeClose(() -> {
+          throw rejected;
+        });
         app.routes(routes -> routes.get("/ready", (request, response) -> response.text("ready")));
         app.start();
 
@@ -644,23 +751,20 @@ class ApplicationCloseCallbacksTest {
                       events.add("cleanup-runtime");
                       throw cleanup;
                     }));
-        app.beforeClose(
-            () -> {
-              events.add("before-runtime");
-              throw early;
-            });
-        app.beforeClose(
-            () -> {
-              events.add("before-error");
-              throw primary;
-            });
+        app.beforeClose(() -> {
+          events.add("before-runtime");
+          throw early;
+        });
+        app.beforeClose(() -> {
+          events.add("before-error");
+          throw primary;
+        });
         app.beforeClose(() -> events.add("before-skipped"));
         app.afterClose(() -> events.add("after-skipped"));
-        app.afterClose(
-            () -> {
-              events.add("after-error");
-              throw finalError;
-            });
+        app.afterClose(() -> {
+          events.add("after-error");
+          throw finalError;
+        });
 
         assertSame(primary, assertThrows(AssertionError.class, app::close));
         assertEquals(
@@ -693,14 +797,12 @@ class ApplicationCloseCallbacksTest {
       var app = new Shoostr();
 
       try (Closeable appCleanup24 = app::close) {
-        app.beforeClose(
-            () -> {
-              throw failure;
-            });
-        app.afterClose(
-            () -> {
-              throw failure;
-            });
+        app.beforeClose(() -> {
+          throw failure;
+        });
+        app.afterClose(() -> {
+          throw failure;
+        });
 
         assertSame(failure, assertThrows(AssertionError.class, app::close));
         assertEquals(0, failure.getSuppressed().length);
@@ -718,10 +820,9 @@ class ApplicationCloseCallbacksTest {
       var app = new Shoostr();
 
       try (Closeable appCleanup25 = app::close) {
-        app.beforeClose(
-            () -> {
-              throw ordinary;
-            });
+        app.beforeClose(() -> {
+          throw ordinary;
+        });
         app.withExtension(
             new ClaimingExtension(
                 () -> {},
@@ -750,10 +851,9 @@ class ApplicationCloseCallbacksTest {
       var app = new Shoostr();
 
       try (Closeable appCleanup26 = app::close) {
-        app.beforeClose(
-            () -> {
-              throw fatal;
-            });
+        app.beforeClose(() -> {
+          throw fatal;
+        });
         app.afterClose(() -> finalized.set(true));
         var extension = new FailingInstallation(installation);
 
@@ -776,14 +876,12 @@ class ApplicationCloseCallbacksTest {
       var app = new Shoostr();
 
       try (Closeable appCleanup27 = app::close) {
-        app.beforeClose(
-            () -> {
-              throw shutdown;
-            });
-        app.afterClose(
-            () -> {
-              throw last;
-            });
+        app.beforeClose(() -> {
+          throw shutdown;
+        });
+        app.afterClose(() -> {
+          throw last;
+        });
         var extension =
             createExtensionForKeepsTheInstallationErrorPrimaryWhenShutdownAndFinalCallbacksAlsoFail(
                 installation);
@@ -821,10 +919,9 @@ class ApplicationCloseCallbacksTest {
       var app = new Shoostr();
 
       try (Closeable appCleanup28 = app::close) {
-        app.beforeClose(
-            () -> {
-              throw fatal;
-            });
+        app.beforeClose(() -> {
+          throw fatal;
+        });
         app.afterClose(() -> events.add("after"));
         var extension = createExtensionForReentrantCleanupError(app, events);
 
@@ -867,13 +964,11 @@ class ApplicationCloseCallbacksTest {
 
       try (Closeable appCleanup29 = app::close) {
         app.modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
-        app.routes(
-            routes ->
-                routes.get("/borrowed", borrowed, (request, response) -> response.text("ok")));
-        app.beforeClose(
-            () -> {
-              throw fatal;
-            });
+        app.routes(routes ->
+            routes.get("/borrowed", borrowed, (request, response) -> response.text("ok")));
+        app.beforeClose(() -> {
+          throw fatal;
+        });
         app.start();
 
         assertSame(fatal, assertThrows(AssertionError.class, app::close));
@@ -903,15 +998,13 @@ class ApplicationCloseCallbacksTest {
       var app = new Shoostr(configuredOptions);
 
       try (Closeable appCleanup30 = app::close) {
-        app.modifyServer(
-            nativeServer -> {
-              server.set(nativeServer);
-              ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0);
-              workers.set(
-                  (ExecutorService)
-                      ((QueuedThreadPool) nativeServer.getThreadPool())
-                          .getVirtualThreadsExecutor());
-            });
+        app.modifyServer(nativeServer -> {
+          server.set(nativeServer);
+          ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0);
+          workers.set(
+              (ExecutorService)
+                  ((QueuedThreadPool) nativeServer.getThreadPool()).getVirtualThreadsExecutor());
+        });
         app.withExtension(
                 new ClaimingExtension(
                     () -> {}, () -> events.add("skipped"), () -> events.add("close-first")))
@@ -931,10 +1024,9 @@ class ApplicationCloseCallbacksTest {
                       throw ordinary;
                     },
                     () -> events.add("close-third")));
-        app.beforeClose(
-            () -> {
-              throw before;
-            });
+        app.beforeClose(() -> {
+          throw before;
+        });
         app.afterClose(() -> finalized.set(true));
         app.start();
 
@@ -975,12 +1067,11 @@ class ApplicationCloseCallbacksTest {
       var app = new Shoostr();
 
       try (Closeable appCleanup31 = app::close) {
-        app.modifyServer(
-            nativeServer -> {
-              server.set(nativeServer);
-              ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0);
-              nativeServer.addEventListener(listener);
-            });
+        app.modifyServer(nativeServer -> {
+          server.set(nativeServer);
+          ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0);
+          nativeServer.addEventListener(listener);
+        });
         app.withExtension(
             new ClaimingExtension(
                 () -> {},
@@ -989,10 +1080,9 @@ class ApplicationCloseCallbacksTest {
                   throw cleanup;
                 }));
         if (beforeFails) {
-          app.beforeClose(
-              () -> {
-                throw before;
-              });
+          app.beforeClose(() -> {
+            throw before;
+          });
         }
 
         app.afterClose(() -> finalized.set(true));

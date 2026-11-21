@@ -68,7 +68,8 @@ public final class PersistUploadExample {
    * @return detached serving options
    */
   private static Options options(Path storage) {
-    var multipart = MultipartOptions.defaults().withTemporaryDirectory(storage);
+    var multipart = new MultipartOptions();
+    multipart.setTemporaryDirectory(storage);
     var configuredOptions = new Options();
     configuredOptions.setMultipart(multipart);
 

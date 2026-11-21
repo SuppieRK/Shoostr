@@ -33,13 +33,12 @@ class McpMediaTypeTest {
 
   private HttpResponse<byte[]> sendResponseForRejectsGetRequestsThatDoNotAcceptEventStreams(
       TestServer test, String accept) throws IOException, InterruptedException {
-    return test.send(
-        request -> {
-          request.path("/mcp");
-          if (!accept.isEmpty()) {
-            request.header("Accept", accept);
-          }
-        });
+    return test.send(request -> {
+      request.path("/mcp");
+      if (!accept.isEmpty()) {
+        request.header("Accept", accept);
+      }
+    });
   }
 
   @ParameterizedTest
@@ -60,23 +59,22 @@ class McpMediaTypeTest {
 
   private HttpResponse<byte[]> sendResponseForAcceptsAbsentOrExplicitJsonRequestRepresentations(
       TestServer test, String contentType) throws IOException, InterruptedException {
-    return test.send(
-        request -> {
-          request
-              .path("/mcp")
-              .method("POST")
-              .header("Accept", "application/json, text/event-stream")
-              .body(
-                  """
-                  {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
-                    "protocolVersion":"2025-11-25","capabilities":{},
-                    "clientInfo":{"name":"media-fixture","version":"1.0"}}}
-                  """
-                      .getBytes(StandardCharsets.UTF_8));
-          if (!contentType.isEmpty()) {
-            request.header("Content-Type", contentType);
-          }
-        });
+    return test.send(request -> {
+      request
+          .path("/mcp")
+          .method("POST")
+          .header("Accept", "application/json, text/event-stream")
+          .body(
+              """
+              {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+                "protocolVersion":"2025-11-25","capabilities":{},
+                "clientInfo":{"name":"media-fixture","version":"1.0"}}}
+              """
+                  .getBytes(StandardCharsets.UTF_8));
+      if (!contentType.isEmpty()) {
+        request.header("Content-Type", contentType);
+      }
+    });
   }
 
   @ParameterizedTest
@@ -104,20 +102,19 @@ class McpMediaTypeTest {
 
   private HttpResponse<byte[]> sendResponseForRejectsAnExplicitNonJsonRequestRepresentation(
       TestServer test, String contentType) throws IOException, InterruptedException {
-    return test.send(
-        request ->
-            request
-                .path("/mcp")
-                .method("POST")
-                .header("Content-Type", contentType)
-                .header("Accept", "application/json, text/event-stream")
-                .body(
-                    """
-                    {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
-                      "protocolVersion":"2025-11-25","capabilities":{},
-                      "clientInfo":{"name":"media-fixture","version":"1.0"}}}
-                    """
-                        .getBytes(StandardCharsets.UTF_8)));
+    return test.send(request ->
+        request
+            .path("/mcp")
+            .method("POST")
+            .header("Content-Type", contentType)
+            .header("Accept", "application/json, text/event-stream")
+            .body(
+                """
+                {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+                  "protocolVersion":"2025-11-25","capabilities":{},
+                  "clientInfo":{"name":"media-fixture","version":"1.0"}}}
+                """
+                    .getBytes(StandardCharsets.UTF_8)));
   }
 
   @ParameterizedTest
@@ -155,22 +152,21 @@ class McpMediaTypeTest {
 
   private HttpResponse<byte[]> sendResponseForRejectsPostsThatDoNotAcceptBothJsonAndEventStreams(
       TestServer test, String accept) throws IOException, InterruptedException {
-    return test.send(
-        request -> {
-          request
-              .path("/mcp")
-              .method("POST")
-              .header("Content-Type", "application/json")
-              .body(
-                  """
-                  {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
-                    "protocolVersion":"2025-11-25","capabilities":{},
-                    "clientInfo":{"name":"media-fixture","version":"1.0"}}}
-                  """
-                      .getBytes(StandardCharsets.UTF_8));
-          if (!accept.isEmpty()) {
-            request.header("Accept", accept);
-          }
-        });
+    return test.send(request -> {
+      request
+          .path("/mcp")
+          .method("POST")
+          .header("Content-Type", "application/json")
+          .body(
+              """
+              {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+                "protocolVersion":"2025-11-25","capabilities":{},
+                "clientInfo":{"name":"media-fixture","version":"1.0"}}}
+              """
+                  .getBytes(StandardCharsets.UTF_8));
+      if (!accept.isEmpty()) {
+        request.header("Accept", accept);
+      }
+    });
   }
 }

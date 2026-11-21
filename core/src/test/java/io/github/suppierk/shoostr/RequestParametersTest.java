@@ -355,14 +355,13 @@ class RequestParametersTest {
 
   private HttpResponse<byte[]> sendResultForPreservesOriginalBodyBytesWhenFormFieldsAreParsedFirst(
       TestServer test, String encoded) throws IOException, InterruptedException {
-    return test.send(
-        request ->
-            request
-                .path("/form")
-                .timeout(Duration.ofSeconds(3))
-                .header("Content-Type", MediaType.APPLICATION_FORM_URLENCODED.value())
-                .method("POST")
-                .body(encoded.getBytes(StandardCharsets.UTF_8)));
+    return test.send(request ->
+        request
+            .path("/form")
+            .timeout(Duration.ofSeconds(3))
+            .header("Content-Type", MediaType.APPLICATION_FORM_URLENCODED.value())
+            .method("POST")
+            .body(encoded.getBytes(StandardCharsets.UTF_8)));
   }
 
   @ParameterizedTest
@@ -458,17 +457,16 @@ class RequestParametersTest {
       configuredOptions.setMaxResponseBytes(1024);
       configuredOptions.setStreamBufferBytes(64);
       configuredOptions.setMaxParameters(1000);
-      configuredOptions.setMultipart(MultipartOptions.defaults());
+      configuredOptions.setMultipart(new MultipartOptions());
 
       app =
           new Shoostr(configuredOptions)
-              .modifyServer(
-                  nativeServer -> {
-                    var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
-                    nativeConnector.setHost("127.0.0.1");
-                    nativeConnector.setPort(0);
-                    nativeConnector.setIdleTimeout(30_000);
-                  });
+              .modifyServer(nativeServer -> {
+                var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
+                nativeConnector.setHost("127.0.0.1");
+                nativeConnector.setPort(0);
+                nativeConnector.setIdleTimeout(30_000);
+              });
       app.exception(
           ContentTooLargeException.class,
           (ignoredFailure, request, response) -> {
@@ -632,17 +630,16 @@ class RequestParametersTest {
       configuredOptions.setMaxResponseBytes(1024);
       configuredOptions.setStreamBufferBytes(64);
       configuredOptions.setMaxParameters(1000);
-      configuredOptions.setMultipart(MultipartOptions.defaults());
+      configuredOptions.setMultipart(new MultipartOptions());
 
       app =
           new Shoostr(configuredOptions)
-              .modifyServer(
-                  nativeServer -> {
-                    var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
-                    nativeConnector.setHost("127.0.0.1");
-                    nativeConnector.setPort(0);
-                    nativeConnector.setIdleTimeout(30_000);
-                  });
+              .modifyServer(nativeServer -> {
+                var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
+                nativeConnector.setHost("127.0.0.1");
+                nativeConnector.setPort(0);
+                nativeConnector.setIdleTimeout(30_000);
+              });
       app.routes()
           .post(
               "/form", (request, response) -> response.text(request.formParam("a").orElseThrow()));

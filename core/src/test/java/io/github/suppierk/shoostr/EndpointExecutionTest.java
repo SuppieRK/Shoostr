@@ -4,6 +4,8 @@ import static org.awaitility.Awaitility.await;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.suppierk.shoostr.testing.TestServer;
@@ -38,8 +40,8 @@ import org.eclipse.jetty.server.ServerConnector;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.MethodSource;
-import org.junit.jupiter.params.provider.ValueSource;
 
 class EndpointExecutionTest {
   private static ExecutorService executor(String type, Set<Thread> owned) {
@@ -81,60 +83,57 @@ class EndpointExecutionTest {
 
   private static Stream<Arguments> callbackPhases() {
     return Stream.of("platform", "virtual", "fork-join", "wrapped-fork-join")
-        .flatMap(
-            executorType ->
-                Stream.of(
-                    Arguments.of(
-                        "matched",
-                        executorType,
-                        (BiConsumer<Lifecycle, Handler>)
-                            (scope, hook) -> scope.onRouteMatched(hook),
-                        (BiConsumer<Shoostr, Handler>) Shoostr::onRouteMatched),
-                    Arguments.of(
-                        "before",
-                        executorType,
-                        (BiConsumer<Lifecycle, Handler>)
-                            (scope, hook) -> scope.beforeRouteHandler(hook),
-                        (BiConsumer<Shoostr, Handler>) Shoostr::beforeRouteHandler),
-                    Arguments.of(
-                        "after",
-                        executorType,
-                        (BiConsumer<Lifecycle, Handler>)
-                            (scope, hook) -> scope.afterRouteHandler(hook),
-                        (BiConsumer<Shoostr, Handler>) Shoostr::afterRouteHandler),
-                    Arguments.of(
-                        "before-flush",
-                        executorType,
-                        (BiConsumer<Lifecycle, Handler>)
-                            (scope, hook) -> scope.beforeResponseFlush(hook),
-                        (BiConsumer<Shoostr, Handler>) Shoostr::beforeResponseFlush),
-                    Arguments.of(
-                        "after-flush",
-                        executorType,
-                        (BiConsumer<Lifecycle, Handler>)
-                            (scope, hook) -> scope.afterResponseFlush(hook),
-                        (BiConsumer<Shoostr, Handler>) Shoostr::afterResponseFlush)));
+        .flatMap(executorType ->
+            Stream.of(
+                Arguments.of(
+                    "matched",
+                    executorType,
+                    (BiConsumer<Lifecycle, Handler>) (scope, hook) -> scope.onRouteMatched(hook),
+                    (BiConsumer<Shoostr, Handler>) Shoostr::onRouteMatched),
+                Arguments.of(
+                    "before",
+                    executorType,
+                    (BiConsumer<Lifecycle, Handler>)
+                        (scope, hook) -> scope.beforeRouteHandler(hook),
+                    (BiConsumer<Shoostr, Handler>) Shoostr::beforeRouteHandler),
+                Arguments.of(
+                    "after",
+                    executorType,
+                    (BiConsumer<Lifecycle, Handler>) (scope, hook) -> scope.afterRouteHandler(hook),
+                    (BiConsumer<Shoostr, Handler>) Shoostr::afterRouteHandler),
+                Arguments.of(
+                    "before-flush",
+                    executorType,
+                    (BiConsumer<Lifecycle, Handler>)
+                        (scope, hook) -> scope.beforeResponseFlush(hook),
+                    (BiConsumer<Shoostr, Handler>) Shoostr::beforeResponseFlush),
+                Arguments.of(
+                    "after-flush",
+                    executorType,
+                    (BiConsumer<Lifecycle, Handler>)
+                        (scope, hook) -> scope.afterResponseFlush(hook),
+                    (BiConsumer<Shoostr, Handler>) Shoostr::afterResponseFlush)));
   }
 
   @ParameterizedTest
-  @ValueSource(booleans = {false, true})
-  void cancelsQueuedSelectedRequestWithoutInvokingEndpoint(boolean wrapped) throws Exception {
+  @CsvSource({"false,false", "false,true", "true,false", "true,true"})
+  void cancelsQueuedSelectedRequestWithoutInvokingEndpoint(
+      boolean wrapped, boolean closeCallbackFails) throws Exception {
     var workers =
         wrapped
             ? new ScheduledThreadPoolExecutor(1)
             : new ThreadPoolExecutor(1, 1, 0, TimeUnit.SECONDS, new LinkedBlockingQueue<>());
     var occupied = new CountDownLatch(1);
     var release = new CountDownLatch(1);
-    workers.execute(
-        () -> {
-          occupied.countDown();
+    workers.execute(() -> {
+      occupied.countDown();
 
-          try {
-            release.await();
-          } catch (InterruptedException ignored) {
-            Thread.currentThread().interrupt();
-          }
-        });
+      try {
+        release.await();
+      } catch (InterruptedException ignored) {
+        Thread.currentThread().interrupt();
+      }
+    });
 
     assertTrue(occupied.await(5, TimeUnit.SECONDS));
 
@@ -150,6 +149,13 @@ class EndpointExecutionTest {
 
       try (Closeable appCleanup = app::close;
           var driver = Executors.newVirtualThreadPerTaskExecutor()) {
+        final var closeFailure = new IllegalStateException("beforeClose failed");
+        if (closeCallbackFails) {
+          app.beforeClose(() -> {
+            throw closeFailure;
+          });
+        }
+
         app.modifyServer(server -> server.setStopTimeout(0));
         app.routes()
             .get(
@@ -160,16 +166,21 @@ class EndpointExecutionTest {
                   response.text("wrong");
                 },
                 extensions ->
-                    extensions.afterRequest(
-                        outcome -> {
-                          completions.incrementAndGet();
-                          completed.complete(outcome);
-                        }));
+                    extensions.afterRequest(outcome -> {
+                      completions.incrementAndGet();
+                      completed.complete(outcome);
+                    }));
 
         try (var test = TestServer.start(app)) {
           final var sent = driver.submit(() -> test.send(request -> request.path("/queued")));
           await().atMost(Duration.ofSeconds(5)).until(() -> workers.getQueue().size() == 1);
-          app.close();
+          if (closeCallbackFails) {
+            var failure = assertThrows(IOException.class, app::close);
+            assertSame(closeFailure, failure.getCause());
+          } else {
+            app.close();
+          }
+
           var outcome = completed.get(5, TimeUnit.SECONDS);
 
           assertEquals("/queued", outcome.routePattern());
@@ -202,16 +213,15 @@ class EndpointExecutionTest {
     var occupied = new CountDownLatch(1);
     var release = new CountDownLatch(1);
     var pool = createPoolForRejectsWrappedCallerRunsWithoutInvokingTheEndpoint();
-    pool.execute(
-        () -> {
-          occupied.countDown();
+    pool.execute(() -> {
+      occupied.countDown();
 
-          try {
-            release.await();
-          } catch (InterruptedException ignoredFailure) {
-            Thread.currentThread().interrupt();
-          }
-        });
+      try {
+        release.await();
+      } catch (InterruptedException ignoredFailure) {
+        Thread.currentThread().interrupt();
+      }
+    });
 
     assertTrue(occupied.await(5, TimeUnit.SECONDS));
 
@@ -350,6 +360,8 @@ class EndpointExecutionTest {
   @Test
   void retainsLocalExceptionRendererWhenPlatformSubmissionIsRejected() throws Exception {
     var invoked = new AtomicBoolean();
+    var beforeFlush = new AtomicInteger();
+    var afterFlush = new CompletableFuture<Integer>();
     var workers = Executors.newFixedThreadPool(1);
 
     try (workers) {
@@ -372,7 +384,15 @@ class EndpointExecutionTest {
                       (ignoredRequest, response) -> {
                         invoked.set(true);
                         response.text("endpoint");
-                      });
+                      },
+                      lifecycle ->
+                          lifecycle
+                              .beforeResponseFlush((request, response) -> {
+                                beforeFlush.incrementAndGet();
+                                assertEquals(503, response.status());
+                              })
+                              .afterResponseFlush(
+                                  (request, response) -> afterFlush.complete(response.status())));
                 });
 
         try (var test = TestServer.start(app)) {
@@ -382,6 +402,8 @@ class EndpointExecutionTest {
 
           assertEquals(503, response.statusCode());
           assertEquals("local", response.body());
+          assertEquals(1, beforeFlush.get());
+          assertEquals(503, afterFlush.get(5, TimeUnit.SECONDS));
           assertFalse(invoked.get());
         }
       }
@@ -488,40 +510,38 @@ class EndpointExecutionTest {
       var app = new Shoostr();
 
       try (Closeable appCleanup8 = app::close) {
-        app.observe(
-            ignoredRequest -> {
-              var admission = Thread.currentThread();
+        app.observe(ignoredRequest -> {
+          var admission = Thread.currentThread();
+          context.set("server-context");
+
+          return new RequestObservation() {
+            @Override
+            public AutoCloseable attach() {
+              var owner = Thread.currentThread();
               context.set("server-context");
+              events.add("worker-attach");
 
-              return new RequestObservation() {
-                @Override
-                public AutoCloseable attach() {
-                  var owner = Thread.currentThread();
-                  context.set("server-context");
-                  events.add("worker-attach");
-
-                  return () -> {
-                    context.remove();
-                    workerRestored.set(Thread.currentThread() == owner && context.get() == null);
-                    events.add("worker-close");
-                  };
-                }
-
-                @Override
-                public void close() {
-                  context.remove();
-                  admissionRestored.set(
-                      Thread.currentThread() == admission && context.get() == null);
-                  events.add("admission-close");
-                }
-
-                @Override
-                public void complete(RequestOutcome outcome) {
-                  events.add("complete");
-                  completed.complete(outcome);
-                }
+              return () -> {
+                context.remove();
+                workerRestored.set(Thread.currentThread() == owner && context.get() == null);
+                events.add("worker-close");
               };
-            });
+            }
+
+            @Override
+            public void close() {
+              context.remove();
+              admissionRestored.set(Thread.currentThread() == admission && context.get() == null);
+              events.add("admission-close");
+            }
+
+            @Override
+            public void complete(RequestOutcome outcome) {
+              events.add("complete");
+              completed.complete(outcome);
+            }
+          };
+        });
         app.routes().get("/scoped", workers, endpoint);
 
         try (var test = TestServer.start(app)) {

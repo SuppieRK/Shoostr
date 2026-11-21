@@ -12,8 +12,24 @@ import org.jspecify.annotations.Nullable;
 
 /** Parses Accept media ranges and selects one caller-provided representation. */
 final class AcceptNegotiation {
-  /** Prevents construction of this stateless parser. */
-  private AcceptNegotiation() {}
+
+  private static final String QUALITY_PARAM_KEY = "q";
+
+  private static final String ZERO = "0";
+  private static final char ZERO_CHAR = ZERO.charAt(0);
+  private static final String THOUSAND_ZEROES = ZERO.repeat(3);
+
+  private static final String ONE = "1";
+  private static final char ONE_CHAR = ONE.charAt(0);
+
+  /**
+   * Prevents construction of this stateless parser.
+   *
+   * @throws UnsupportedOperationException always
+   */
+  private AcceptNegotiation() {
+    throw new UnsupportedOperationException("No instance creation is available");
+  }
 
   /**
    * Selects the highest-quality compatible candidate, retaining caller order for a complete tie.
@@ -26,12 +42,12 @@ final class AcceptNegotiation {
    */
   static @Nullable MediaType select(
       List<String> fields, MediaType first, MediaType @Nullable [] additional) {
-    var ranges = ranges(fields);
-    MediaType selected = first;
-    int selectedQuality = quality(first, ranges);
+    final var ranges = ranges(fields);
+    var selected = first;
+    var selectedQuality = quality(first, ranges);
     if (additional != null) {
-      for (var candidate : additional) {
-        var quality = quality(candidate, ranges);
+      for (final var candidate : additional) {
+        final var quality = quality(candidate, ranges);
         if (quality > selectedQuality) {
           selected = candidate;
           selectedQuality = quality;
@@ -49,9 +65,9 @@ final class AcceptNegotiation {
    * @return parsed ranges in wire order
    */
   private static List<Range> ranges(List<String> fields) {
-    var ranges = new ArrayList<Range>();
-    for (var field : fields) {
-      for (var item : split(field, HttpCharacters.COMMA_SIGN, true)) {
+    final var ranges = new ArrayList<Range>();
+    for (final var field : fields) {
+      for (final var item : split(field, HttpCharacters.COMMA_SIGN, true)) {
         ranges.add(range(item));
       }
     }
@@ -70,21 +86,21 @@ final class AcceptNegotiation {
       throw malformed();
     }
 
-    var pieces = split(item, HttpCharacters.SEMICOLON_SIGN, true);
+    final var pieces = split(item, HttpCharacters.SEMICOLON_SIGN, true);
     if (pieces.isEmpty()) {
       throw malformed();
     }
 
-    var base = pieces.getFirst().trim();
-    int slash = base.indexOf(HttpCharacters.PATH_SEPARATOR);
+    final var base = pieces.getFirst().trim();
+    final var slash = base.indexOf(HttpCharacters.PATH_SEPARATOR);
     if (slash < 1
         || slash != base.lastIndexOf(HttpCharacters.PATH_SEPARATOR)
         || slash == base.length() - 1) {
       throw malformed();
     }
 
-    var type = base.substring(0, slash).toLowerCase(Locale.ROOT);
-    var subtype = base.substring(slash + 1).toLowerCase(Locale.ROOT);
+    final var type = base.substring(0, slash).toLowerCase(Locale.ROOT);
+    final var subtype = base.substring(slash + 1).toLowerCase(Locale.ROOT);
     if (!(HttpCharacters.ASTERISK_STRING.equals(type) || HttpCharacters.isValidHttpToken(type))
         || !(HttpCharacters.ASTERISK_STRING.equals(subtype)
             || HttpCharacters.isValidHttpToken(subtype))
@@ -93,7 +109,7 @@ final class AcceptNegotiation {
       throw malformed();
     }
 
-    var parameters = parameters(pieces);
+    final var parameters = parameters(pieces);
 
     return new Range(type, subtype, parameters.values, parameters.quality);
   }
@@ -106,9 +122,9 @@ final class AcceptNegotiation {
    * @return quality in thousandths, or zero when unacceptable
    */
   private static int quality(MediaType candidate, List<Range> ranges) {
-    var representation = representation(candidate.value());
+    final var representation = representation(candidate.value());
     Range best = null;
-    for (var range : ranges) {
+    for (final var range : ranges) {
       if (range.matches(representation) && (best == null || range.precedes(best))) {
         best = range;
       }
@@ -124,9 +140,9 @@ final class AcceptNegotiation {
    * @return concrete representation
    */
   private static Representation representation(String value) {
-    var pieces = split(value, HttpCharacters.SEMICOLON_SIGN, false);
-    var base = pieces.getFirst().trim();
-    int slash = base.indexOf(HttpCharacters.PATH_SEPARATOR);
+    final var pieces = split(value, HttpCharacters.SEMICOLON_SIGN, false);
+    final var base = pieces.getFirst().trim();
+    final var slash = base.indexOf(HttpCharacters.PATH_SEPARATOR);
 
     return new Representation(
         base.substring(0, slash).trim().toLowerCase(Locale.ROOT),
@@ -141,23 +157,24 @@ final class AcceptNegotiation {
    * @return parsed values and quality
    */
   private static Parameters parameters(List<String> pieces) {
-    var values = new LinkedHashMap<String, String>();
-    int quality = 1000;
-    boolean qualitySeen = false;
-    for (int index = 1; index < pieces.size(); index++) {
+    final var values = new LinkedHashMap<String, String>();
+    var quality = 1000;
+    var qualitySeen = false;
+    for (var index = 1; index < pieces.size(); index++) {
       var parameter = pieces.get(index);
-      int equals = parameter.indexOf(HttpCharacters.EQUALS_SIGN);
+
+      final var equals = parameter.indexOf(HttpCharacters.EQUALS_SIGN);
       if (equals < 1) {
         throw malformed();
       }
 
-      var name = parameter.substring(0, equals).toLowerCase(Locale.ROOT);
-      var value = parameter.substring(equals + 1);
+      final var name = parameter.substring(0, equals).toLowerCase(Locale.ROOT);
+      final var value = parameter.substring(equals + 1);
       if (!HttpCharacters.isValidHttpToken(name) || value.isEmpty()) {
         throw malformed();
       }
 
-      if ("q".equals(name)) {
+      if (QUALITY_PARAM_KEY.equals(name)) {
         quality = qualityParameter(value, qualitySeen);
         qualitySeen = true;
       } else {
@@ -190,25 +207,27 @@ final class AcceptNegotiation {
    * @return integer thousandths
    */
   private static int qualityThousandths(String value) {
-    if ("0".equals(value) || "1".equals(value)) {
-      return "1".equals(value) ? 1000 : 0;
+    if (ZERO.equals(value) || ONE.equals(value)) {
+      return ONE.equals(value) ? 1000 : 0;
     }
 
     if (value.length() < 2 || value.charAt(1) != HttpCharacters.DOT || value.length() > 5) {
       throw malformed();
     }
 
-    var whole = value.charAt(0);
-    var fraction = value.substring(2);
-    if ((whole != '0' && whole != '1') || !fraction.chars().allMatch(Character::isDigit)) {
+    final var whole = value.charAt(0);
+    final var fraction = value.substring(2);
+    if ((whole != ZERO_CHAR && whole != ONE_CHAR)
+        || !fraction.chars().allMatch(Character::isDigit)) {
       throw malformed();
     }
 
-    if (whole == '1' && !fraction.chars().allMatch(character -> character == '0')) {
+    if (whole == ONE_CHAR && !fraction.chars().allMatch(character -> character == ZERO_CHAR)) {
       throw malformed();
     }
 
-    return (whole - '0') * 1000 + Integer.parseInt((fraction + "000").substring(0, 3));
+    return (whole - ZERO_CHAR) * 1000
+        + Integer.parseInt((fraction + THOUSAND_ZEROES).substring(0, 3));
   }
 
   /**
@@ -219,7 +238,7 @@ final class AcceptNegotiation {
    * @param value raw parameter value
    */
   private static void putParameter(Map<String, String> values, String name, String value) {
-    var decoded =
+    final var decoded =
         value.charAt(0) == HttpCharacters.DOUBLE_QUOTE ? quoted(value) : tokenValue(value);
     if (values.putIfAbsent(name, decoded) != null) {
       throw malformed();
@@ -237,12 +256,12 @@ final class AcceptNegotiation {
       throw malformed();
     }
 
-    var decoded = new StringBuilder(value.length() - 2);
-    boolean escaped = false;
-    for (int index = 1; index < value.length() - 1; index++) {
-      char character = value.charAt(index);
-      if ((character < 0x20 && character != HttpCharacters.TAB)
-          || character == 0x7f
+    final var decoded = new StringBuilder(value.length() - 2);
+    var escaped = false;
+    for (var index = 1; index < value.length() - 1; index++) {
+      final var character = value.charAt(index);
+      if ((character < HttpCharacters.SPACE && character != HttpCharacters.TAB)
+          || character == HttpCharacters.DELETE_CONTROL
           || (character == HttpCharacters.DOUBLE_QUOTE && !escaped)) {
         throw malformed();
       }
@@ -287,12 +306,12 @@ final class AcceptNegotiation {
    * @return trimmed components
    */
   private static List<String> split(String value, char separator, boolean ignoreEmpty) {
-    var values = new ArrayList<String>();
-    int start = 0;
-    boolean quoted = false;
-    boolean escaped = false;
-    for (int index = 0; index < value.length(); index++) {
-      char character = value.charAt(index);
+    final var values = new ArrayList<String>();
+    var start = 0;
+    var quoted = false;
+    var escaped = false;
+    for (var index = 0; index < value.length(); index++) {
+      final var character = value.charAt(index);
       if (escaped) {
         escaped = false;
       } else if (character == HttpCharacters.BACKSLASH && quoted) {
@@ -322,7 +341,7 @@ final class AcceptNegotiation {
    * @param ignoreEmpty whether empty components are acceptable
    */
   private static void add(List<String> values, String value, boolean ignoreEmpty) {
-    var trimmed = value.trim();
+    final var trimmed = value.trim();
     if (trimmed.isEmpty()) {
       if (!ignoreEmpty) {
         throw malformed();
@@ -408,7 +427,9 @@ final class AcceptNegotiation {
      * @return whether the values are equivalent
      */
     private static boolean equals(String name, String first, String second) {
-      return "charset".equals(name) ? first.equalsIgnoreCase(second) : first.equals(second);
+      return Request.CHARSET_PARAMETER.equals(name)
+          ? first.equalsIgnoreCase(second)
+          : first.equals(second);
     }
 
     /**
@@ -424,8 +445,8 @@ final class AcceptNegotiation {
         return false;
       }
 
-      for (var parameter : parameters.entrySet()) {
-        var actual = representation.parameters.get(parameter.getKey());
+      for (final var parameter : parameters.entrySet()) {
+        final var actual = representation.parameters.get(parameter.getKey());
         if (actual == null || !equals(parameter.getKey(), actual, parameter.getValue())) {
           return false;
         }

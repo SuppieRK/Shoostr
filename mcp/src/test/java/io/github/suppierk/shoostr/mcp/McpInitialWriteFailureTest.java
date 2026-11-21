@@ -42,18 +42,15 @@ class McpInitialWriteFailureTest {
             security, tool, nativeSendFailed, queued);
     var app = new Shoostr();
     app.routes(routes -> routes.path("/mcp", mcp::routes));
-    app.beforeResponseFlush(
-        (request, ignoredResponse) -> {
-          if (request.header("X-Fail-Initial-Flush").isPresent()
-              && failFirstFlush.getAndSet(false)) {
-            if (!queued.await(5, TimeUnit.SECONDS)) {
-              throw new IllegalStateException(
-                  "Native ping was not queued before the initial flush");
-            }
+    app.beforeResponseFlush((request, ignoredResponse) -> {
+      if (request.header("X-Fail-Initial-Flush").isPresent() && failFirstFlush.getAndSet(false)) {
+        if (!queued.await(5, TimeUnit.SECONDS)) {
+          throw new IllegalStateException("Native ping was not queued before the initial flush");
+        }
 
-            throw new IOException("fixture initial HTTP flush failure");
-          }
-        });
+        throw new IOException("fixture initial HTTP flush failure");
+      }
+    });
 
     try (var test = TestServer.start(app)) {
       var initialized =
@@ -80,18 +77,16 @@ class McpInitialWriteFailureTest {
                 .tools(
                     McpServerFeatures.AsyncToolSpecification.builder()
                         .tool(tool)
-                        .callHandler(
-                            (exchange, ignoredCallToolRequest) ->
-                                Mono.when(
-                                        exchange
-                                            .ping()
-                                            .doOnError(
-                                                ignoredFailure -> nativeSendFailed.countDown()),
-                                        Mono.fromRunnable(queued::countDown))
-                                    .thenReturn(
-                                        McpSchema.CallToolResult.builder()
-                                            .addTextContent("pong")
-                                            .build()))
+                        .callHandler((exchange, ignoredCallToolRequest) ->
+                            Mono.when(
+                                    exchange
+                                        .ping()
+                                        .doOnError(ignoredFailure -> nativeSendFailed.countDown()),
+                                    Mono.fromRunnable(queued::countDown))
+                                .thenReturn(
+                                    McpSchema.CallToolResult.builder()
+                                        .addTextContent("pong")
+                                        .build()))
                         .build())
                 .build());
   }
@@ -99,39 +94,37 @@ class McpInitialWriteFailureTest {
   private HttpResponse<byte[]>
       sendInitializedRequestForFailsQueuedNativeSendsWhenTheInitialHttpFlushFails(TestServer test)
           throws IOException, InterruptedException {
-    return test.send(
-        request ->
-            request
-                .path("/mcp")
-                .method("POST")
-                .header("Content-Type", "application/json")
-                .header("Accept", "application/json, text/event-stream")
-                .body(
-                    """
-                    {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
-                      "protocolVersion":"2025-11-25","capabilities":{},
-                      "clientInfo":{"name":"initial-failure-fixture","version":"1.0"}}}
-                    """
-                        .getBytes(StandardCharsets.UTF_8)));
+    return test.send(request ->
+        request
+            .path("/mcp")
+            .method("POST")
+            .header("Content-Type", "application/json")
+            .header("Accept", "application/json, text/event-stream")
+            .body(
+                """
+                {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+                  "protocolVersion":"2025-11-25","capabilities":{},
+                  "clientInfo":{"name":"initial-failure-fixture","version":"1.0"}}}
+                """
+                    .getBytes(StandardCharsets.UTF_8)));
   }
 
   private HttpResponse<byte[]> sendResponseForFailsQueuedNativeSendsWhenTheInitialHttpFlushFails(
       TestServer test, String sessionId) throws IOException, InterruptedException {
-    return test.send(
-        request ->
-            request
-                .path("/mcp")
-                .method("POST")
-                .header("Content-Type", "application/json")
-                .header("Accept", "application/json, text/event-stream")
-                .header("Mcp-Session-Id", sessionId)
-                .header("MCP-Protocol-Version", "2025-11-25")
-                .header("X-Fail-Initial-Flush", "true")
-                .body(
-                    """
-                    {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{
-                      "name":"ping-client","arguments":{}}}
-                    """
-                        .getBytes(StandardCharsets.UTF_8)));
+    return test.send(request ->
+        request
+            .path("/mcp")
+            .method("POST")
+            .header("Content-Type", "application/json")
+            .header("Accept", "application/json, text/event-stream")
+            .header("Mcp-Session-Id", sessionId)
+            .header("MCP-Protocol-Version", "2025-11-25")
+            .header("X-Fail-Initial-Flush", "true")
+            .body(
+                """
+                {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{
+                  "name":"ping-client","arguments":{}}}
+                """
+                    .getBytes(StandardCharsets.UTF_8)));
   }
 }

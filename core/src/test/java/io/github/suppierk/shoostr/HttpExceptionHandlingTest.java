@@ -35,6 +35,7 @@ import org.eclipse.jetty.server.ServerConnector;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
@@ -177,17 +178,23 @@ class HttpExceptionHandlingTest {
   }
 
   @ParameterizedTest
-  @ValueSource(booleans = {false, true})
-  void omitsReasonPhraseWhenItExceedsTheResponseLimit(boolean httpFailure) throws Exception {
+  @CsvSource({
+    "false, 1, ''",
+    "true, 1, ''",
+    "false, 21, Internal Server Error",
+    "true, 19, Service Unavailable"
+  })
+  void boundsDefaultReasonPhraseByResponseLimit(
+      boolean httpFailure, int maxResponseBytes, String expectedBody) throws Exception {
     var options = new Options();
     options.setMaxRequestBytes(16);
-    options.setMaxResponseBytes(1);
+    options.setMaxResponseBytes(maxResponseBytes);
     options.setStreamBufferBytes(8);
     options.setMaxParameters(1000);
-    options.setMultipart(MultipartOptions.defaults());
+    options.setMultipart(new MultipartOptions());
 
     {
-      var app = createAppForOmitsReasonPhraseWhenItExceedsTheResponseLimit(options);
+      var app = errorApplication(options);
 
       try (Closeable appCleanup3 = app::close) {
         app.routes()
@@ -209,22 +216,23 @@ class HttpExceptionHandlingTest {
                   HttpResponse.BodyHandlers.ofString());
 
           assertEquals(httpFailure ? 503 : 500, result.statusCode());
-          assertTrue(result.body().isEmpty());
-          assertEquals(0, result.headers().firstValueAsLong("Content-Length").orElseThrow());
+          assertEquals(expectedBody, result.body());
+          assertEquals(
+              expectedBody.length(),
+              result.headers().firstValueAsLong("Content-Length").orElseThrow());
         }
       }
     }
   }
 
-  private Shoostr createAppForOmitsReasonPhraseWhenItExceedsTheResponseLimit(Options options) {
+  private Shoostr errorApplication(Options options) {
     return new Shoostr(options)
-        .modifyServer(
-            listenerServer -> {
-              var listener = (ServerConnector) listenerServer.getConnectors()[0];
-              listener.setHost("127.0.0.1");
-              listener.setPort(0);
-              listener.setIdleTimeout(5000);
-            });
+        .modifyServer(listenerServer -> {
+          var listener = (ServerConnector) listenerServer.getConnectors()[0];
+          listener.setHost("127.0.0.1");
+          listener.setPort(0);
+          listener.setIdleTimeout(5000);
+        });
   }
 
   @ParameterizedTest
@@ -306,7 +314,7 @@ class HttpExceptionHandlingTest {
     options.setMaxResponseBytes(1024);
     options.setStreamBufferBytes(8);
     options.setMaxParameters(1000);
-    options.setMultipart(MultipartOptions.defaults());
+    options.setMultipart(new MultipartOptions());
 
     {
       var app = createAppForHandlersCanCatchBodyLimitErrorsThroughThePublicHierarchy(options);
@@ -336,13 +344,12 @@ class HttpExceptionHandlingTest {
   private Shoostr createAppForHandlersCanCatchBodyLimitErrorsThroughThePublicHierarchy(
       Options options) {
     return new Shoostr(options)
-        .modifyServer(
-            listenerServer -> {
-              var listener = (ServerConnector) listenerServer.getConnectors()[0];
-              listener.setHost("127.0.0.1");
-              listener.setPort(0);
-              listener.setIdleTimeout(5000);
-            });
+        .modifyServer(listenerServer -> {
+          var listener = (ServerConnector) listenerServer.getConnectors()[0];
+          listener.setHost("127.0.0.1");
+          listener.setPort(0);
+          listener.setIdleTimeout(5000);
+        });
   }
 
   @Test

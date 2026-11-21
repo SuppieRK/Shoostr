@@ -15,8 +15,11 @@ import java.nio.channels.ServerSocketChannel;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
+import java.util.WeakHashMap;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Consumer;
 import org.eclipse.jetty.server.Server;
 import org.eclipse.jetty.server.ServerConnector;
@@ -25,10 +28,14 @@ import org.jspecify.annotations.Nullable;
 
 /** A real HTTP fixture owning the supplied application's lifetime on loopback. */
 public final class TestServer implements Closeable {
+  private static final Map<Shoostr, ReentrantLock> STARTUP_LOCKS = new WeakHashMap<>();
+  private static final ReentrantLock STARTUP_LOCKS_GUARD = new ReentrantLock();
+
   private final Shoostr app;
   private final URI baseUri;
   private final HttpClient client;
   private final @Nullable ServerSocketChannel reservation;
+  private final ReentrantLock closeLock;
   private volatile boolean closed;
 
   /**
@@ -45,6 +52,7 @@ public final class TestServer implements Closeable {
     this.baseUri = baseUri;
     this.client = client;
     this.reservation = reservation;
+    this.closeLock = new ReentrantLock();
     this.closed = false;
   }
 
@@ -169,21 +177,22 @@ public final class TestServer implements Closeable {
    * @return started fixture
    * @throws Exception if configuration or startup fails
    */
-  // S2445: use Shoostr's own monitor to keep eligibility, registration and start atomic.
-  @SuppressWarnings({"java:S1181", "java:S2445"}) // Cleanup must also run after Error.
+  @SuppressWarnings("java:S1181") // Cleanup must also run after Error.
   private static TestServer startFixture(
       Shoostr app, int minimum, int maximum, Consumer<HttpClient.Builder> configureClient)
       throws Exception {
     Objects.requireNonNull(app);
     Objects.requireNonNull(configureClient);
-    var connectors = new ArrayList<ServerConnector>();
-    var reservation = new AtomicReference<@Nullable ServerSocketChannel>();
-    var bindingBridge = new AtomicReference<@Nullable UncheckedIOException>();
-    synchronized (app) {
+    final var connectors = new ArrayList<ServerConnector>();
+    final var reservation = new AtomicReference<@Nullable ServerSocketChannel>();
+    final var bindingBridge = new AtomicReference<@Nullable UncheckedIOException>();
+    final var lock = startupLock(app);
+    lock.lock();
+
+    try {
       // Registration rejects ineligible apps before this fixture acquires ownership.
-      app.modifyServer(
-          server ->
-              configureListeners(server, minimum, maximum, connectors, reservation, bindingBridge));
+      app.modifyServer(server ->
+          configureListeners(server, minimum, maximum, connectors, reservation, bindingBridge));
 
       HttpClient client = null;
 
@@ -191,8 +200,8 @@ public final class TestServer implements Closeable {
         client = createClient(configureClient);
 
         app.start();
-        var boundPort = app.port();
-        var secure = usesSecureListener(connectors, boundPort);
+        final var boundPort = app.port();
+        final var secure = usesSecureListener(connectors, boundPort);
 
         return new TestServer(
             app,
@@ -200,19 +209,16 @@ public final class TestServer implements Closeable {
             client,
             reservation.get());
       } catch (Exception | Error failure) {
-        try (var ignoredServerSocketChannel = reservation.get();
-            Closeable application = app::close) {
-          if (client != null) {
-            closeClient(client);
-          }
+        try {
+          closeResources(app, client, reservation.get());
         } catch (Exception | Error cleanup) {
           failure.addSuppressed(cleanup);
         }
 
-        var bridge = bindingBridge.get();
+        final var bridge = bindingBridge.get();
         if (bridge != null && bridge.equals(failure)) {
-          var original = Objects.requireNonNull(bridge.getCause());
-          for (var cleanup : failure.getSuppressed()) {
+          final var original = Objects.requireNonNull(bridge.getCause());
+          for (final var cleanup : failure.getSuppressed()) {
             original.addSuppressed(cleanup);
           }
 
@@ -221,6 +227,25 @@ public final class TestServer implements Closeable {
 
         throw failure;
       }
+    } finally {
+      lock.unlock();
+    }
+  }
+
+  /**
+   * Finds the startup lock shared by attempts for the same application. The weak keys let the
+   * registry release applications after their owners do.
+   *
+   * @param app application supplied to the fixture
+   * @return lock for this application's startup attempts
+   */
+  private static ReentrantLock startupLock(Shoostr app) {
+    STARTUP_LOCKS_GUARD.lock();
+
+    try {
+      return STARTUP_LOCKS.computeIfAbsent(app, ignoredApp -> new ReentrantLock());
+    } finally {
+      STARTUP_LOCKS_GUARD.unlock();
     }
   }
 
@@ -246,7 +271,7 @@ public final class TestServer implements Closeable {
       throw new IllegalArgumentException("Fixed/range test ports require exactly one listener");
     }
 
-    for (var connector : server.getConnectors()) {
+    for (final var connector : server.getConnectors()) {
       if (!(connector instanceof ServerConnector listener) || listener.getLocalPort() > 0) {
         throw new IllegalArgumentException("TestServer requires unbound ServerConnector listeners");
       }
@@ -254,7 +279,7 @@ public final class TestServer implements Closeable {
       connectors.add(listener);
     }
 
-    for (var listener : connectors) {
+    for (final var listener : connectors) {
       listener.setHost("127.0.0.1");
       listener.setPort(minimum);
       listener.setInheritChannel(false);
@@ -283,7 +308,7 @@ public final class TestServer implements Closeable {
     try {
       bind(listener, minimum, maximum);
     } catch (IOException failure) {
-      var bridge = new UncheckedIOException("Could not bind requested test ports", failure);
+      final var bridge = new UncheckedIOException("Could not bind requested test ports", failure);
       bindingBridge.set(bridge);
       throw bridge;
     } finally {
@@ -305,7 +330,7 @@ public final class TestServer implements Closeable {
   private static void bind(ServerConnector listener, int minimum, int maximum) throws IOException {
     IOException firstFailure = null;
 
-    for (int port = minimum; port <= maximum; port++) {
+    for (var port = minimum; port <= maximum; port++) {
       listener.setPort(port);
 
       try {
@@ -350,11 +375,10 @@ public final class TestServer implements Closeable {
    */
   private static boolean usesSecureListener(List<ServerConnector> connectors, int boundPort) {
     return connectors.stream()
-        .anyMatch(
-            listener ->
-                listener.getLocalPort() == boundPort
-                    && listener.getConnectionFactories().stream()
-                        .anyMatch(SslConnectionFactory.class::isInstance));
+        .anyMatch(listener ->
+            listener.getLocalPort() == boundPort
+                && listener.getConnectionFactories().stream()
+                    .anyMatch(SslConnectionFactory.class::isInstance));
   }
 
   /**
@@ -364,7 +388,7 @@ public final class TestServer implements Closeable {
    * @return the client immediately retained by the fixture's cleanup owner
    */
   private static HttpClient createClient(Consumer<HttpClient.Builder> configureClient) {
-    var builder = clientProperties();
+    final var builder = clientProperties();
     configureClient.accept(builder);
 
     return builder.build();
@@ -437,7 +461,7 @@ public final class TestServer implements Closeable {
       throws IOException, InterruptedException {
     Objects.requireNonNull(configure);
     Objects.requireNonNull(bodyHandler);
-    var request = new TestRequest(baseUri());
+    final var request = new TestRequest(baseUri());
     HttpRequest outgoing;
 
     try {
@@ -488,16 +512,38 @@ public final class TestServer implements Closeable {
    * @throws IOException if the application cannot stop cleanly
    */
   @Override
-  public synchronized void close() throws IOException {
-    if (closed) {
-      return;
+  public void close() throws IOException {
+    closeLock.lock();
+
+    try {
+      if (closed) {
+        return;
+      }
+
+      closed = true;
+
+      closeResources(app, client, reservation);
+    } finally {
+      closeLock.unlock();
     }
+  }
 
-    closed = true;
-
-    try (var ignoredServerSocketChannel = reservation;
+  /**
+   * Closes resources in ownership order after failed startup or normal fixture use.
+   *
+   * @param app owned application
+   * @param client owned client, or null if creation failed
+   * @param reservation listener reservation, or null if none was acquired
+   * @throws IOException if an owned resource cannot be closed cleanly
+   */
+  private static void closeResources(
+      Shoostr app, @Nullable HttpClient client, @Nullable ServerSocketChannel reservation)
+      throws IOException {
+    try (reservation;
         Closeable application = app::close) {
-      closeClient(client);
+      if (client != null) {
+        closeClient(client);
+      }
     }
   }
 }

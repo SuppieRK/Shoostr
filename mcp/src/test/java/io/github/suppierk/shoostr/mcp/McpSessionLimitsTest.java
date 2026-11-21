@@ -49,25 +49,23 @@ class McpSessionLimitsTest {
     return new McpStreamableServerTransportProvider() {
       @Override
       public void setSessionFactory(McpStreamableServerSession.Factory factory) {
-        transport.setSessionFactory(
-            parameters -> {
-              allocations.incrementAndGet();
-              var initialized = factory.startSession(parameters);
-              if (!first.getAndSet(false)) {
-                return initialized;
-              }
+        transport.setSessionFactory(parameters -> {
+          allocations.incrementAndGet();
+          var initialized = factory.startSession(parameters);
+          if (!first.getAndSet(false)) {
+            return initialized;
+          }
 
-              return new McpStreamableServerSession.McpStreamableServerSessionInit(
-                  initialized.session(),
-                  initialized
-                      .initResult()
-                      .delayUntil(
-                          ignoredInitializeResult -> {
-                            started.countDown();
+          return new McpStreamableServerSession.McpStreamableServerSessionInit(
+              initialized.session(),
+              initialized
+                  .initResult()
+                  .delayUntil(ignoredInitializeResult -> {
+                    started.countDown();
 
-                            return release.asMono();
-                          }));
-            });
+                    return release.asMono();
+                  }));
+        });
       }
 
       @Override
@@ -222,14 +220,12 @@ class McpSessionLimitsTest {
   private HttpResponse<byte[]>
       sendDeletedRequestForBoundsAllOwnersTogetherAndMakesDeletedCapacityAvailable(
           TestServer test, HttpResponse<String> first) throws IOException, InterruptedException {
-    return test.send(
-        request ->
-            request
-                .path("/mcp")
-                .method("DELETE")
-                .header("X-Verified-Owner", "alice:client")
-                .header(
-                    "Mcp-Session-Id", first.headers().firstValue("Mcp-Session-Id").orElseThrow()));
+    return test.send(request ->
+        request
+            .path("/mcp")
+            .method("DELETE")
+            .header("X-Verified-Owner", "alice:client")
+            .header("Mcp-Session-Id", first.headers().firstValue("Mcp-Session-Id").orElseThrow()));
   }
 
   @Test
@@ -262,9 +258,8 @@ class McpSessionLimitsTest {
 
       assertEquals(
           404,
-          test.send(
-                  request ->
-                      request.path("/mcp").method("DELETE").header("Mcp-Session-Id", session))
+          test.send(request ->
+                  request.path("/mcp").method("DELETE").header("Mcp-Session-Id", session))
               .statusCode());
       assertEquals(200, initialize(test, "alice:client").statusCode());
     }
@@ -306,16 +301,15 @@ class McpSessionLimitsTest {
             .pollDelay(Duration.ZERO)
             .pollInterval(Duration.ofMillis(10))
             .atMost(Duration.ofSeconds(3))
-            .until(
-                () -> {
-                  if (Thread.interrupted()) {
-                    throw new InterruptedException("The pending work wait was interrupted");
-                  }
+            .until(() -> {
+              if (Thread.interrupted()) {
+                throw new InterruptedException("The pending work wait was interrupted");
+              }
 
-                  return Duration.ofNanos(System.nanoTime() - startedAt)
-                          .compareTo(Duration.ofMillis(900))
-                      >= 0;
-                });
+              return Duration.ofNanos(System.nanoTime() - startedAt)
+                      .compareTo(Duration.ofMillis(900))
+                  >= 0;
+            });
 
         var ping = sendPingRequestForPreservesPendingNativeWorkBeyondTheIdleInterval(test, session);
 
@@ -341,15 +335,14 @@ class McpSessionLimitsTest {
                 .tools(
                     McpServerFeatures.AsyncToolSpecification.builder()
                         .tool(McpSchema.Tool.builder("wait", Map.of("type", "object")).build())
-                        .callHandler(
-                            (ignored, ignoredCallToolRequest) ->
-                                release
-                                    .asMono()
-                                    .doOnSubscribe(ignoredSubscription -> started.countDown())
-                                    .thenReturn(
-                                        McpSchema.CallToolResult.builder()
-                                            .addTextContent("finished")
-                                            .build()))
+                        .callHandler((ignored, ignoredCallToolRequest) ->
+                            release
+                                .asMono()
+                                .doOnSubscribe(ignoredSubscription -> started.countDown())
+                                .thenReturn(
+                                    McpSchema.CallToolResult.builder()
+                                        .addTextContent("finished")
+                                        .build()))
                         .build())
                 .build());
   }
@@ -373,17 +366,16 @@ class McpSessionLimitsTest {
 
   private HttpResponse<byte[]> sendPingRequestForPreservesPendingNativeWorkBeyondTheIdleInterval(
       TestServer test, String session) throws IOException, InterruptedException {
-    return test.send(
-        request ->
-            request
-                .path("/mcp")
-                .method("POST")
-                .header("Content-Type", "application/json")
-                .header("Accept", "application/json, text/event-stream")
-                .header("Mcp-Session-Id", session)
-                .body(
-                    "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"ping\"}"
-                        .getBytes(StandardCharsets.UTF_8)));
+    return test.send(request ->
+        request
+            .path("/mcp")
+            .method("POST")
+            .header("Content-Type", "application/json")
+            .header("Accept", "application/json, text/event-stream")
+            .header("Mcp-Session-Id", session)
+            .body(
+                "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"ping\"}"
+                    .getBytes(StandardCharsets.UTF_8)));
   }
 
   @ParameterizedTest

@@ -43,12 +43,11 @@ class McpResourceUnsubscribeTest {
             security, alpha);
     var app = new Shoostr();
     app.routes(routes -> routes.path("/mcp", mcp::routes));
-    app.beforeResponseFlush(
-        (request, ignoredResponse) -> {
-          if ("GET".equals(request.method()) && "/mcp".equals(request.path())) {
-            listening.countDown();
-          }
-        });
+    app.beforeResponseFlush((request, ignoredResponse) -> {
+      if ("GET".equals(request.method()) && "/mcp".equals(request.path())) {
+        listening.countDown();
+      }
+    });
 
     try (var test = TestServer.start(app);
         var client =

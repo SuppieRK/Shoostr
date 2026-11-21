@@ -134,7 +134,7 @@ public final class ProblemDetails {
    * @return fresh mutable top-level map
    */
   public Map<String, @Nullable Object> toMap() {
-    var result = new LinkedHashMap<String, @Nullable Object>();
+    final var result = new LinkedHashMap<String, @Nullable Object>();
     if (type != null) {
       result.put("type", type.toASCIIString());
     }
@@ -220,7 +220,7 @@ public final class ProblemDetails {
         enterContainer(map, ancestors);
 
         try {
-          var copy = new LinkedHashMap<@Nullable Object, @Nullable Object>();
+          final var copy = new LinkedHashMap<@Nullable Object, @Nullable Object>();
           map.forEach((key, nested) -> copy.put(key, copyValue(nested, ancestors)));
           if (copy.size() != map.size()) {
             throw new IllegalArgumentException(
@@ -338,7 +338,7 @@ public final class ProblemDetails {
         throw new IllegalArgumentException("Custom member must not replace a standard member");
       }
 
-      var copy = copyValue(value, Collections.newSetFromMap(new IdentityHashMap<>()));
+      final var copy = copyValue(value, Collections.newSetFromMap(new IdentityHashMap<>()));
       extensions.put(name, copy);
       return this;
     }

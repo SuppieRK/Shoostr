@@ -11,8 +11,14 @@ final class OpenApiValidation {
   private static final Set<String> DATA = Set.of("example", "examples", "default", "enum", "const");
   private static final Set<String> DICTIONARIES = dictionaryFields();
 
-  /** Prevents instantiation of stateless document checks. */
-  private OpenApiValidation() {}
+  /**
+   * Prevents instantiation of stateless document checks.
+   *
+   * @throws UnsupportedOperationException always
+   */
+  private OpenApiValidation() {
+    throw new UnsupportedOperationException("Cannot instantiate class");
+  }
 
   /**
    * Checks required scheme properties before publishing explicit component metadata.
@@ -29,7 +35,7 @@ final class OpenApiValidation {
       throw new IllegalArgumentException("OpenAPI security schemes require a type");
     }
 
-    boolean valid = isValidScheme(scheme);
+    final var valid = isValidScheme(scheme);
     if (!valid) {
       throw new IllegalArgumentException("Missing required fields in OpenAPI security scheme");
     }
@@ -65,8 +71,8 @@ final class OpenApiValidation {
       return;
     }
 
-    for (var requirement : operation.getSecurity()) {
-      for (var name : requirement.keySet()) {
+    for (final var requirement : operation.getSecurity()) {
+      for (final var name : requirement.keySet()) {
         if (components.getSecuritySchemes() == null
             || !components.getSecuritySchemes().containsKey(name)) {
           throw new IllegalArgumentException("Unknown OpenAPI security scheme: " + name);
@@ -85,31 +91,30 @@ final class OpenApiValidation {
    * @throws IllegalArgumentException if a local reference has no target
    */
   static void references(JsonNode node, JsonNode root, boolean dictionary) {
-    if (node.isArray()) {
-      for (var item : node) {
+    if (node.isArray() || (dictionary && node.isObject())) {
+      for (final var item : node) {
         references(item, root, false);
       }
     } else if (node.isObject()) {
-      objectReferences(node, root, dictionary);
+      objectReferences(node, root);
     }
   }
 
   /**
-   * Traverses model fields without treating arbitrary dictionary keys or example data as keywords.
+   * Traverses model fields while skipping example data and extensions.
    *
    * @param node generated object subtree
    * @param root document root used to resolve local references
-   * @param dictionary whether its field names are arbitrary map keys
    * @throws IllegalArgumentException if a local reference has no target
    */
-  private static void objectReferences(JsonNode node, JsonNode root, boolean dictionary) {
-    for (var property : node.properties()) {
-      var name = property.getKey();
-      var value = property.getValue();
-      if (!dictionary && "$ref".equals(name) && value.isString()) {
+  private static void objectReferences(JsonNode node, JsonNode root) {
+    for (final var property : node.properties()) {
+      final var name = property.getKey();
+      final var value = property.getValue();
+      if ("$ref".equals(name) && value.isString()) {
         requireReference(value.asString(), root);
-      } else if (dictionary || (!DATA.contains(name) && !name.startsWith("x-"))) {
-        references(value, root, !dictionary && DICTIONARIES.contains(name));
+      } else if (!DATA.contains(name) && !name.startsWith("x-")) {
+        references(value, root, DICTIONARIES.contains(name));
       }
     }
   }

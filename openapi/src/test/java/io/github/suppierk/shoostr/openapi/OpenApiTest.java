@@ -154,26 +154,19 @@ class OpenApiTest {
       var app = new Shoostr();
 
       try (Closeable appCleanup1 = app::close) {
-        app.routes(
-            routes -> {
-              routes.get(
-                  "/first",
-                  shared,
-                  lifecycle ->
-                      lifecycle
-                          .withExtension(docs)
-                          .summary("First operation")
-                          .operationId("first"));
-              routes.get(
-                  "/second",
-                  shared,
-                  lifecycle ->
-                      lifecycle
-                          .withExtension(docs)
-                          .summary("Second operation")
-                          .operationId("second"));
-              routes.get("/openapi.json", docs.handler());
-            });
+        app.routes(routes -> {
+          routes.get(
+              "/first",
+              shared,
+              lifecycle ->
+                  lifecycle.withExtension(docs).summary("First operation").operationId("first"));
+          routes.get(
+              "/second",
+              shared,
+              lifecycle ->
+                  lifecycle.withExtension(docs).summary("Second operation").operationId("second"));
+          routes.get("/openapi.json", docs.handler());
+        });
 
         try (var test = TestServer.start(app)) {
           var paths =
@@ -205,14 +198,13 @@ class OpenApiTest {
       var app = new Shoostr();
 
       try (Closeable appCleanup2 = app::close) {
-        app.routes(
-            routes -> {
-              routes.post(
-                  "/text",
-                  (ignoredRequest, ignoredResponse) -> {},
-                  lifecycle -> lifecycle.withExtension(docs).requestBody(body));
-              routes.get("/openapi.json", docs.handler());
-            });
+        app.routes(routes -> {
+          routes.post(
+              "/text",
+              (ignoredRequest, ignoredResponse) -> {},
+              lifecycle -> lifecycle.withExtension(docs).requestBody(body));
+          routes.get("/openapi.json", docs.handler());
+        });
 
         try (var test = TestServer.start(app)) {
           var content =
@@ -271,11 +263,12 @@ class OpenApiTest {
   }
 
   @Test
-  void treatsReferenceStringsInsideExampleDataAsLiteralPayload() throws Exception {
-    var docs = new OpenApi("API", "1");
+  void treatsReferencesInExamplesAndExtensionsAsLiteralPayload() throws Exception {
     var schema = new JsonSchema();
     schema.setTypes(Set.of("object"));
     schema.setExample(Map.of("$ref", "#/components/schemas/Missing"));
+    schema.addExtension("x-payload", Map.of("$ref", "#/components/schemas/MissingExtension"));
+    var docs = new OpenApi("API", "1");
     docs.schema("Example", schema);
 
     {
@@ -285,23 +278,25 @@ class OpenApiTest {
         app.withExtension(docs).routes().get("/openapi.json", docs.handler());
 
         try (var test = TestServer.start(app)) {
-          var example =
-              createExampleForTreatsReferenceStringsInsideExampleDataAsLiteralPayload(test);
+          var published = readExampleSchema(test);
 
-          assertEquals("#/components/schemas/Missing", example.path("$ref").asString());
+          assertEquals(
+              "#/components/schemas/Missing", published.path("example").path("$ref").asString());
+          assertEquals(
+              "#/components/schemas/MissingExtension",
+              published.path("x-payload").path("$ref").asString());
         }
       }
     }
   }
 
-  private JsonNode createExampleForTreatsReferenceStringsInsideExampleDataAsLiteralPayload(
-      TestServer test) throws JacksonException, IOException, InterruptedException {
+  private JsonNode readExampleSchema(TestServer test)
+      throws JacksonException, IOException, InterruptedException {
     return Json31.mapper()
         .readTree(test.send(request -> request.path("/openapi.json")).body())
         .path("components")
         .path("schemas")
-        .path("Example")
-        .path("example");
+        .path("Example");
   }
 
   @Test
@@ -317,37 +312,47 @@ class OpenApiTest {
       var app = new Shoostr();
 
       try (Closeable appCleanup5 = app::close) {
-        app.routes(
-            routes -> {
-              routes.post(
-                  "/users",
-                  (ignoredRequest, ignoredResponse) -> {},
-                  lifecycle ->
-                      lifecycle
-                          .withExtension(docs)
-                          .operationId("createUser")
-                          .queryParameter(
-                              "dryRun",
-                              "Only validate",
-                              new JsonSchema().types(Set.of("boolean")),
-                              false)
-                          .headerParameter(
-                              "X-Request-ID",
-                              "Correlation",
-                              new JsonSchema().types(Set.of("string")),
-                              false)
-                          .requestBody("User to create", MediaType.APPLICATION_JSON, schema, true));
-              routes.get("/openapi.json", docs.handler());
-            });
+        app.routes(routes -> {
+          routes.post(
+              "/users",
+              (ignoredRequest, ignoredResponse) -> {},
+              lifecycle ->
+                  lifecycle
+                      .withExtension(docs)
+                      .operationId("createUser")
+                      .queryParameter(
+                          "dryRun",
+                          "Only validate",
+                          new JsonSchema().types(Set.of("boolean")),
+                          false)
+                      .headerParameter(
+                          "X-Request-ID",
+                          "Correlation",
+                          new JsonSchema().types(Set.of("string")),
+                          false)
+                      .queryParameter(
+                          "dryRun",
+                          "Validate without saving",
+                          new JsonSchema().types(Set.of("boolean")),
+                          true)
+                      .requestBody("User to create", MediaType.APPLICATION_JSON, schema, true));
+          routes.get("/openapi.json", docs.handler());
+        });
 
         try (var test = TestServer.start(app)) {
           var document =
               Json31.mapper().readTree(test.send(request -> request.path("/openapi.json")).body());
           var operation = document.path("paths").path("/users").path("post");
+          var parameters = operation.path("parameters");
 
           assertEquals("createUser", operation.path("operationId").asString());
-          assertEquals("query", operation.path("parameters").path(0).path("in").asString());
-          assertEquals("header", operation.path("parameters").path(1).path("in").asString());
+          assertEquals(2, parameters.size());
+          assertEquals("header", parameters.path(0).path("in").asString());
+          assertEquals("query", parameters.path(1).path("in").asString());
+          assertEquals("dryRun", parameters.path(1).path("name").asString());
+          assertEquals(
+              "Validate without saving", parameters.path(1).path("description").asString());
+          assertTrue(parameters.path(1).path("required").asBoolean());
           assertEquals(
               "object",
               operation
@@ -375,20 +380,19 @@ class OpenApiTest {
       var app = new Shoostr();
 
       try (Closeable appCleanup6 = app::close) {
-        app.routes(
-            routes -> {
-              routes.path(
-                  "/api",
-                  group -> {
-                    group.get(
-                        "/anonymous",
-                        (ignoredRequest, ignoredResponse) -> {},
-                        lifecycle -> lifecycle.withExtension(docs).anonymous());
-                    group.get("/documented", (ignoredRequest, ignoredResponse) -> {});
-                  },
-                  lifecycle -> lifecycle.withExtension(docs).security("basic"));
-              routes.get("/openapi.json", docs.handler());
-            });
+        app.routes(routes -> {
+          routes.path(
+              "/api",
+              group -> {
+                group.get(
+                    "/anonymous",
+                    (ignoredRequest, ignoredResponse) -> {},
+                    lifecycle -> lifecycle.withExtension(docs).anonymous());
+                group.get("/documented", (ignoredRequest, ignoredResponse) -> {});
+              },
+              lifecycle -> lifecycle.withExtension(docs).security("basic"));
+          routes.get("/openapi.json", docs.handler());
+        });
 
         try (var test = TestServer.start(app)) {
           var document =
@@ -421,17 +425,16 @@ class OpenApiTest {
       var app = new Shoostr();
 
       try (Closeable appCleanup7 = app::close) {
-        app.routes(
-            routes -> {
-              routes.get(
-                  "/users/{id:[0-9]+}",
-                  (ignoredRequest, ignoredResponse) -> {},
-                  lifecycle -> lifecycle.withExtension(docs).pathParameter("id", "ID"));
-              routes.get(
-                  "/users/{id}",
-                  (ignoredRequest, ignoredResponse) -> {},
-                  lifecycle -> lifecycle.withExtension(docs).pathParameter("id", "ID"));
-            });
+        app.routes(routes -> {
+          routes.get(
+              "/users/{id:[0-9]+}",
+              (ignoredRequest, ignoredResponse) -> {},
+              lifecycle -> lifecycle.withExtension(docs).pathParameter("id", "ID"));
+          routes.get(
+              "/users/{id}",
+              (ignoredRequest, ignoredResponse) -> {},
+              lifecycle -> lifecycle.withExtension(docs).pathParameter("id", "ID"));
+        });
 
         var failure = assertThrows(IllegalArgumentException.class, app::start);
         assertEquals("Conflicting OpenAPI operation: GET /users/{id}", failure.getMessage());
@@ -450,15 +453,13 @@ class OpenApiTest {
                   nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
 
       try (Closeable appCleanup8 = app::close) {
-        app.routes(
-            routes -> {
-              routes.get(
-                  "/users/{id:[0-9]{1,32}}",
-                  (ignoredRequest, ignoredResponse) -> {},
-                  lifecycle ->
-                      lifecycle.withExtension(docs).pathParameter("id", "User identifier"));
-              routes.get("/openapi.json", docs.handler());
-            });
+        app.routes(routes -> {
+          routes.get(
+              "/users/{id:[0-9]{1,32}}",
+              (ignoredRequest, ignoredResponse) -> {},
+              lifecycle -> lifecycle.withExtension(docs).pathParameter("id", "User identifier"));
+          routes.get("/openapi.json", docs.handler());
+        });
 
         try (var test = TestServer.start(app)) {
           var paths =
@@ -488,14 +489,13 @@ class OpenApiTest {
       var app = new Shoostr();
 
       try (Closeable appCleanup9 = app::close) {
-        app.routes(
-            routes -> {
-              routes.get(
-                  "/users/{id:[0-9]+}",
-                  (ignoredRequest, ignoredResponse) -> {},
-                  lifecycle -> lifecycle.withExtension(docs).parameter(parameter));
-              routes.get("/openapi.json", docs.handler());
-            });
+        app.routes(routes -> {
+          routes.get(
+              "/users/{id:[0-9]+}",
+              (ignoredRequest, ignoredResponse) -> {},
+              lifecycle -> lifecycle.withExtension(docs).parameter(parameter));
+          routes.get("/openapi.json", docs.handler());
+        });
 
         try (var test = TestServer.start(app)) {
           var intersection = createIntersectionForConstrainedSchema(test);
@@ -539,17 +539,16 @@ class OpenApiTest {
       var app = new Shoostr();
 
       try (Closeable appCleanup10 = app::close) {
-        app.routes(
-            routes -> {
-              routes.get(
-                  "/users",
-                  (ignoredRequest, ignoredResponse) -> {},
-                  lifecycle ->
-                      lifecycle
-                          .withExtension(docs)
-                          .response(200, "Users", MediaType.APPLICATION_JSON, user));
-              routes.get("/openapi.json", docs.handler());
-            });
+        app.routes(routes -> {
+          routes.get(
+              "/users",
+              (ignoredRequest, ignoredResponse) -> {},
+              lifecycle ->
+                  lifecycle
+                      .withExtension(docs)
+                      .response(200, "Users", MediaType.APPLICATION_JSON, user));
+          routes.get("/openapi.json", docs.handler());
+        });
 
         try (var test = TestServer.start(app)) {
           var original = test.send(request -> request.path("/openapi.json")).body();
@@ -599,36 +598,36 @@ class OpenApiTest {
       var app = new Shoostr();
 
       try (Closeable appCleanup11 = app::close) {
-        app.routes(
-            routes -> {
-              routes.path(
-                  "/api",
-                  group -> {
-                    group.get(
-                        "/first",
-                        (ignoredRequest, ignoredResponse) -> {},
-                        lifecycle ->
-                            lifecycle
-                                .withExtension(docs)
-                                .summary("First")
-                                .tag("first")
-                                .response(200, "Child response", MediaType.TEXT_PLAIN));
-                    group.get("/second", (ignoredRequest, ignoredResponse) -> {});
-                    group.get(
-                        "/hidden",
-                        (ignoredRequest, ignoredResponse) -> {},
-                        lifecycle -> lifecycle.withExtension(docs).hidden());
-                  },
-                  lifecycle ->
-                      lifecycle
-                          .withExtension(docs)
-                          .summary("Group")
-                          .description("Shared description")
-                          .tag("group")
-                          .response(200, "Group response", MediaType.TEXT_PLAIN)
-                          .response(404, "Not found"));
-              routes.get("/openapi.json", docs.handler());
-            });
+        app.routes(routes -> {
+          routes.path(
+              "/api",
+              group -> {
+                group.get(
+                    "/first",
+                    (ignoredRequest, ignoredResponse) -> {},
+                    lifecycle ->
+                        lifecycle
+                            .withExtension(docs)
+                            .summary("First")
+                            .tag("first")
+                            .tag("group")
+                            .response(200, "Child response", MediaType.TEXT_PLAIN));
+                group.get("/second", (ignoredRequest, ignoredResponse) -> {});
+                group.get(
+                    "/hidden",
+                    (ignoredRequest, ignoredResponse) -> {},
+                    lifecycle -> lifecycle.withExtension(docs).hidden());
+              },
+              lifecycle ->
+                  lifecycle
+                      .withExtension(docs)
+                      .summary("Group")
+                      .description("Shared description")
+                      .tag("group")
+                      .response(200, "Group response", MediaType.TEXT_PLAIN)
+                      .response(404, "Not found"));
+          routes.get("/openapi.json", docs.handler());
+        });
 
         try (var test = TestServer.start(app)) {
           var paths =
@@ -640,6 +639,7 @@ class OpenApiTest {
 
           assertEquals("First", first.path("summary").asString());
           assertEquals("Shared description", first.path("description").asString());
+          assertEquals(2, first.path("tags").size());
           assertEquals("group", first.path("tags").path(0).asString());
           assertEquals("first", first.path("tags").path(1).asString());
           assertEquals(
@@ -665,19 +665,18 @@ class OpenApiTest {
       var app = new Shoostr();
 
       try (Closeable appCleanup12 = app::close) {
-        app.routes(
-            routes -> {
-              routes.path(
-                  "/api",
-                  group -> {
-                    group.get(
-                        "/users",
-                        (ignoredRequest, response) -> response.text("users"),
-                        lifecycle -> lifecycle.withExtension(docs).summary("List users"));
-                    group.get("/internal", (ignoredRequest, ignoredResponse) -> {});
-                  });
-              routes.get("/openapi.json", docs.handler());
-            });
+        app.routes(routes -> {
+          routes.path(
+              "/api",
+              group -> {
+                group.get(
+                    "/users",
+                    (ignoredRequest, response) -> response.text("users"),
+                    lifecycle -> lifecycle.withExtension(docs).summary("List users"));
+                group.get("/internal", (ignoredRequest, ignoredResponse) -> {});
+              });
+          routes.get("/openapi.json", docs.handler());
+        });
 
         try (var test = TestServer.start(app)) {
           var result = test.send(request -> request.path("/openapi.json"));

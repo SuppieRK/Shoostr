@@ -1,5 +1,8 @@
 package io.github.suppierk.shoostr;
 
+import static io.github.suppierk.shoostr.Locks.getUnderLock;
+import static io.github.suppierk.shoostr.Locks.runUnderLock;
+
 import io.github.suppierk.shoostr.http.HttpCharacters;
 import io.github.suppierk.shoostr.http.HttpHeaders;
 import io.github.suppierk.shoostr.http.HttpMethods;
@@ -11,13 +14,14 @@ import java.io.Serializable;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
-import java.util.Arrays;
 import java.util.Base64;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.locks.ReentrantLock;
 import org.eclipse.jetty.http.HttpField;
 import org.eclipse.jetty.server.Session;
 import org.jspecify.annotations.Nullable;
@@ -37,27 +41,17 @@ import org.jspecify.annotations.Nullable;
 public final class Csrf implements ApplicationExtension<Csrf>, RouteExtension<Csrf> {
   private static final String ATTRIBUTE = Csrf.class.getName() + ".token";
   private static final String HEADER = "X-CSRF-Token";
+  private static final String FORM_PARAMS = "_csrf";
 
   private final SecureRandom random;
   private final @Nullable Lifecycle lifecycle;
-  private Set<String> trustedOrigins = Set.of();
+  private Set<String> trustedOrigins;
 
   /** Creates a same-origin CSRF policy for a browser's cookie-authenticated routes. */
   public Csrf() {
     this.random = new SecureRandom();
     this.lifecycle = null;
-  }
-
-  /**
-   * Creates a CSRF policy allowing the request target origin and explicitly trusted browser
-   * origins. Cross-origin permission also requires a separate CORS policy when used by scripts.
-   *
-   * @param trustedOrigins additional exact serialized HTTP(S) origins
-   * @throws IllegalArgumentException if an origin is malformed or opaque
-   */
-  public Csrf(Set<String> trustedOrigins) {
-    this();
-    setTrustedOrigins(Objects.requireNonNull(trustedOrigins));
+    this.trustedOrigins = Set.of();
   }
 
   /**
@@ -88,7 +82,7 @@ public final class Csrf implements ApplicationExtension<Csrf>, RouteExtension<Cs
    * @return whether the method should have no requested state change
    */
   private static boolean safe(String method) {
-    var known = HttpMethods.httpMethod(method).orElse(null);
+    final var known = HttpMethods.httpMethod(method).orElse(null);
 
     return known == HttpMethods.GET
         || known == HttpMethods.HEAD
@@ -105,16 +99,16 @@ public final class Csrf implements ApplicationExtension<Csrf>, RouteExtension<Cs
    * @throws ForbiddenException if header and form token channels conflict
    */
   private static List<String> presented(Request request) throws IOException {
-    var headers = request.headers(HEADER);
-    var type =
+    final var headers = request.headers(HEADER);
+    final var type =
         HttpField.getValueParameters(
             request.header(HttpHeaders.CONTENT_TYPE.value()).orElse(null), new HashMap<>());
     if (!MediaType.APPLICATION_FORM_URLENCODED.value().equalsIgnoreCase(type)
-        && !"multipart/form-data".equalsIgnoreCase(type)) {
+        && !MediaType.MULTIPART_FORM_DATA.value().equalsIgnoreCase(type)) {
       return headers;
     }
 
-    var fields = request.formParams("_csrf");
+    final var fields = request.formParams(FORM_PARAMS);
     if (!headers.isEmpty() && !fields.isEmpty()) {
       throw new ForbiddenException();
     }
@@ -144,8 +138,8 @@ public final class Csrf implements ApplicationExtension<Csrf>, RouteExtension<Cs
       lifecycle.requireMutable();
     }
 
-    var resolved = value == null ? Set.<String>of() : Set.copyOf(value);
-    for (var origin : resolved) {
+    final var resolved = value == null ? Set.<String>of() : Set.copyOf(value);
+    for (final var origin : resolved) {
       if ("null".equals(origin) || HttpCharacters.ASTERISK_STRING.equals(origin)) {
         throw new IllegalArgumentException("CSRF requires explicit HTTP(S) origins");
       }
@@ -180,7 +174,7 @@ public final class Csrf implements ApplicationExtension<Csrf>, RouteExtension<Cs
   @Override
   public Csrf configure(Lifecycle endpoint, @Nullable Csrf inherited) {
     endpoint.csrf(this);
-    var selected = new Csrf(inherited == null ? this : inherited, endpoint);
+    final var selected = new Csrf(inherited == null ? this : inherited, endpoint);
     endpoint.beforeRouteHandler(selected::verify);
 
     return selected;
@@ -195,21 +189,29 @@ public final class Csrf implements ApplicationExtension<Csrf>, RouteExtension<Cs
    * @throws IllegalStateException if sessions are not enabled
    */
   public String token(Request request) {
-    var session = Objects.requireNonNull(request).getOrCreateSession();
+    final var session = Objects.requireNonNull(request).getOrCreateSession();
 
-    synchronized (session) {
-      var current = session.getAttribute(ATTRIBUTE);
+    final var sessionLock = SessionLock.acquire(session);
+    Throwable primaryFailure = null;
+
+    try {
+      final var current = session.getAttribute(ATTRIBUTE);
       if (current instanceof Token(String sessionId, String value)
           && session.getId().equals(sessionId)) {
         return value;
       }
 
-      byte[] bytes = new byte[32];
+      final var bytes = new byte[32];
       random.nextBytes(bytes);
-      var value = Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
+      final var value = Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
       session.setAttribute(ATTRIBUTE, new Token(session.getId(), value));
 
       return value;
+    } catch (Exception failure) {
+      primaryFailure = failure;
+      throw failure;
+    } finally {
+      sessionLock.unlock(primaryFailure);
     }
   }
 
@@ -241,8 +243,11 @@ public final class Csrf implements ApplicationExtension<Csrf>, RouteExtension<Cs
       throw new ForbiddenException();
     }
 
-    synchronized (session) {
-      var stored = session.getAttribute(ATTRIBUTE);
+    final var sessionLock = SessionLock.acquire(session);
+    Throwable primaryFailure = null;
+
+    try {
+      final var stored = session.getAttribute(ATTRIBUTE);
       if (!(stored instanceof Token(String sessionId, String value))
           || !session.getId().equals(sessionId)
           || !MessageDigest.isEqual(
@@ -250,6 +255,11 @@ public final class Csrf implements ApplicationExtension<Csrf>, RouteExtension<Cs
               presented.getFirst().getBytes(StandardCharsets.US_ASCII))) {
         throw new ForbiddenException();
       }
+    } catch (Exception failure) {
+      primaryFailure = failure;
+      throw failure;
+    } finally {
+      sessionLock.unlock(primaryFailure);
     }
   }
 
@@ -260,7 +270,7 @@ public final class Csrf implements ApplicationExtension<Csrf>, RouteExtension<Cs
    * @return whether its source is exactly the effective request origin
    */
   private boolean sameOrigin(Request request) {
-    var origins = request.headers(HttpHeaders.ORIGIN.value());
+    final var origins = request.headers(HttpHeaders.ORIGIN.value());
     if (origins.size() > 1) {
       return false;
     }
@@ -268,12 +278,12 @@ public final class Csrf implements ApplicationExtension<Csrf>, RouteExtension<Cs
     try {
       String origin;
       if (origins.isEmpty()) {
-        var referers = request.headers(HttpHeaders.REFERER.value());
-        if (referers.size() != 1) {
+        final var referrers = request.headers(HttpHeaders.REFERER.value());
+        if (referrers.size() != 1) {
           return false;
         }
 
-        var referer = Origins.effectiveOrigin(referers.getFirst());
+        final var referer = Origins.effectiveOrigin(referrers.getFirst());
         if (referer == null) {
           return false;
         }
@@ -292,6 +302,113 @@ public final class Csrf implements ApplicationExtension<Csrf>, RouteExtension<Cs
       return trustedOrigins.contains(origin) || Origins.sameOrigin(origin, request.effectiveUrl());
     } catch (IllegalArgumentException ignored) {
       return false;
+    }
+  }
+
+  /** Session-owned coordination with a registry containing only active holders and waiters. */
+  private static final class SessionLock {
+    private static final IdentityHashMap<Session, SessionLock> SESSION_LOCKS =
+        new IdentityHashMap<>();
+    private static final ReentrantLock SESSION_LOCKS_GUARD = new ReentrantLock();
+
+    private final Session session;
+    private final ReentrantLock lock;
+    private int reservations;
+
+    /**
+     * Creates an entry whose reservations are recorded under the registry guard.
+     *
+     * @param session exact session object
+     */
+    private SessionLock(Session session) {
+      this.session = Objects.requireNonNull(session);
+      this.lock = new ReentrantLock();
+      this.reservations = 0;
+    }
+
+    /**
+     * Acquires one session's CSRF lock without extending native locking into listeners.
+     *
+     * @param session exact session object
+     * @return acquired lock, which the caller must unlock in a finally block
+     */
+    private static SessionLock acquire(Session session) {
+      final var sessionLock = reserve(session);
+
+      try {
+        sessionLock.lock.lock();
+        return sessionLock;
+      } catch (Exception failure) {
+        try {
+          sessionLock.releaseReservation();
+        } catch (Exception cleanupFailure) {
+          suppressCleanupFailure(failure, cleanupFailure);
+        }
+
+        throw failure;
+      }
+    }
+
+    /**
+     * Counts each holder and waiter before it can acquire the shared session lock.
+     *
+     * @param session exact session object
+     * @return reserved session lock
+     */
+    private static SessionLock reserve(Session session) {
+      return Objects.requireNonNull(
+          getUnderLock(
+              SESSION_LOCKS_GUARD,
+              () -> {
+                final var sessionLock = SESSION_LOCKS.computeIfAbsent(session, SessionLock::new);
+                sessionLock.reservations++;
+
+                return sessionLock;
+              }));
+    }
+
+    /**
+     * Unlocks before retiring this reservation while preserving the operation's original failure.
+     *
+     * @param primaryFailure original failure, or null when the operation succeeded
+     */
+    private void unlock(@Nullable Throwable primaryFailure) {
+      try {
+        lock.unlock();
+        releaseReservation();
+      } catch (Exception cleanupFailure) {
+        if (primaryFailure == null) {
+          throw cleanupFailure;
+        }
+
+        suppressCleanupFailure(primaryFailure, cleanupFailure);
+      }
+    }
+
+    /** Retires this entry only when no acquired scope or waiter still reserves it. */
+    private void releaseReservation() {
+      runUnderLock(
+          SESSION_LOCKS_GUARD,
+          () -> {
+            reservations--;
+            if (reservations == 0) {
+              SESSION_LOCKS.remove(session);
+            }
+          });
+    }
+
+    /**
+     * Attaches cleanup failure without replacing the original failure or suppressing it onto
+     * itself.
+     *
+     * @param primaryFailure original failure
+     * @param cleanupFailure cleanup failure to attach
+     */
+    @SuppressWarnings("ReferenceEquality") // Throwable self-suppression uses reference identity.
+    private static void suppressCleanupFailure(Throwable primaryFailure, Throwable cleanupFailure) {
+      if (cleanupFailure != primaryFailure) {
+        primaryFailure.addSuppressed(cleanupFailure);
+      }
     }
   }
 
@@ -330,10 +447,12 @@ public final class Csrf implements ApplicationExtension<Csrf>, RouteExtension<Cs
      * @return this builder
      */
     public Builder trustedOrigins(String first, String @Nullable ... additional) {
-      var origins = new HashSet<String>();
+      final var origins = new HashSet<String>();
       origins.add(Objects.requireNonNull(first));
       if (additional != null) {
-        origins.addAll(Arrays.asList(additional));
+        for (final var additionalOrigin : additional) {
+          origins.add(Objects.requireNonNull(additionalOrigin));
+        }
       }
 
       return trustedOrigins(origins);
@@ -356,7 +475,9 @@ public final class Csrf implements ApplicationExtension<Csrf>, RouteExtension<Cs
      * @return independent mutable origin policy and token generator
      */
     public Csrf build() {
-      return new Csrf(trustedOrigins);
+      final var csrf = new Csrf();
+      csrf.setTrustedOrigins(trustedOrigins);
+      return csrf;
     }
   }
 }

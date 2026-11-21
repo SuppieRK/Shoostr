@@ -24,8 +24,8 @@ class TypedCodecLifetimeTest {
   @Test
   void rejectsCompletedTypedAccessOnOriginalHandlerThreadBeforeCallingCodec() throws Exception {
     var codec = new CountingCodec();
-    var savedRequest = new AtomicReference<TypedRequest>();
-    var savedResponse = new AtomicReference<TypedResponse>();
+    var savedRequest = new AtomicReference<Request.Typed>();
+    var savedResponse = new AtomicReference<Response.Typed>();
     var handlerThread = new AtomicReference<Thread>();
 
     try (var executor = Executors.newSingleThreadExecutor()) {
@@ -51,18 +51,23 @@ class TypedCodecLifetimeTest {
           var retainedResponse = savedResponse.get();
           var originalThread = handlerThread.get();
           executor
-              .submit(
-                  () -> {
-                    assertSame(originalThread, Thread.currentThread());
-                    assertThrows(
-                        IllegalStateException.class, () -> retainedRequest.body(String.class));
-                    assertThrows(
-                        IllegalStateException.class,
-                        () -> retainedResponse.body("application/json", "late"));
-                    assertThrows(
-                        IllegalStateException.class,
-                        () -> retainedResponse.body(MediaType.APPLICATION_JSON, "late"));
-                  })
+              .submit(() -> {
+                assertSame(originalThread, Thread.currentThread());
+                assertThrows(IllegalStateException.class, retainedResponse::status);
+                assertThrows(
+                    IllegalStateException.class, () -> retainedResponse.header("Content-Type"));
+                assertThrows(
+                    IllegalStateException.class, () -> retainedResponse.headers("Content-Type"));
+                assertThrows(IllegalStateException.class, retainedResponse::headerMap);
+                assertThrows(IllegalStateException.class, retainedResponse::isCommitted);
+                assertThrows(IllegalStateException.class, () -> retainedRequest.body(String.class));
+                assertThrows(
+                    IllegalStateException.class,
+                    () -> retainedResponse.body("application/json", "late"));
+                assertThrows(
+                    IllegalStateException.class,
+                    () -> retainedResponse.body(MediaType.APPLICATION_JSON, "late"));
+              })
               .get(5, TimeUnit.SECONDS);
 
           assertEquals(0, codec.reads.get());
@@ -86,14 +91,12 @@ class TypedCodecLifetimeTest {
                 "/child",
                 (request, response) -> {
                   children
-                      .submit(
-                          () -> {
-                            assertThrows(
-                                IllegalStateException.class, () -> request.body(String.class));
-                            assertThrows(
-                                IllegalStateException.class,
-                                () -> response.body("application/json", "child"));
-                          })
+                      .submit(() -> {
+                        assertThrows(IllegalStateException.class, () -> request.body(String.class));
+                        assertThrows(
+                            IllegalStateException.class,
+                            () -> response.body("application/json", "child"));
+                      })
                       .get();
                   response.text("guarded");
                 });
@@ -217,19 +220,17 @@ class TypedCodecLifetimeTest {
                 "/flush",
                 (ignoredTypedRequest, response) -> response.text("plain"),
                 extensions ->
-                    extensions.afterResponseFlush(
-                        (ignoredRequest, response) -> {
-                          try {
-                            rejection.complete(
-                                assertThrows(
-                                    IllegalStateException.class,
-                                    () ->
-                                        ((TypedResponse) response)
-                                            .body("application/json", "late")));
-                          } catch (RuntimeException | Error failure) {
-                            rejection.completeExceptionally(failure);
-                          }
-                        }));
+                    extensions.afterResponseFlush((ignoredRequest, response) -> {
+                      try {
+                        rejection.complete(
+                            assertThrows(
+                                IllegalStateException.class,
+                                () ->
+                                    ((Response.Typed) response).body("application/json", "late")));
+                      } catch (RuntimeException | Error failure) {
+                        rejection.completeExceptionally(failure);
+                      }
+                    }));
 
         try (var test = TestServer.start(app)) {
           assertEquals(200, test.send(request -> request.path("/flush")).statusCode());

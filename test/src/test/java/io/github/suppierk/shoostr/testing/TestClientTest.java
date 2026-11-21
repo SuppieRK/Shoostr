@@ -82,13 +82,12 @@ class TestClientTest {
   private HttpResponse<byte[]>
       sendReplyRequestForAppendsRepeatedHeadersAndAcceptsExistingHeaderNames(TestServer test)
           throws IOException, InterruptedException {
-    return test.send(
-        request ->
-            request
-                .path("/headers")
-                .header("X-Value", "first")
-                .header("X-Value", "second")
-                .header(HttpHeaders.ACCEPT, "text/plain"));
+    return test.send(request ->
+        request
+            .path("/headers")
+            .header("X-Value", "first")
+            .header("X-Value", "second")
+            .header(HttpHeaders.ACCEPT, "text/plain"));
   }
 
   @ParameterizedTest
@@ -154,11 +153,10 @@ class TestClientTest {
 
   private HttpResponse<byte[]> sendReplyRequestForCopiesBodyBytesBeforeTheCallerCanModifyThem(
       TestServer test, byte[] bytes) throws IOException, InterruptedException {
-    return test.send(
-        request -> {
-          request.path("/echo").method("POST").body(bytes);
-          bytes[0] = 9;
-        });
+    return test.send(request -> {
+      request.path("/echo").method("POST").body(bytes);
+      bytes[0] = 9;
+    });
   }
 
   @Test
@@ -244,11 +242,10 @@ class TestClientTest {
     return assertThrows(
         IllegalArgumentException.class,
         () ->
-            test.send(
-                request -> {
-                  retained.set(request);
-                  throw expected;
-                }));
+            test.send(request -> {
+              retained.set(request);
+              throw expected;
+            }));
   }
 
   @Test
@@ -263,13 +260,8 @@ class TestClientTest {
                     request.header("X-Value").orElse("absent") + ":" + request.bodyBytes().length));
 
     try (var test = TestServer.start(app)) {
-      test.send(
-          request ->
-              request
-                  .path("/write")
-                  .method("POST")
-                  .header("X-Value", "first")
-                  .body(new byte[] {1}));
+      test.send(request ->
+          request.path("/write").method("POST").header("X-Value", "first").body(new byte[] {1}));
 
       assertEquals(
           "absent:0",
@@ -315,11 +307,10 @@ class TestClientTest {
     var retained = new AtomicReference<TestRequest>();
 
     try (var test = TestServer.start(app)) {
-      test.send(
-          request -> {
-            retained.set(request);
-            request.path("/value");
-          });
+      test.send(request -> {
+        retained.set(request);
+        request.path("/value");
+      });
       var configuration = retained.get();
 
       assertThrows(IllegalStateException.class, () -> configuration.header("X-Late", "no"));

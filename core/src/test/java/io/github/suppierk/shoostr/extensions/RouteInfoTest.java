@@ -23,21 +23,20 @@ class RouteInfoTest {
       var app = new Shoostr();
 
       try (Closeable appCleanup = app::close) {
-        app.routes(
-            routes ->
-                routes.path(
-                    "/api",
-                    group -> {
-                      group.get("/public", (ignored, ignoredResponse) -> {});
-                      group.when(
-                          () -> conditions.incrementAndGet() > 0,
-                          conditional ->
-                              conditional.get("/private", (ignoredRequest, ignoredResponse) -> {}));
-                    },
-                    lifecycle -> {
-                      Consumer<RouteInfo> collect = facts::add;
-                      lifecycle.onRoute(collect);
-                    }));
+        app.routes(routes ->
+            routes.path(
+                "/api",
+                group -> {
+                  group.get("/public", (ignored, ignoredResponse) -> {});
+                  group.when(
+                      () -> conditions.incrementAndGet() > 0,
+                      conditional ->
+                          conditional.get("/private", (ignoredRequest, ignoredResponse) -> {}));
+                },
+                lifecycle -> {
+                  Consumer<RouteInfo> collect = facts::add;
+                  lifecycle.onRoute(collect);
+                }));
 
         try (var test = TestServer.start(app)) {
           assertEquals(

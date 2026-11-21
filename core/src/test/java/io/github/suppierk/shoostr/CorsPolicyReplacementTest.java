@@ -110,19 +110,17 @@ class CorsPolicyReplacementTest {
                   403, preflight(test, "/leaf/value", origin, "GET", "X-Parent").statusCode());
               assertEquals(
                   403,
-                  test.send(
-                          testRequest ->
-                              testRequest
-                                  .path("/leaf/value")
-                                  .header("Origin", "https://parent.example"))
+                  test.send(testRequest ->
+                          testRequest
+                              .path("/leaf/value")
+                              .header("Origin", "https://parent.example"))
                       .statusCode());
             }
           }
 
           var sibling =
-              test.send(
-                  testRequest ->
-                      testRequest.path("/sibling").header("Origin", "https://parent.example"));
+              test.send(testRequest ->
+                  testRequest.path("/sibling").header("Origin", "https://parent.example"));
 
           assertEquals(200, sibling.statusCode());
           assertEquals(
@@ -132,9 +130,8 @@ class CorsPolicyReplacementTest {
               "ETag", sibling.headers().firstValue("Access-Control-Expose-Headers").orElseThrow());
           assertEquals(
               403,
-              test.send(
-                      testRequest ->
-                          testRequest.path("/sibling").header("Origin", "https://child.example"))
+              test.send(testRequest ->
+                      testRequest.path("/sibling").header("Origin", "https://child.example"))
                   .statusCode());
         }
       }

@@ -12,16 +12,16 @@ configurations {
 	}
 }
 
-version = '2026.11.10.2'
+version = '2026.11.21.0'
 
 dependencies {
-	api shoostrDependency('core', '2026.11.10.0')
-	api platform('tools.jackson:jackson-bom:3.2.3')
+	api shoostrDependency('core', '2026.11.21.0')
+	api platform('tools.jackson:jackson-bom:3.3.0')
 	api 'io.swagger.core.v3:swagger-core:3.0.0'
 	// Explicit patched dependencies also protect consumers using only the published Maven POM.
-	api 'tools.jackson.core:jackson-core:3.2.3'
-	api 'tools.jackson.core:jackson-databind:3.2.3'
-	swaggerUiAssets 'org.webjars:swagger-ui:5.34.0'
+	api 'tools.jackson.core:jackson-core:3.3.0'
+	api 'tools.jackson.core:jackson-databind:3.3.0'
+	swaggerUiAssets 'org.webjars:swagger-ui:5.35.1'
 	testImplementation dependencies.project(':test')
 	testImplementation 'nl.jqno.equalsverifier:equalsverifier:4.5.2'
 }
@@ -30,17 +30,17 @@ tasks.named('processResources') {
 	doFirst {
 		def artifact = configurations.swaggerUiAssets.singleFile
 		def digest = MessageDigest.getInstance('SHA-256').digest(artifact.bytes)
-		assert HexFormat.of().formatHex(digest) == 'a439f1bd0d0c69667e97fac5a8cdfb3cc599ed9bdb31fbf40602c648dd2e1a63': 'Pinned Swagger UI artifact checksum mismatch'
+		assert HexFormat.of().formatHex(digest) == '745a149abc9f1f40cc65ae242dd8825a44946063fe6d6cd84cddb7d5d7933593': 'Pinned Swagger UI artifact checksum mismatch'
 	}
 
 	from({ zipTree(configurations.swaggerUiAssets.singleFile) }) {
-		include 'META-INF/resources/webjars/swagger-ui/5.34.0/swagger-ui.css'
-		include 'META-INF/resources/webjars/swagger-ui/5.34.0/swagger-ui-bundle.js'
-		include 'META-INF/resources/webjars/swagger-ui/5.34.0/swagger-ui-bundle.js.LICENSE.txt'
+		include 'META-INF/resources/webjars/swagger-ui/5.35.1/swagger-ui.css'
+		include 'META-INF/resources/webjars/swagger-ui/5.35.1/swagger-ui-bundle.js'
+		include 'META-INF/resources/webjars/swagger-ui/5.35.1/swagger-ui-bundle.js.LICENSE.txt'
 
 		eachFile { details ->
 			details.path = details.name.endsWith('.LICENSE.txt') ?
-					"META-INF/licenses/swagger-ui-5.34.0/${details.name}" :
+					"META-INF/licenses/swagger-ui-5.35.1/${details.name}" :
 					"io/github/suppierk/shoostr/openapi/ui/${details.name}"
 		}
 

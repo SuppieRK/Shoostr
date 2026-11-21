@@ -1,5 +1,8 @@
 package io.github.suppierk.shoostr;
 
+import static io.github.suppierk.shoostr.Locks.getUnderLock;
+import static io.github.suppierk.shoostr.Locks.runUnderLock;
+
 import io.github.suppierk.shoostr.http.ForwardedHeaders;
 import io.github.suppierk.shoostr.http.HttpCharacters;
 import io.github.suppierk.shoostr.http.HttpHeaders;
@@ -20,6 +23,7 @@ import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Predicate;
@@ -64,6 +68,8 @@ public final class Shoostr {
   private static final int DEFAULT_WEBSOCKET_MAX_OUTGOING_FRAMES = 32;
   private static final String WEBSOCKET_PROTOCOL = "websocket";
 
+  private final ReentrantLock lock;
+  private final ReentrantLock pendingMatchesLock;
   private final Options options;
   private final Set<ApplicationHandler.MatchedTask> pendingMatches;
   private final Routes routes;
@@ -82,6 +88,7 @@ public final class Shoostr {
   private final List<Consumer<HttpConfiguration>> httpConfigurations;
   private final List<Runnable> beforeCloseCallbacks;
   private final List<Runnable> afterCloseCallbacks;
+
   private boolean stoppingMatches;
   private @Nullable Codec codec;
   private boolean installing;
@@ -116,6 +123,8 @@ public final class Shoostr {
    * @throws IllegalStateException if JVM shutdown has begun
    */
   public Shoostr(Options options) {
+    this.lock = new ReentrantLock();
+    this.pendingMatchesLock = new ReentrantLock();
     this.options = new Options(Objects.requireNonNull(options));
     this.pendingMatches = new HashSet<>();
     this.routes = new Routes(this::ensureExtension);
@@ -150,7 +159,7 @@ public final class Shoostr {
   private static @Nullable Throwable runCloseCallbacks(
       List<Runnable> callbacks, @Nullable Throwable failure, String message) {
     try {
-      for (var callback : callbacks) {
+      for (final var callback : callbacks) {
         try {
           callback.run();
         } catch (RuntimeException callbackFailure) {
@@ -237,12 +246,12 @@ public final class Shoostr {
     }
 
     if (additional instanceof Error && !(current instanceof Error)) {
-      var earlier = current;
+      final var earlier = current;
       current = additional;
       additional = earlier;
     }
 
-    for (var retained : current.getSuppressed()) {
+    for (final var retained : current.getSuppressed()) {
       if (retained == additional) {
         return current;
       }
@@ -304,13 +313,13 @@ public final class Shoostr {
       org.eclipse.jetty.server.Response rawResponse,
       Callback callback,
       WebSocketRuntime runtime) {
-    var factory = Objects.requireNonNull(endpoint.websocketFactory());
+    final var factory = Objects.requireNonNull(endpoint.websocketFactory());
 
     return container.upgrade(
         (upgradeRequest, upgradeResponse, upgradeCallback) -> {
           try {
             request.webSocketProtocols(upgradeRequest.getSubProtocols());
-            var listener =
+            final var listener =
                 Objects.requireNonNull(factory.create(request, upgradeResponse, runtime));
             response.protectRequiredHeaders();
 
@@ -366,7 +375,8 @@ public final class Shoostr {
         failure instanceof HttpException httpFailure
             ? httpFailure.statusCode()
             : HttpStatusCodes.INTERNAL_SERVER_ERROR;
-    var local = request.behavior();
+    final var local = request.behavior();
+
     var errorHandler = local == null ? null : exceptionHandler(local.errors(), failure);
     if (errorHandler == null) {
       errorHandler = exceptionHandler(errors, failure);
@@ -417,7 +427,7 @@ public final class Shoostr {
       errorHandler.handle((Exception) failure, request, response);
       response.complete();
     } catch (Exception handlerFailure) {
-      var originalHandlerFailure = flushFailure(handlerFailure);
+      final var originalHandlerFailure = flushFailure(handlerFailure);
       response.disableFlushHooksAfterBeforeFailure();
       if (response.committed()) {
         throw originalHandlerFailure;
@@ -445,7 +455,7 @@ public final class Shoostr {
   private static @Nullable ExceptionHandler<Exception> exceptionHandler(
       Map<Class<? extends Exception>, ExceptionHandler<Exception>> errors, Throwable failure) {
     for (Class<?> type = failure.getClass(); type != null; type = type.getSuperclass()) {
-      var handler = errors.get(type);
+      final var handler = errors.get(type);
       if (handler != null) {
         return handler;
       }
@@ -464,23 +474,23 @@ public final class Shoostr {
    */
   private static void configureEncoding(
       Response response, org.eclipse.jetty.server.Request request) {
-    var values = request.getHeaders().getValuesList(HttpHeader.ACCEPT_ENCODING);
+    final var values = request.getHeaders().getValuesList(HttpHeader.ACCEPT_ENCODING);
     if (values.isEmpty()) {
       return;
     }
 
-    var parser = new QuotedQualityCSV();
-    for (var value : values) {
+    final var parser = new QuotedQualityCSV();
+    for (final var value : values) {
       parser.addValue(value);
     }
 
-    boolean gzipSpecified = false;
-    boolean gzipAccepted = false;
-    boolean identitySpecified = false;
-    boolean identityAccepted = false;
-    boolean wildcardSpecified = false;
-    boolean wildcardAccepted = false;
-    for (var value : parser.getQualityValues()) {
+    var gzipSpecified = false;
+    var gzipAccepted = false;
+    var identitySpecified = false;
+    var identityAccepted = false;
+    var wildcardSpecified = false;
+    var wildcardAccepted = false;
+    for (final var value : parser.getQualityValues()) {
       if ("gzip".equalsIgnoreCase(value.getValue())) {
         gzipSpecified = true;
         gzipAccepted |= value.isAcceptable();
@@ -493,12 +503,13 @@ public final class Shoostr {
       }
     }
 
+    final var gzipAllowed = gzipSpecified ? gzipAccepted : wildcardAccepted;
+    final var identityAllowed =
+        identitySpecified ? identityAccepted : !wildcardSpecified || wildcardAccepted;
+
     response.gzipExcludedByAccept(gzipSpecified && !gzipAccepted && wildcardAccepted);
-    response.identityUnacceptable(
-        !(identitySpecified ? identityAccepted : !wildcardSpecified || wildcardAccepted));
-    response.encodingUnacceptable(
-        !(gzipSpecified ? gzipAccepted : wildcardAccepted)
-            && !(identitySpecified ? identityAccepted : !wildcardSpecified || wildcardAccepted));
+    response.identityUnacceptable(!identityAllowed);
+    response.encodingUnacceptable(!gzipAllowed && !identityAllowed);
   }
 
   /**
@@ -519,7 +530,7 @@ public final class Shoostr {
       Response response)
       throws Exception {
     response.discardInputBeforeFlush();
-    var local = request.behavior();
+    final var local = request.behavior();
     var handler = local == null ? null : local.statuses().get(status);
     if (handler == null) {
       handler = handlers.get(status);
@@ -544,7 +555,7 @@ public final class Shoostr {
    */
   private static void flush(List<Handler> handlers, Request request, Response response) {
     try {
-      for (var handler : handlers) {
+      for (final var handler : handlers) {
         handler.handle(request, response);
       }
     } catch (RuntimeException failure) {
@@ -579,12 +590,16 @@ public final class Shoostr {
    * @throws IllegalStateException if startup has begun or the app is closed
    * @throws NullPointerException if configuration is null
    */
-  public synchronized Shoostr modifyServer(Consumer<Server> configuration) {
-    if (started || closed) {
-      throw new IllegalStateException("Jetty must be configured before startup");
-    }
+  public Shoostr modifyServer(Consumer<Server> configuration) {
+    runUnderLock(
+        lock,
+        () -> {
+          if (started || closed) {
+            throw new IllegalStateException("Jetty must be configured before startup");
+          }
 
-    serverConfigurations.add(Objects.requireNonNull(configuration));
+          serverConfigurations.add(Objects.requireNonNull(configuration));
+        });
     return this;
   }
 
@@ -599,12 +614,16 @@ public final class Shoostr {
    * @throws IllegalStateException if startup has begun or the app is closed
    * @throws NullPointerException if configuration is null
    */
-  public synchronized Shoostr modifyHttpConfiguration(Consumer<HttpConfiguration> configuration) {
-    if (started || closed) {
-      throw new IllegalStateException("HTTP must be configured before startup");
-    }
+  public Shoostr modifyHttpConfiguration(Consumer<HttpConfiguration> configuration) {
+    runUnderLock(
+        lock,
+        () -> {
+          if (started || closed) {
+            throw new IllegalStateException("HTTP must be configured before startup");
+          }
 
-    httpConfigurations.add(Objects.requireNonNull(configuration));
+          httpConfigurations.add(Objects.requireNonNull(configuration));
+        });
     return this;
   }
 
@@ -620,12 +639,16 @@ public final class Shoostr {
    *     enabled
    * @throws NullPointerException if configuration is null
    */
-  public synchronized Shoostr tls(Consumer<SslContextFactory.Server> configuration) {
-    if (started || closed || tlsConfiguration != null) {
-      throw new IllegalStateException("TLS must be configured once before startup");
-    }
+  public Shoostr tls(Consumer<SslContextFactory.Server> configuration) {
+    runUnderLock(
+        lock,
+        () -> {
+          if (started || closed || tlsConfiguration != null) {
+            throw new IllegalStateException("TLS must be configured once before startup");
+          }
 
-    tlsConfiguration = Objects.requireNonNull(configuration);
+          tlsConfiguration = Objects.requireNonNull(configuration);
+        });
     return this;
   }
 
@@ -640,8 +663,10 @@ public final class Shoostr {
 
   /**
    * Registers routes through the pre-created root scope and returns this application for fluent
-   * startup. The callback runs immediately without holding the registration lock. Startup rejects
-   * an active callback; an exception propagates without undoing routes already registered.
+   * startup. The callback runs synchronously on the calling thread while holding the shared
+   * registration lock. Concurrent registrations wait until it finishes. The callback must not wait
+   * for another thread to register routes or close this application. Starting from the callback is
+   * rejected; an exception propagates without undoing routes already registered.
    *
    * @param registration callback receiving the same scope as {@link #routes()}
    * @return this application
@@ -663,14 +688,20 @@ public final class Shoostr {
    * @throws IllegalStateException if already configured or application setup has ended
    * @throws NullPointerException if codec is null
    */
-  public synchronized TypedShoostr codec(Codec codec) {
-    if (started || closed || installing || this.codec != null) {
-      throw new IllegalStateException("Configure one codec before starting or closing the app");
-    }
+  public Typed codec(Codec codec) {
+    return Objects.requireNonNull(
+        getUnderLock(
+            lock,
+            () -> {
+              if (started || closed || installing || this.codec != null) {
+                throw new IllegalStateException(
+                    "Configure one codec before starting or closing the app");
+              }
 
-    this.codec = Objects.requireNonNull(codec);
+              this.codec = Objects.requireNonNull(codec);
 
-    return new TypedShoostr(this, codec);
+              return new Typed(this, codec);
+            }));
   }
 
   /**
@@ -706,21 +737,26 @@ public final class Shoostr {
 
   /**
    * Completes infrastructure setup once before a selected instance can configure a scope. The
-   * application monitor serializes claims and setup; scoped configuration runs after return.
+   * application lock serializes claims and setup; scoped configuration runs after return.
    *
    * @param extension exact selected instance
    * @throws IllegalStateException if startup, closure or another setup callback has begun
    */
-  private synchronized void ensureExtension(Extension extension) {
-    if (started || closed || installing) {
-      throw new IllegalStateException("Configure extensions before starting or closing the app");
-    }
+  private void ensureExtension(Extension extension) {
+    runUnderLock(
+        lock,
+        () -> {
+          if (started || closed || installing) {
+            throw new IllegalStateException(
+                "Configure extensions before starting or closing the app");
+          }
 
-    if (routes.installed(extension)) {
-      return;
-    }
+          if (routes.installed(extension)) {
+            return;
+          }
 
-    installExtension(extension);
+          installExtension(extension);
+        });
   }
 
   /**
@@ -736,7 +772,7 @@ public final class Shoostr {
 
     try {
       claimExtension(extension);
-      var callbacks = new ApplicationCallbacks();
+      final var callbacks = new ApplicationCallbacks();
 
       try {
         extension.install(callbacks);
@@ -766,7 +802,7 @@ public final class Shoostr {
         primary = mergeCloseFailure(primary, cleanup);
       }
 
-      var cleanup =
+      final var cleanup =
           runCloseCallbacks(
               afterCloseCallbacks.reversed(), null, "Could not run afterClose callback");
       if (cleanup != null) {
@@ -792,7 +828,8 @@ public final class Shoostr {
   private void claimExtension(Extension extension) {
     extension.claimOwnership();
     if (closed) {
-      var failure = new IllegalStateException("Provider ownership claim closed the application");
+      final var failure =
+          new IllegalStateException("Provider ownership claim closed the application");
 
       try {
         extension.beforeStop();
@@ -822,7 +859,7 @@ public final class Shoostr {
    * @throws IllegalStateException if startup has begun, the app is closed, or already configured
    * @throws NullPointerException if trusted is null
    */
-  public synchronized Shoostr trustedProxies(Predicate<InetAddress> trusted) {
+  public Shoostr trustedProxies(Predicate<InetAddress> trusted) {
     return trustedProxies(trusted, ForwardedHeaders.RFC7239);
   }
 
@@ -837,14 +874,17 @@ public final class Shoostr {
    * @throws IllegalStateException if startup has begun, the app is closed, or already configured
    * @throws NullPointerException if trusted or headers is null
    */
-  public synchronized Shoostr trustedProxies(
-      Predicate<InetAddress> trusted, ForwardedHeaders headers) {
-    if (started || closed || trustedProxy != null) {
-      throw new IllegalStateException("Proxy trust must be configured once before startup");
-    }
+  public Shoostr trustedProxies(Predicate<InetAddress> trusted, ForwardedHeaders headers) {
+    runUnderLock(
+        lock,
+        () -> {
+          if (started || closed || trustedProxy != null) {
+            throw new IllegalStateException("Proxy trust must be configured once before startup");
+          }
 
-    trustedProxy =
-        new TrustedProxy(Objects.requireNonNull(trusted), Objects.requireNonNull(headers));
+          trustedProxy =
+              new TrustedProxy(Objects.requireNonNull(trusted), Objects.requireNonNull(headers));
+        });
     return this;
   }
 
@@ -858,13 +898,8 @@ public final class Shoostr {
    * @throws IllegalStateException if startup has begun or the app is closed
    * @throws NullPointerException if handler is null
    */
-  public synchronized Shoostr beforeRouteHandler(Handler handler) {
-    if (started || closed) {
-      throw new IllegalStateException("Route gates must be registered before startup");
-    }
-
-    beforeHandlers.add(Objects.requireNonNull(handler));
-    return this;
+  public Shoostr beforeRouteHandler(Handler handler) {
+    return register(beforeHandlers, handler, "Route gates");
   }
 
   /**
@@ -874,7 +909,7 @@ public final class Shoostr {
    * @param handler callback on the request thread
    * @return this application
    */
-  public synchronized Shoostr onRequestHeaders(Handler handler) {
+  public Shoostr onRequestHeaders(Handler handler) {
     return register(requestHeaderHandlers, handler, "Request-header hooks");
   }
 
@@ -884,7 +919,7 @@ public final class Shoostr {
    * @param handler callback on the request thread
    * @return this application
    */
-  public synchronized Shoostr onRouteMatched(Handler handler) {
+  public Shoostr onRouteMatched(Handler handler) {
     return register(routeMatchedHandlers, handler, "Route-match hooks");
   }
 
@@ -894,7 +929,7 @@ public final class Shoostr {
    * @param handler callback on the request thread
    * @return this application
    */
-  public synchronized Shoostr afterRouteHandler(Handler handler) {
+  public Shoostr afterRouteHandler(Handler handler) {
     return register(afterRouteHandlers, handler, "Post-route hooks");
   }
 
@@ -904,7 +939,7 @@ public final class Shoostr {
    * @param handler callback on the request thread
    * @return this application
    */
-  public synchronized Shoostr beforeResponseFlush(Handler handler) {
+  public Shoostr beforeResponseFlush(Handler handler) {
     return register(beforeFlushHandlers, handler, "Before-flush hooks");
   }
 
@@ -914,27 +949,8 @@ public final class Shoostr {
    * @param handler callback on the request thread
    * @return this application
    */
-  public synchronized Shoostr afterResponseFlush(Handler handler) {
+  public Shoostr afterResponseFlush(Handler handler) {
     return register(afterFlushHandlers, handler, "After-flush hooks");
-  }
-
-  /**
-   * Registers one live lifecycle callback before the application begins serving requests.
-   *
-   * @param handlers ordered callback collection
-   * @param handler callback to add
-   * @param name stage description used in validation messages
-   * @return this application
-   * @throws IllegalStateException if startup has begun or the app is closed
-   * @throws NullPointerException if handler is null
-   */
-  private Shoostr register(List<Handler> handlers, Handler handler, String name) {
-    if (started || closed) {
-      throw new IllegalStateException(name + " must be registered before startup");
-    }
-
-    handlers.add(Objects.requireNonNull(handler));
-    return this;
   }
 
   /**
@@ -943,7 +959,7 @@ public final class Shoostr {
    * @return this application
    * @throws IllegalStateException if startup has begun, the app is closed, or sessions are enabled
    */
-  public synchronized Shoostr sessions() {
+  public Shoostr sessions() {
     return sessions(ignored -> {});
   }
 
@@ -957,12 +973,16 @@ public final class Shoostr {
    * @throws IllegalStateException if startup has begun, the app is closed, or sessions are enabled
    * @throws NullPointerException if configuration is null
    */
-  public synchronized Shoostr sessions(Consumer<SessionHandler> configuration) {
-    if (started || closed || sessionConfiguration != null) {
-      throw new IllegalStateException("Sessions must be configured once before startup");
-    }
+  public Shoostr sessions(Consumer<SessionHandler> configuration) {
+    runUnderLock(
+        lock,
+        () -> {
+          if (started || closed || sessionConfiguration != null) {
+            throw new IllegalStateException("Sessions must be configured once before startup");
+          }
 
-    sessionConfiguration = Objects.requireNonNull(configuration);
+          sessionConfiguration = Objects.requireNonNull(configuration);
+        });
     return this;
   }
 
@@ -976,13 +996,8 @@ public final class Shoostr {
    * @return this application
    * @throws IllegalStateException if startup has begun or the app is closed
    */
-  public synchronized Shoostr observe(Function<Request, RequestObservation> factory) {
-    if (started || closed) {
-      throw new IllegalStateException("Instrumentation must be registered before startup");
-    }
-
-    observationFactories.add(Objects.requireNonNull(factory));
-    return this;
+  public Shoostr observe(Function<Request, RequestObservation> factory) {
+    return register(observationFactories, factory, "Instrumentation");
   }
 
   /**
@@ -996,13 +1011,8 @@ public final class Shoostr {
    * @throws IllegalStateException if startup has begun or the app is closed
    * @throws NullPointerException if observer is null
    */
-  public synchronized Shoostr afterRequest(Consumer<RequestOutcome> observer) {
-    if (started || closed) {
-      throw new IllegalStateException("Completion observers must be registered before startup");
-    }
-
-    afterHandlers.add(Objects.requireNonNull(observer));
-    return this;
+  public Shoostr afterRequest(Consumer<RequestOutcome> observer) {
+    return register(afterHandlers, observer, "Completion observers");
   }
 
   /**
@@ -1017,22 +1027,27 @@ public final class Shoostr {
    * @throws IllegalArgumentException if this exact class already has a registered callback
    * @throws NullPointerException if type or handler is null
    */
-  public synchronized <E extends Exception> Shoostr exception(
+  public <E extends Exception> Shoostr exception(
       Class<E> type, ExceptionHandler<? super E> handler) {
-    if (started || closed) {
-      throw new IllegalStateException("Exception handlers must be registered before startup");
-    }
+    runUnderLock(
+        lock,
+        () -> {
+          if (started || closed) {
+            throw new IllegalStateException("Exception handlers must be registered before startup");
+          }
 
-    Objects.requireNonNull(type);
-    Objects.requireNonNull(handler);
-    if (exceptionHandlers.containsKey(type)) {
-      throw new IllegalArgumentException(
-          "An exception handler is already registered for " + type.getName());
-    }
+          Objects.requireNonNull(type);
+          Objects.requireNonNull(handler);
+          if (exceptionHandlers.containsKey(type)) {
+            throw new IllegalArgumentException(
+                "An exception handler is already registered for " + type.getName());
+          }
 
-    exceptionHandlers.put(
-        type,
-        (failure, request, response) -> handler.handle(type.cast(failure), request, response));
+          exceptionHandlers.put(
+              type,
+              (failure, request, response) ->
+                  handler.handle(type.cast(failure), request, response));
+        });
     return this;
   }
 
@@ -1047,15 +1062,19 @@ public final class Shoostr {
    * @throws IllegalArgumentException if this status already has a renderer
    * @throws NullPointerException if handler is null
    */
-  public synchronized Shoostr status(int status, Handler handler) {
-    if (started || closed) {
-      throw new IllegalStateException("Status handlers must be registered before startup");
-    }
+  public Shoostr status(int status, Handler handler) {
+    runUnderLock(
+        lock,
+        () -> {
+          if (started || closed) {
+            throw new IllegalStateException("Status handlers must be registered before startup");
+          }
 
-    if (statusHandlers.putIfAbsent(status, Objects.requireNonNull(handler)) != null) {
-      throw new IllegalArgumentException("A status handler is already registered for " + status);
-    }
-
+          if (statusHandlers.putIfAbsent(status, Objects.requireNonNull(handler)) != null) {
+            throw new IllegalArgumentException(
+                "A status handler is already registered for " + status);
+          }
+        });
     return this;
   }
 
@@ -1073,13 +1092,8 @@ public final class Shoostr {
    * @throws NullPointerException if callback is null
    * @throws IllegalStateException if startup has begun or the application is closed
    */
-  public synchronized Shoostr beforeClose(Runnable callback) {
-    if (started || closed) {
-      throw new IllegalStateException("Shutdown callbacks must be registered before startup");
-    }
-
-    beforeCloseCallbacks.add(Objects.requireNonNull(callback));
-    return this;
+  public Shoostr beforeClose(Runnable callback) {
+    return register(beforeCloseCallbacks, callback, "Shutdown callbacks");
   }
 
   /**
@@ -1097,12 +1111,31 @@ public final class Shoostr {
    * @throws NullPointerException if callback is null
    * @throws IllegalStateException if startup has begun or the application is closed
    */
-  public synchronized Shoostr afterClose(Runnable callback) {
-    if (started || closed) {
-      throw new IllegalStateException("Cleanup callbacks must be registered before startup");
-    }
+  public Shoostr afterClose(Runnable callback) {
+    return register(afterCloseCallbacks, callback, "Cleanup callbacks");
+  }
 
-    afterCloseCallbacks.add(Objects.requireNonNull(callback));
+  /**
+   * Validates and appends one callback while holding the application lock.
+   *
+   * @param <T> callback type
+   * @param callbacks ordered callback collection
+   * @param callback callback to add without invoking it
+   * @param name stage description used in validation messages
+   * @return this application
+   * @throws IllegalStateException if startup has begun or the app is closed
+   * @throws NullPointerException if callback is null
+   */
+  private <T> Shoostr register(List<T> callbacks, T callback, String name) {
+    runUnderLock(
+        lock,
+        () -> {
+          if (started || closed) {
+            throw new IllegalStateException(name + " must be registered before startup");
+          }
+
+          callbacks.add(Objects.requireNonNull(callback));
+        });
     return this;
   }
 
@@ -1113,35 +1146,39 @@ public final class Shoostr {
    *
    * @return this application
    * @throws Exception if startup fails
-   * @throws IllegalStateException if started, closed, or a route registration callback is active
+   * @throws IllegalStateException if started, closed, or route registration is in progress
    */
   @SuppressWarnings(
       "java:S1181") // Startup cleanup must also run when Jetty or a callback throws Error.
-  public synchronized Shoostr start() throws Exception {
-    if (started || closed || installing) {
-      throw new IllegalStateException("Shoostr can only start once and cannot start after close");
-    }
+  public Shoostr start() throws Exception {
+    runUnderLock(
+        lock,
+        () -> {
+          if (started || closed || installing) {
+            throw new IllegalStateException(
+                "Shoostr can only start once and cannot start after close");
+          }
 
-    router = routes.compile(sessionConfiguration != null);
-    websocketRouter = routes.websocketRouter();
+          router = routes.compile(sessionConfiguration != null);
+          websocketRouter = routes.websocketRouter();
 
-    try {
-      started = true;
-      routes.prepare();
-      for (var extension : extensions) {
-        extension.beforeStart();
-      }
-      startServer();
-    } catch (Exception | Error failure) {
-      try {
-        close();
-      } catch (IOException cleanup) {
-        failure.addSuppressed(cleanup);
-      }
+          try {
+            started = true;
+            routes.prepare();
+            for (final var extension : extensions) {
+              extension.beforeStart();
+            }
+            startServer();
+          } catch (Exception | Error failure) {
+            try {
+              close();
+            } catch (IOException cleanup) {
+              failure.addSuppressed(cleanup);
+            }
 
-      throw failure;
-    }
-
+            throw failure;
+          }
+        });
     return this;
   }
 
@@ -1154,45 +1191,54 @@ public final class Shoostr {
    */
   private void startServer() throws Exception {
     final var dispatch = DispatchConfiguration.capture(this);
-    var pool = new QueuedThreadPool();
-    if (options.getVirtualThreads()) {
+    final var pool = new QueuedThreadPool();
+    if (Boolean.TRUE.equals(options.getVirtualThreads())) {
       ownedVirtualThreads = Executors.newVirtualThreadPerTaskExecutor();
       pool.setVirtualThreadsExecutor(ownedVirtualThreads);
     }
 
     server = new Server(pool);
     server.setStopTimeout(options.getShutdownTimeout().toMillis());
+
     final var proxy = trustedProxy;
-    var websocketRoutes = websocketRouter;
+    final var websocketRoutes = websocketRouter;
     managedWebSockets =
         websocketRoutes == null
             ? null
             : new WebSocketRuntime(task -> VirtualThreads.execute(pool, task));
-    var http = configureHttp();
+
+    final var http = configureHttp();
     connector = createConnector(Objects.requireNonNull(server), http);
     tlsConfiguration = null;
     connector.setHost(options.getHost());
     connector.setPort(options.getPort());
     connector.setIdleTimeout(options.getIdleTimeout().toMillis());
     server.addConnector(connector);
-    var graceful = new GracefulHandler();
+
+    final var graceful = new GracefulHandler();
     server.setHandler(graceful);
-    var compressionHandler = options.getCompression() ? new CompressionHandler() : null;
-    var applicationHandler =
+
+    final var compressionHandler =
+        Boolean.TRUE.equals(options.getCompression()) ? new CompressionHandler() : null;
+
+    final var applicationHandler =
         new ApplicationHandler(
             dispatch, proxy, websocketRoutes, compressionHandler, managedWebSockets);
+
     installHandlers(
         Objects.requireNonNull(server),
         graceful,
         applicationHandler,
         websocketRoutes,
         compressionHandler);
+
     configureNativeServer(
         Objects.requireNonNull(server),
         graceful,
         applicationHandler,
         Objects.requireNonNull(connector));
-    for (var listener : server.getConnectors()) {
+
+    for (final var listener : server.getConnectors()) {
       listener.addEventListener(
           new LifeCycle.Listener() {
             /** {@inheritDoc} */
@@ -1202,6 +1248,7 @@ public final class Shoostr {
             }
           });
     }
+
     server.start();
   }
 
@@ -1212,15 +1259,16 @@ public final class Shoostr {
    * @throws IllegalStateException if a configuration callback closes Shoostr
    */
   private HttpConfiguration configureHttp() {
-    var http = new HttpConfiguration();
+    final var http = new HttpConfiguration();
     http.setRequestHeaderSize(options.getMaxRequestHeaderBytes());
     http.setSendServerVersion(false);
-    var tls = tlsConfiguration;
+
+    final var tls = tlsConfiguration;
     if (tls != null) {
       http.addCustomizer(new SecureRequestCustomizer());
     }
 
-    for (var configuration : List.copyOf(httpConfigurations)) {
+    for (final var configuration : List.copyOf(httpConfigurations)) {
       configuration.accept(http);
       if (closed) {
         throw new IllegalStateException("Shoostr was closed during HTTP configuration");
@@ -1241,23 +1289,23 @@ public final class Shoostr {
    * @throws IllegalStateException if TLS configuration closes Shoostr
    */
   private ServerConnector createConnector(Server server, HttpConfiguration http) {
-    var tls = tlsConfiguration;
-    var http11 = new HttpConnectionFactory(http);
+    final var tls = tlsConfiguration;
+    final var http11 = new HttpConnectionFactory(http);
     if (tls == null) {
-      return options.getHttp2()
+      return Boolean.TRUE.equals(options.getHttp2())
           ? new ServerConnector(server, http11, new HTTP2CServerConnectionFactory(http))
           : new ServerConnector(server, http11);
     }
 
-    var context = new SslContextFactory.Server();
+    final var context = new SslContextFactory.Server();
     tls.accept(context);
     if (closed) {
       throw new IllegalStateException("Shoostr was closed during TLS configuration");
     }
 
-    if (options.getHttp2()) {
-      var h2 = new HTTP2ServerConnectionFactory(http);
-      var alpn = new ALPNServerConnectionFactory();
+    if (Boolean.TRUE.equals(options.getHttp2())) {
+      final var h2 = new HTTP2ServerConnectionFactory(http);
+      final var alpn = new ALPNServerConnectionFactory();
       alpn.setDefaultProtocol(http11.getProtocol());
 
       return new ServerConnector(
@@ -1322,7 +1370,7 @@ public final class Shoostr {
       org.eclipse.jetty.server.Handler applicationHandler,
       ServerConnector connector) {
     final var installedHandler = Objects.requireNonNull(graceful.getHandler());
-    for (var configuration : List.copyOf(serverConfigurations)) {
+    for (final var configuration : List.copyOf(serverConfigurations)) {
       configuration.accept(server);
       if (closed) {
         throw new IllegalStateException("Shoostr was closed during Jetty configuration");
@@ -1330,7 +1378,8 @@ public final class Shoostr {
     }
 
     serverConfigurations.clear();
-    var application = (ApplicationHandler) applicationHandler;
+
+    final var application = (ApplicationHandler) applicationHandler;
     application.validateApplicationWiring();
     if (application.applicationSessions != null) {
       Objects.requireNonNull(sessionConfiguration).accept(application.applicationSessions);
@@ -1358,12 +1407,17 @@ public final class Shoostr {
    * @return listening port
    * @throws IllegalStateException if the application is not running
    */
-  public synchronized int port() {
-    if (closed || connector == null || server == null || !server.isStarted()) {
-      throw new IllegalStateException("Shoostr is not running");
-    }
+  public int port() {
+    return Objects.requireNonNull(
+        getUnderLock(
+            lock,
+            () -> {
+              if (closed || connector == null || server == null || !server.isStarted()) {
+                throw new IllegalStateException("Shoostr is not running");
+              }
 
-    return connector.getLocalPort();
+              return connector.getLocalPort();
+            }));
   }
 
   /**
@@ -1374,13 +1428,18 @@ public final class Shoostr {
    * or interrupted. Unstarted selected requests are canceled after draining; running handlers may
    * finish and release their resources after this method returns. The caller must coordinate their
    * completion before closing supplied dependencies. Final extension resource cleanup follows
-   * native drain; ordinary signalling failures are collected without skipping subsequent shutdown
-   * or cleanup.
+   * native drain; ordinary signaling failures are collected without skipping subsequent shutdown or
+   * cleanup.
+   *
+   * <p>Closure first waits for any registration callback on another thread to finish, then ends
+   * registration before acquiring the application lock for shutdown. This ordering permits an
+   * active registration callback to finish extension setup. Reentrant closure from a registration
+   * callback remains supported.
    *
    * <p>Application beforeClose callbacks run in written order after closure guards are established
    * and before framework resource disposal. Application afterClose callbacks run in reverse order
-   * after extension cleanup. Both run synchronously while this method holds the application
-   * monitor; do not wait on another thread that needs a synchronized application operation. Runtime
+   * after extension cleanup. Both run synchronously while shutdown holds the application lock; do
+   * not wait on another thread that needs an application operation that acquires this lock. Runtime
    * callback failures join the collected IOException without skipping remaining callbacks. An Error
    * stops its callback list, but framework cleanup and the separate afterClose phase still run. The
    * first Error is rethrown after cleanup; other failures remain suppressed. During provider
@@ -1391,49 +1450,74 @@ public final class Shoostr {
    * @throws IOException if resources cannot be closed without an Error
    * @throws Error if a shutdown callback or cleanup fails fatally
    */
-  @SuppressWarnings("java:S1181") // Retain fatal failures while completing the shutdown phases.
-  public synchronized void close() throws IOException {
-    if (closed) {
-      return;
-    }
-
-    closed = true;
-    synchronized (pendingMatches) {
-      stoppingMatches = true;
-    }
+  public void close() throws IOException {
     routes.endRegistration();
-    Throwable failure = null;
+    closeApplication();
+  }
 
-    try {
-      failure = runCloseCallbacks(beforeCloseCallbacks, null, "Could not run beforeClose callback");
-    } finally {
-      try {
-        var cleanup = closeResources(failure instanceof IOException ordinary ? ordinary : null);
-        if (failure instanceof Error) {
-          if (cleanup != null) {
-            failure = mergeCloseFailure(failure, cleanup);
+  /**
+   * Completes shutdown under the application lock after route registration has ended.
+   *
+   * @throws IOException if resources cannot be closed without an Error
+   * @throws Error if a shutdown callback or cleanup fails fatally
+   */
+  private void closeApplication() throws IOException {
+    runUnderLock(
+        lock,
+        () -> {
+          if (closed) {
+            return;
           }
-        } else {
-          failure = cleanup;
-        }
-      } catch (Error cleanup) {
-        // closeResources already retains its ordinary aggregate, including an incoming IOException.
-        failure = mergeCloseFailure(failure, cleanup);
-      } finally {
-        if (!installing) {
-          failure =
-              runCloseCallbacks(
-                  afterCloseCallbacks.reversed(), failure, "Could not run afterClose callback");
-        }
+
+          closed = true;
+          runUnderLock(pendingMatchesLock, () -> stoppingMatches = true);
+          Throwable failure = null;
+
+          try {
+            failure =
+                runCloseCallbacks(beforeCloseCallbacks, null, "Could not run beforeClose callback");
+          } finally {
+            try {
+              failure = closeResourcesAfterCallbacks(failure);
+            } finally {
+              if (!installing) {
+                failure =
+                    runCloseCallbacks(
+                        afterCloseCallbacks.reversed(),
+                        failure,
+                        "Could not run afterClose callback");
+              }
+            }
+          }
+
+          if (failure instanceof Error fatal) {
+            throw fatal;
+          }
+
+          if (failure instanceof IOException ordinary) {
+            throw ordinary;
+          }
+        });
+  }
+
+  /**
+   * Closes framework resources while preserving an earlier callback Error as the primary failure.
+   *
+   * @param failure earlier callback failure, or null
+   * @return accumulated shutdown failure, or null
+   */
+  @SuppressWarnings("java:S1181") // Retain fatal failures while completing the shutdown phases.
+  private @Nullable Throwable closeResourcesAfterCallbacks(@Nullable Throwable failure) {
+    try {
+      final var cleanup = closeResources(failure instanceof IOException ordinary ? ordinary : null);
+      if (failure instanceof Error) {
+        return cleanup == null ? failure : mergeCloseFailure(failure, cleanup);
       }
-    }
 
-    if (failure instanceof Error fatal) {
-      throw fatal;
-    }
-
-    if (failure instanceof IOException ordinary) {
-      throw ordinary;
+      return cleanup;
+    } catch (Error cleanup) {
+      // closeResources already retains its ordinary aggregate, including an incoming IOException.
+      return mergeCloseFailure(failure, cleanup);
     }
   }
 
@@ -1459,24 +1543,26 @@ public final class Shoostr {
       afterFlushHandlers.clear();
       afterHandlers.clear();
       observationFactories.clear();
-      failure = closeRouteResources(failure);
 
-      serverConfigurations.clear();
-      httpConfigurations.clear();
-      tlsConfiguration = null;
-      sessionConfiguration = null;
+      try {
+        failure = closeRouteResources(failure);
+      } finally {
+        serverConfigurations.clear();
+        httpConfigurations.clear();
+        tlsConfiguration = null;
+        sessionConfiguration = null;
+      }
 
       failure = signalManagedWebSocketsBeforeStop(failure);
 
       failure = signalExtensionsBeforeStop(failure);
 
     } catch (Error signallingFailure) {
-      if (failure != null) {
-        mergeCloseFailure(signallingFailure, failure);
-        failure = null;
-      }
-
-      fatal = signallingFailure;
+      fatal =
+          failure == null
+              ? signallingFailure
+              : (Error) mergeCloseFailure(signallingFailure, failure);
+      failure = null;
     } finally {
       try {
         stopServer();
@@ -1487,12 +1573,11 @@ public final class Shoostr {
 
         failure = appendCloseFailure(failure, "Could not stop HTTP server", stopFailure);
       } catch (Error stopFailure) {
-        if (failure != null) {
-          mergeCloseFailure(stopFailure, failure);
-          failure = null;
-        }
+        final var stopCause =
+            failure == null ? stopFailure : (Error) mergeCloseFailure(stopFailure, failure);
+        failure = null;
 
-        fatal = (Error) mergeCloseFailure(fatal, stopFailure);
+        fatal = (Error) mergeCloseFailure(fatal, stopCause);
       } finally {
         try {
           failure = finishManagedWebSocketDispatch(failure);
@@ -1503,22 +1588,17 @@ public final class Shoostr {
           removeShutdownHook();
           failure = closeExtensions(failure);
         } catch (Error cleanupFailure) {
-          if (failure != null) {
-            mergeCloseFailure(cleanupFailure, failure);
-            failure = null;
-          }
+          final var cleanupCause =
+              failure == null ? cleanupFailure : (Error) mergeCloseFailure(cleanupFailure, failure);
+          failure = null;
 
-          fatal = (Error) mergeCloseFailure(fatal, cleanupFailure);
+          fatal = (Error) mergeCloseFailure(fatal, cleanupCause);
         }
       }
     }
 
     if (fatal != null) {
-      if (failure != null) {
-        mergeCloseFailure(fatal, failure);
-      }
-
-      throw fatal;
+      throw failure == null ? fatal : (Error) mergeCloseFailure(fatal, failure);
     }
 
     return failure;
@@ -1567,16 +1647,12 @@ public final class Shoostr {
   @SuppressWarnings("java:S1181") // Retain ordinary failures before propagating Error.
   private @Nullable IOException signalExtensionsBeforeStop(@Nullable IOException failure) {
     try {
-      for (int index = extensions.size() - 1; index >= 0; index--) {
+      for (var index = extensions.size() - 1; index >= 0; index--) {
         failure = signalExtensionBeforeStop(extensions.get(index), failure);
       }
       return failure;
     } catch (Error fatal) {
-      if (failure != null) {
-        mergeCloseFailure(fatal, failure);
-      }
-
-      throw fatal;
+      throw failure == null ? fatal : (Error) mergeCloseFailure(fatal, failure);
     }
   }
 
@@ -1664,20 +1740,15 @@ public final class Shoostr {
   @SuppressWarnings("java:S1181") // Retain ordinary failures before propagating Error.
   private @Nullable IOException cancelPendingMatches(@Nullable IOException failure) {
     try {
-      List<ApplicationHandler.MatchedTask> pending;
-      synchronized (pendingMatches) {
-        pending = List.copyOf(pendingMatches);
-      }
-      for (var task : pending) {
+      final var pending =
+          Objects.requireNonNull(
+              getUnderLock(pendingMatchesLock, () -> List.copyOf(pendingMatches)));
+      for (final var task : pending) {
         failure = cancelPendingMatch(task, failure);
       }
       return failure;
     } catch (Error fatal) {
-      if (failure != null) {
-        mergeCloseFailure(fatal, failure);
-      }
-
-      throw fatal;
+      throw failure == null ? fatal : (Error) mergeCloseFailure(fatal, failure);
     }
   }
 
@@ -1708,18 +1779,14 @@ public final class Shoostr {
   @SuppressWarnings("java:S1181") // Preserve earlier extension failures before propagating Error.
   private @Nullable IOException closeExtensions(@Nullable IOException failure) {
     try {
-      for (int index = extensions.size() - 1; index >= 0; index--) {
+      for (var index = extensions.size() - 1; index >= 0; index--) {
         failure = closeExtension(extensions.get(index), failure);
       }
-      extensions.clear();
-
       return failure;
     } catch (Error fatal) {
-      if (failure != null) {
-        mergeCloseFailure(fatal, failure);
-      }
-
-      throw fatal;
+      throw failure == null ? fatal : (Error) mergeCloseFailure(fatal, failure);
+    } finally {
+      extensions.clear();
     }
   }
 
@@ -1838,10 +1905,12 @@ public final class Shoostr {
    * Coordinates application finalization with transport termination without retaining live input.
    */
   private static final class Completion {
+    private final ReentrantLock lock;
     private final String method;
     private final long started;
     private final List<Consumer<RequestOutcome>> observers;
     private final List<RequestObservation> scopes;
+
     private List<Consumer<RequestOutcome>> localObservers;
     private @Nullable List<AutoCloseable> attachedScopes;
     private boolean scopesClosed;
@@ -1860,6 +1929,7 @@ public final class Shoostr {
      * @param observers immutable registration snapshot
      */
     private Completion(String method, List<Consumer<RequestOutcome>> observers) {
+      this.lock = new ReentrantLock();
       this.method = method;
       this.observers = observers;
       this.localObservers = List.of();
@@ -1875,7 +1945,7 @@ public final class Shoostr {
      * @param factories instrumentation snapshot
      */
     private void begin(Request request, List<Function<Request, RequestObservation>> factories) {
-      for (var factory : factories) {
+      for (final var factory : factories) {
         try {
           scopes.add(Objects.requireNonNull(factory.apply(request)));
         } catch (RuntimeException failure) {
@@ -1904,9 +1974,9 @@ public final class Shoostr {
         return;
       }
 
-      var attached = new ArrayList<AutoCloseable>(scopes.size());
+      final var attached = new ArrayList<AutoCloseable>(scopes.size());
       attachedScopes = attached;
-      for (var scope : scopes) {
+      for (final var scope : scopes) {
         try {
           attached.add(Objects.requireNonNull(scope.attach()));
         } catch (RuntimeException failure) {
@@ -1922,7 +1992,7 @@ public final class Shoostr {
      * @param activeScopes scopes belonging to the calling thread
      */
     private void closeActiveScopes(List<? extends AutoCloseable> activeScopes) {
-      for (int index = activeScopes.size() - 1; index >= 0; index--) {
+      for (var index = activeScopes.size() - 1; index >= 0; index--) {
         try {
           activeScopes.get(index).close();
         } catch (Exception failure) {
@@ -1949,19 +2019,20 @@ public final class Shoostr {
      */
     @SuppressWarnings("ReferenceEquality")
     private void finish(@Nullable String routePattern, @Nullable Throwable failure) {
-      RequestOutcome outcome;
-      synchronized (this) {
-        this.routePattern = routePattern;
-        if (applicationFailure == null) {
-          applicationFailure = failure;
-        } else if (failure != null && failure != applicationFailure) {
-          applicationFailure.addSuppressed(failure);
-        }
+      notifyObservers(
+          getUnderLock(
+              lock,
+              () -> {
+                this.routePattern = routePattern;
+                if (applicationFailure == null) {
+                  applicationFailure = failure;
+                } else if (failure != null && failure != applicationFailure) {
+                  applicationFailure.addSuppressed(failure);
+                }
 
-        applicationFinished = true;
-        outcome = outcome();
-      }
-      notifyObservers(outcome);
+                applicationFinished = true;
+                return outcome();
+              }));
     }
 
     /**
@@ -1970,9 +2041,7 @@ public final class Shoostr {
      * @param failure initiating factory exception
      */
     private void recordApplicationFailure(Throwable failure) {
-      synchronized (this) {
-        applicationFailure = failure;
-      }
+      runUnderLock(lock, () -> applicationFailure = failure);
     }
 
     /**
@@ -1982,17 +2051,18 @@ public final class Shoostr {
      * @param failure terminal transport outcome, including application-triggered aborts
      */
     private void complete(int status, @Nullable Throwable failure) {
-      RequestOutcome outcome;
-      synchronized (this) {
-        this.status = status;
-        if (failure != null || transportFailure == null) {
-          transportFailure = failure;
-        }
+      notifyObservers(
+          getUnderLock(
+              lock,
+              () -> {
+                this.status = status;
+                if (failure != null || transportFailure == null) {
+                  transportFailure = failure;
+                }
 
-        transportFinished = true;
-        outcome = outcome();
-      }
-      notifyObservers(outcome);
+                transportFinished = true;
+                return outcome();
+              }));
     }
 
     /**
@@ -2001,15 +2071,17 @@ public final class Shoostr {
      * @param failure response callback failure
      */
     private void recordTransportFailure(Throwable failure) {
-      synchronized (this) {
-        if (transportFailure == null) {
-          transportFailure = failure;
-        }
-      }
+      runUnderLock(
+          lock,
+          () -> {
+            if (transportFailure == null) {
+              transportFailure = failure;
+            }
+          });
     }
 
     /**
-     * Freezes one summary after both parties finish; caller holds this coordinator's monitor.
+     * Freezes one summary after both parties finish; caller holds this coordinator's lock.
      *
      * @return summary to publish, or null while pending or already notified
      */
@@ -2030,7 +2102,7 @@ public final class Shoostr {
     }
 
     /**
-     * Dispatches outside the coordinator's monitor in registration order.
+     * Dispatches outside the coordinator's lock in registration order.
      *
      * @param outcome terminal snapshot, or null when no notification is due
      */
@@ -2039,7 +2111,7 @@ public final class Shoostr {
         return;
       }
 
-      for (var scope : scopes) {
+      for (final var scope : scopes) {
         try {
           scope.complete(outcome);
         } catch (RuntimeException failure) {
@@ -2059,7 +2131,7 @@ public final class Shoostr {
      * @param outcome immutable final outcome
      */
     private void notifyTerminal(List<Consumer<RequestOutcome>> callbacks, RequestOutcome outcome) {
-      for (var observer : callbacks) {
+      for (final var observer : callbacks) {
         try {
           observer.accept(outcome);
         } catch (RuntimeException failure) {
@@ -2073,18 +2145,8 @@ public final class Shoostr {
   /** Request dispatcher with one immutable startup snapshot and no registration locks. */
   private final class ApplicationHandler extends Wrapper {
     private static final String SELECTION = ApplicationHandler.class.getName() + ".selection";
-    private final RadixRoutes compiledRoutes;
-    private final Map<Class<? extends Exception>, ExceptionHandler<Exception>> errors;
-    private final Map<Integer, Handler> statuses;
-    private final List<Handler> gates;
-    private final List<Handler> headerHooks;
-    private final List<Handler> matchedHooks;
-    private final List<Handler> postRouteHooks;
-    private final List<Handler> preFlushHooks;
-    private final List<Handler> postFlushHooks;
-    private final List<Consumer<RequestOutcome>> observers;
-    private final List<Function<Request, RequestObservation>> instrumentation;
-    private final boolean localObservers;
+
+    private final DispatchConfiguration dispatch;
     private final @Nullable TrustedProxy proxy;
     private final @Nullable RadixRoutes websocketRoutes;
     private final @Nullable CompressionHandler compressionHandler;
@@ -2108,18 +2170,7 @@ public final class Shoostr {
         @Nullable RadixRoutes websocketRoutes,
         @Nullable CompressionHandler compressionHandler,
         @Nullable WebSocketRuntime websocketRuntime) {
-      this.compiledRoutes = dispatch.router();
-      this.errors = dispatch.errors();
-      this.statuses = dispatch.statuses();
-      this.gates = dispatch.gates();
-      this.headerHooks = dispatch.headerHooks();
-      this.matchedHooks = dispatch.matchedHooks();
-      this.postRouteHooks = dispatch.postRouteHooks();
-      this.preFlushHooks = dispatch.beforeFlushHooks();
-      this.postFlushHooks = dispatch.afterFlushHooks();
-      this.observers = dispatch.observers();
-      this.instrumentation = dispatch.instrumentation();
-      this.localObservers = dispatch.localObservers();
+      this.dispatch = Objects.requireNonNull(dispatch);
       this.proxy = proxy;
       this.websocketRoutes = websocketRoutes;
       this.compressionHandler = compressionHandler;
@@ -2141,7 +2192,7 @@ public final class Shoostr {
         this.applicationSessions = null;
         setHandler(sessionContinuation);
       } else {
-        var handler = new SessionHandler();
+        final var handler = new SessionHandler();
         handler.setMaxInactiveInterval(1800);
         handler.setHttpOnly(true);
         handler.setSameSite(HttpCookie.SameSite.LAX);
@@ -2172,14 +2223,14 @@ public final class Shoostr {
         org.eclipse.jetty.server.Request rawRequest,
         org.eclipse.jetty.server.Response rawResponse,
         Callback callback) {
-      boolean preflight = isCorsPreflight(rawRequest);
-      var targetMethod =
+      final var preflight = isCorsPreflight(rawRequest);
+      final var targetMethod =
           preflight
               ? rawRequest.getHeaders().get(HttpHeaders.ACCESS_CONTROL_REQUEST_METHOD.value())
               : rawRequest.getMethod();
-      var endpoint = matchEndpoint(rawRequest, targetMethod, !preflight);
-      var behavior = endpoint == null ? null : endpoint.behavior();
-      var cors =
+      final var endpoint = matchEndpoint(rawRequest, targetMethod, !preflight);
+      final var behavior = endpoint == null ? null : endpoint.behavior();
+      final var cors =
           endpoint != null && endpoint.websocketFactory() == null && behavior != null
               ? behavior.cors()
               : null;
@@ -2223,10 +2274,7 @@ public final class Shoostr {
         org.eclipse.jetty.server.Request rawRequest,
         org.eclipse.jetty.server.Response rawResponse,
         Callback callback) {
-      var observation =
-          observers.isEmpty() && instrumentation.isEmpty() && !localObservers
-              ? null
-              : new Completion(rawRequest.getMethod(), observers);
+      final var observation = createCompletion(rawRequest);
       if (observation != null) {
         org.eclipse.jetty.server.Request.addCompletionListener(
             rawRequest,
@@ -2235,13 +2283,13 @@ public final class Shoostr {
                     rawResponse.isCommitted() ? rawResponse.getStatus() : 0, failure));
       }
 
-      var responseCallback =
+      final var responseCallback =
           observation == null
               ? callback
               : Callback.from(callback, observation::recordTransportFailure);
-      var request = createRequest(rawRequest, rawResponse, responseCallback, observation);
+      final var request = createRequest(rawRequest, rawResponse, responseCallback, observation);
 
-      var response = request.response();
+      final var response = request.response();
       if (compressionHandler != null) {
         response.compression(compressionHandler);
         configureEncoding(response, rawRequest);
@@ -2250,7 +2298,7 @@ public final class Shoostr {
       configureFlushHooks(request, response, null);
       Throwable terminalFailure = null;
       Throwable applicationFailure = null;
-      boolean delegated = false;
+      var delegated = false;
 
       try {
         delegated =
@@ -2270,12 +2318,28 @@ public final class Shoostr {
     }
 
     /**
+     * Creates a completion coordinator only when application or route observation requires it.
+     *
+     * @param rawRequest transport request whose method is captured when observation is enabled
+     * @return coordinator, or null when no observation is configured
+     */
+    private @Nullable Completion createCompletion(org.eclipse.jetty.server.Request rawRequest) {
+      if (dispatch.observers().isEmpty()
+          && dispatch.instrumentation().isEmpty()
+          && !dispatch.localObservers()) {
+        return null;
+      }
+
+      return new Completion(rawRequest.getMethod(), dispatch.observers());
+    }
+
+    /**
      * Rejects native callbacks that detach or replace the owned application dispatcher.
      *
      * @throws IllegalStateException if native configuration changes the owned handler chain
      */
     private void validateApplicationWiring() {
-      var owner = Objects.requireNonNull(server);
+      final var owner = Objects.requireNonNull(server);
       if (owner.getDescendant(ApplicationHandler.class) != this
           || !owner.equals(getServer())
           || !(applicationSessions == null ? sessionContinuation : applicationSessions)
@@ -2305,7 +2369,7 @@ public final class Shoostr {
               "Session configuration must preserve owned native wiring");
         }
 
-        var ids = server.getBean(SessionIdManager.class);
+        final var ids = server.getBean(SessionIdManager.class);
         if (started && (ids == null || applicationSessions.getSessionIdManager() != ids)) {
           throw new IllegalStateException("Sessions must use the server's native SessionIdManager");
         }
@@ -2323,9 +2387,15 @@ public final class Shoostr {
         Request request, Response response, @Nullable EndpointBehavior local) {
       response.flushHooks(
           flushHook(
-              local == null ? List.of() : local.beforeFlush(), preFlushHooks, request, response),
+              local == null ? List.of() : local.beforeFlush(),
+              dispatch.beforeFlushHooks(),
+              request,
+              response),
           flushHook(
-              local == null ? List.of() : local.afterFlush(), postFlushHooks, request, response));
+              local == null ? List.of() : local.afterFlush(),
+              dispatch.afterFlushHooks(),
+              request,
+              response));
     }
 
     /**
@@ -2398,7 +2468,7 @@ public final class Shoostr {
       }
 
       try {
-        renderFailure(errors, failure, request, response, observation);
+        renderFailure(dispatch.errors(), failure, request, response, observation);
 
         return null;
       } catch (Throwable writeFailure) {
@@ -2432,9 +2502,9 @@ public final class Shoostr {
         Callback callback,
         @Nullable Throwable applicationFailure,
         @Nullable Throwable terminalFailure) {
-      var postFlushFailure = response.afterFlushFailure();
+      final var postFlushFailure = response.afterFlushFailure();
       if (postFlushFailure != null) {
-        var originalPostFlushFailure = flushFailure(postFlushFailure);
+        final var originalPostFlushFailure = flushFailure(postFlushFailure);
         if (applicationFailure == null) {
           applicationFailure = originalPostFlushFailure;
         } else if (applicationFailure != originalPostFlushFailure) {
@@ -2442,7 +2512,7 @@ public final class Shoostr {
         }
       }
 
-      var routePattern = observation == null ? null : request.routePattern().orElse(null);
+      final var routePattern = observation == null ? null : request.routePattern().orElse(null);
       if (observation != null) {
         observation.closeScopes();
       }
@@ -2488,7 +2558,7 @@ public final class Shoostr {
         return false;
       }
 
-      var endpoint = ((Selection) rawRequest.getAttribute(SELECTION)).endpoint();
+      final var endpoint = ((Selection) rawRequest.getAttribute(SELECTION)).endpoint();
       if (endpoint != null && observation != null && endpoint.behavior() != null) {
         request.route(endpoint);
         observation.begin(request, endpoint.behavior().instrumentation());
@@ -2523,17 +2593,17 @@ public final class Shoostr {
     private boolean prepareRequest(
         Request request, Response response, @Nullable Completion observation) throws Exception {
       if (observation != null) {
-        observation.begin(request, instrumentation);
+        observation.begin(request, dispatch.instrumentation());
       }
 
       if (proxy != null) {
         proxy.apply(request);
       }
 
-      var selection = (Selection) request.nativeRequest().getAttribute(SELECTION);
-      var endpoint = selection.endpoint();
-      var cors = selection.cors();
-      boolean preflight = false;
+      final var selection = (Selection) request.nativeRequest().getAttribute(SELECTION);
+      final var endpoint = selection.endpoint();
+      final var cors = selection.cors();
+      var preflight = false;
       HttpException corsFailure = null;
 
       try {
@@ -2555,7 +2625,7 @@ public final class Shoostr {
       response.gating(selection.preflight() || corsFailure != null);
 
       try {
-        for (var hook : headerHooks) {
+        for (final var hook : dispatch.headerHooks()) {
           hook.handle(request, response);
         }
       } finally {
@@ -2579,12 +2649,12 @@ public final class Shoostr {
      */
     private RadixRoutes.@Nullable Endpoint matchEndpoint(
         org.eclipse.jetty.server.Request rawRequest, String methodName, boolean upgrades) {
-      var method = HttpMethods.httpMethod(methodName).orElse(null);
-      var path = org.eclipse.jetty.server.Request.getPathInContext(rawRequest);
+      final var method = HttpMethods.httpMethod(methodName).orElse(null);
+      final var path = org.eclipse.jetty.server.Request.getPathInContext(rawRequest);
       RadixRoutes.Endpoint endpoint = null;
       if (upgrades && websocketRoutes != null) {
-        var tunnel = rawRequest.getTunnelSupport();
-        boolean extendedWebSocket =
+        final var tunnel = rawRequest.getTunnelSupport();
+        final var extendedWebSocket =
             method == HttpMethods.CONNECT
                 && rawRequest.getConnectionMetaData().getHttpVersion() == HttpVersion.HTTP_2
                 && tunnel != null
@@ -2596,10 +2666,10 @@ public final class Shoostr {
       }
 
       if (endpoint == null) {
-        endpoint = compiledRoutes.match(path, method);
+        endpoint = dispatch.router().match(path, method);
       }
 
-      return endpoint == null ? compiledRoutes.staticEndpoint(path, method) : endpoint;
+      return endpoint == null ? dispatch.router().staticEndpoint(path, method) : endpoint;
     }
 
     /**
@@ -2611,15 +2681,16 @@ public final class Shoostr {
      */
     @SuppressWarnings("java:S112") // Status handlers may throw their own checked failures.
     private void handleUnmatched(Request request, Response response) throws Exception {
-      var methods = compiledRoutes.allowedMethods(request.path());
+      final var methods = dispatch.router().allowedMethods(request.path());
       if (methods.isEmpty()) {
-        generated(statuses, HttpStatusCodes.NOT_FOUND.value(), "Not found", request, response);
+        generated(
+            dispatch.statuses(), HttpStatusCodes.NOT_FOUND.value(), "Not found", request, response);
         return;
       }
 
       response.requiredAllow(String.join(", ", methods.stream().map(HttpMethods::value).toList()));
       generated(
-          statuses,
+          dispatch.statuses(),
           HttpStatusCodes.METHOD_NOT_ALLOWED.value(),
           "Method not allowed",
           request,
@@ -2651,7 +2722,8 @@ public final class Shoostr {
         @Nullable Completion observation)
         throws Exception {
       request.route(endpoint);
-      var local = endpoint.behavior();
+
+      final var local = endpoint.behavior();
       runMatchedHooks(local, request, response, observation);
 
       if (rawRequest.getLength() > request.maxBodyBytes()) {
@@ -2665,12 +2737,12 @@ public final class Shoostr {
 
       endpoint.handler().handle(request, response);
       if (local != null) {
-        for (var hook : local.after()) {
+        for (final var hook : local.after()) {
           hook.handle(request, response);
         }
       }
 
-      for (var hook : postRouteHooks) {
+      for (final var hook : dispatch.postRouteHooks()) {
         hook.handle(request, response);
       }
 
@@ -2678,13 +2750,14 @@ public final class Shoostr {
         return false;
       }
 
-      var container = Objects.requireNonNull(ServerWebSocketContainer.get(rawRequest.getContext()));
+      final var container =
+          Objects.requireNonNull(ServerWebSocketContainer.get(rawRequest.getContext()));
       if (upgradeWebSocket(
           container,
           endpoint,
           request,
           response,
-          errors,
+          dispatch.errors(),
           observation,
           rawRequest,
           rawResponse,
@@ -2697,7 +2770,7 @@ public final class Shoostr {
       response.setHeader(
           HttpHeader.SEC_WEBSOCKET_VERSION.asString(), WebSocketConstants.SPEC_VERSION_STRING);
       generated(
-          statuses,
+          dispatch.statuses(),
           HttpStatusCodes.UPGRADE_REQUIRED.value(),
           "Upgrade required",
           request,
@@ -2731,12 +2804,12 @@ public final class Shoostr {
           observation.localObservers = local.observers();
         }
 
-        for (var hook : local.matched()) {
+        for (final var hook : local.matched()) {
           hook.handle(request, response);
         }
       }
 
-      for (var hook : matchedHooks) {
+      for (final var hook : dispatch.matchedHooks()) {
         hook.handle(request, response);
       }
     }
@@ -2756,10 +2829,15 @@ public final class Shoostr {
     private boolean available(@Nullable EndpointBehavior local, Request request, Response response)
         throws Exception {
       if (local != null) {
-        for (var condition : local.conditions()) {
+        for (final var condition : local.conditions()) {
           if (!condition.test(request)) {
             response.setHeader(HttpHeader.CACHE_CONTROL.asString(), "no-store");
-            generated(statuses, HttpStatusCodes.NOT_FOUND.value(), "Not found", request, response);
+            generated(
+                dispatch.statuses(),
+                HttpStatusCodes.NOT_FOUND.value(),
+                "Not found",
+                request,
+                response);
 
             return false;
           }
@@ -2780,7 +2858,7 @@ public final class Shoostr {
     @SuppressWarnings("java:S112") // Admission gates may throw checked application failures.
     private void runGates(@Nullable EndpointBehavior local, Request request, Response response)
         throws Exception {
-      if (gates.isEmpty() && local == null) {
+      if (dispatch.gates().isEmpty() && local == null) {
         return;
       }
 
@@ -2792,12 +2870,12 @@ public final class Shoostr {
             local.authentication().handle(request, response);
           }
 
-          for (var gate : local.before()) {
+          for (final var gate : local.before()) {
             gate.handle(request, response);
           }
         }
 
-        for (var gate : gates) {
+        for (final var gate : dispatch.gates()) {
           gate.handle(request, response);
         }
       } finally {
@@ -2832,14 +2910,9 @@ public final class Shoostr {
       }
 
       request.releaseOwnership();
-      var task = new MatchedTask(this, endpoint, request, response, responseCallback, observation);
-      boolean accepted;
-      synchronized (pendingMatches) {
-        accepted = !stoppingMatches;
-        if (accepted) {
-          pendingMatches.add(task);
-        }
-      }
+      final var task =
+          new MatchedTask(this, endpoint, request, response, responseCallback, observation);
+      final var accepted = admitTask(task);
 
       try {
         if (!accepted) {
@@ -2864,14 +2937,33 @@ public final class Shoostr {
     }
 
     /**
-     * Removes a finalized task without acquiring the app monitor held during graceful shutdown.
+     * Registers selected work only while shutdown has not stopped matched admission.
+     *
+     * @param task ownership-released exchange awaiting executor submission
+     * @return whether submission is still allowed
+     */
+    private boolean admitTask(MatchedTask task) {
+      return Objects.requireNonNull(
+          getUnderLock(
+              pendingMatchesLock,
+              () -> {
+                final var accepting = !stoppingMatches;
+                if (accepting) {
+                  pendingMatches.add(task);
+                }
+
+                return accepting;
+              }));
+    }
+
+    /**
+     * Removes a finalized task without acquiring the application lock held during graceful
+     * shutdown.
      *
      * @param task finalized matched exchange
      */
     private void forgetTask(MatchedTask task) {
-      synchronized (pendingMatches) {
-        pendingMatches.remove(task);
-      }
+      runUnderLock(pendingMatchesLock, () -> pendingMatches.remove(task));
     }
 
     /**
@@ -2886,6 +2978,8 @@ public final class Shoostr {
 
     /** One selected exchange; canceled queue tombstones retain no app or request references. */
     private static final class MatchedTask implements Runnable {
+      private final ReentrantLock lock;
+
       private @Nullable ApplicationHandler owner;
       private RadixRoutes.@Nullable Endpoint endpoint;
       private @Nullable Request request;
@@ -2912,6 +3006,7 @@ public final class Shoostr {
           Response response,
           Callback callback,
           @Nullable Completion observation) {
+        this.lock = new ReentrantLock();
         this.owner = owner;
         this.endpoint = endpoint;
         this.request = request;
@@ -2933,12 +3028,12 @@ public final class Shoostr {
           return;
         }
 
-        var activeOwner = Objects.requireNonNull(owner);
-        var selectedEndpoint = Objects.requireNonNull(endpoint);
-        var activeRequest = Objects.requireNonNull(request);
-        var activeResponse = Objects.requireNonNull(response);
-        var completionCallback = Objects.requireNonNull(callback);
-        var activeObservation = observation;
+        final var activeOwner = Objects.requireNonNull(owner);
+        final var selectedEndpoint = Objects.requireNonNull(endpoint);
+        final var activeRequest = Objects.requireNonNull(request);
+        final var activeResponse = Objects.requireNonNull(response);
+        final var completionCallback = Objects.requireNonNull(callback);
+        final var activeObservation = observation;
         activeRequest.acquireOwnership();
         Throwable applicationFailure = null;
         Throwable terminalFailure = null;
@@ -2984,13 +3079,13 @@ public final class Shoostr {
           return;
         }
 
-        var activeOwner = Objects.requireNonNull(owner);
-        var activeRequest = Objects.requireNonNull(request);
-        var activeResponse = Objects.requireNonNull(response);
-        var completionCallback = Objects.requireNonNull(callback);
-        var activeObservation = observation;
+        final var activeOwner = Objects.requireNonNull(owner);
+        final var activeRequest = Objects.requireNonNull(request);
+        final var activeResponse = Objects.requireNonNull(response);
+        final var completionCallback = Objects.requireNonNull(callback);
+        final var activeObservation = observation;
         activeRequest.acquireOwnership();
-        var failure = new RejectedExecutionException("Application stopped");
+        final var failure = new RejectedExecutionException("Application stopped");
 
         try {
           activeResponse.fail();
@@ -3014,19 +3109,24 @@ public final class Shoostr {
        * @return whether this invocation owns processing
        * @throws RejectedExecutionException if work runs inline on the submitting thread
        */
-      private synchronized boolean claim(boolean running) {
-        if (claimed) {
-          return false;
-        }
+      private boolean claim(boolean running) {
+        return Objects.requireNonNull(
+            getUnderLock(
+                lock,
+                () -> {
+                  if (claimed) {
+                    return false;
+                  }
 
-        if (running && Thread.currentThread() == admission) {
-          throw new RejectedExecutionException(
-              "Endpoint executor must not run on the submitting thread");
-        }
+                  if (running && Thread.currentThread() == admission) {
+                    throw new RejectedExecutionException(
+                        "Endpoint executor must not run on the submitting thread");
+                  }
 
-        claimed = true;
+                  claimed = true;
 
-        return true;
+                  return true;
+                }));
       }
 
       /**
@@ -3034,16 +3134,62 @@ public final class Shoostr {
        *
        * @param owner dispatch implementation whose task registry must release this exchange
        */
-      private synchronized void discard(ApplicationHandler owner) {
-        owner.forgetTask(this);
-        this.owner = null;
-        endpoint = null;
-        request = null;
-        response = null;
-        callback = null;
-        observation = null;
-        admission = null;
+      private void discard(ApplicationHandler owner) {
+        runUnderLock(
+            lock,
+            () -> {
+              owner.forgetTask(this);
+              this.owner = null;
+              endpoint = null;
+              request = null;
+              response = null;
+              callback = null;
+              observation = null;
+              admission = null;
+            });
       }
+    }
+  }
+
+  /**
+   * Registration view over one existing app; startup, configuration and ownership stay on Shoostr.
+   */
+  public static final class Typed {
+    private final Shoostr app;
+    private final Routes.Typed routes;
+
+    /**
+     * Creates the codec-backed view without acquiring any application resources.
+     *
+     * @param app original application
+     * @param codec configured application conversion
+     */
+    Typed(Shoostr app, Codec codec) {
+      this.app = Objects.requireNonNull(app);
+      this.routes = new Routes.Typed(app.routes(), codec);
+    }
+
+    /**
+     * Returns this view's root registration scope.
+     *
+     * @return typed registration using the app's existing root routes
+     */
+    public Routes.Typed routes() {
+      return routes;
+    }
+
+    /**
+     * Registers typed endpoints immediately and returns the original app for fluent configuration
+     * and startup. Exceptions and active-registration startup guards match ordinary routes.
+     *
+     * @param registration typed route definitions
+     * @return the original application
+     */
+    public Shoostr routes(Consumer<Routes.Typed> registration) {
+      Objects.requireNonNull(registration);
+      app.routes(ignored -> registration.accept(routes));
+
+      return app;
     }
   }
 }

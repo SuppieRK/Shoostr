@@ -24,7 +24,7 @@ import org.junit.jupiter.api.Test;
 
 class OpenTelemetryTracingEqualityTest {
   @Test
-  void comparesAllStoredProviderState() {
+  void comparesTelemetryProviderAndTracer() {
     try (var firstProvider = openTracerProvider();
         var secondProvider = openTracerProvider()) {
       var first = createTelemetry(firstProvider);
@@ -34,6 +34,7 @@ class OpenTelemetryTracingEqualityTest {
           .withPrefabValues(OpenTelemetry.class, first, second)
           .withPrefabValues(Tracer.class, first.getTracer("first"), second.getTracer("second"))
           .withNonnullFields("telemetry", "tracer")
+          .withIgnoredFields("registrationLock")
           .suppress(Warning.NONFINAL_FIELDS)
           .verify();
     }

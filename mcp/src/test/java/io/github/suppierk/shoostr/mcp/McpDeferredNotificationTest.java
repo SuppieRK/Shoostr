@@ -43,15 +43,14 @@ class McpDeferredNotificationTest {
     var mcp = Mcp.async(security, transport -> McpServer.async(transport).build());
     var app = new Shoostr();
     app.routes(routes -> routes.path("/mcp", mcp::routes));
-    app.beforeResponseFlush(
-        (request, ignoredResponse) -> {
-          if ("GET".equals(request.method()) && "/mcp".equals(request.path())) {
-            var session = request.header("Mcp-Session-Id").orElseThrow();
-            if (attached.add(session)) {
-              listening.add(session);
-            }
-          }
-        });
+    app.beforeResponseFlush((request, ignoredResponse) -> {
+      if ("GET".equals(request.method()) && "/mcp".equals(request.path())) {
+        var session = request.header("Mcp-Session-Id").orElseThrow();
+        if (attached.add(session)) {
+          listening.add(session);
+        }
+      }
+    });
 
     try (var test = TestServer.start(app);
         var alpha = openClient(test, alphaNotifications);
@@ -124,12 +123,11 @@ class McpDeferredNotificationTest {
 
   private HttpResponse<byte[]> sendDeletedRequestForDeletedSession(
       TestServer test, String alphaSession) throws IOException, InterruptedException {
-    return test.send(
-        request ->
-            request
-                .path("/mcp")
-                .method("DELETE")
-                .header("Mcp-Session-Id", alphaSession)
-                .header("MCP-Protocol-Version", "2025-11-25"));
+    return test.send(request ->
+        request
+            .path("/mcp")
+            .method("DELETE")
+            .header("Mcp-Session-Id", alphaSession)
+            .header("MCP-Protocol-Version", "2025-11-25"));
   }
 }

@@ -10,9 +10,13 @@ import org.jspecify.annotations.Nullable;
  * accepted activity or completion of native work.
  */
 public final class McpSessionLimits {
-  private int maxSessions = 1024;
-  private int maxSessionsPerOwner = 32;
-  private Duration idleTimeout = Duration.ofMinutes(30);
+  private static final int DEFAULT_MAX_SESSIONS = 1024;
+  private static final int DEFAULT_MAX_SESSIONS_PER_OWNER = 32;
+  private static final long DEFAULT_IDLE_TIMEOUT_MINUTES = 30;
+
+  private int maxSessions = DEFAULT_MAX_SESSIONS;
+  private int maxSessionsPerOwner = DEFAULT_MAX_SESSIONS_PER_OWNER;
+  private Duration idleTimeout = Duration.ofMinutes(DEFAULT_IDLE_TIMEOUT_MINUTES);
 
   /** Creates the existing capacity and idle-time defaults. */
   public McpSessionLimits() {}
@@ -73,7 +77,7 @@ public final class McpSessionLimits {
    * @throws IllegalArgumentException if the supplied value is not positive
    */
   public void setMaxSessions(@Nullable Integer value) {
-    int resolved = value == null ? 1024 : value;
+    int resolved = value == null ? DEFAULT_MAX_SESSIONS : value;
     if (resolved <= 0) {
       throw new IllegalArgumentException("MCP session capacity must be positive");
     }
@@ -106,7 +110,7 @@ public final class McpSessionLimits {
    * @throws IllegalArgumentException if the supplied value is not positive
    */
   public void setMaxSessionsPerOwner(@Nullable Integer value) {
-    int resolved = value == null ? 32 : value;
+    int resolved = value == null ? DEFAULT_MAX_SESSIONS_PER_OWNER : value;
     if (resolved <= 0) {
       throw new IllegalArgumentException("MCP owner capacity must be positive");
     }
@@ -139,7 +143,7 @@ public final class McpSessionLimits {
    * @throws IllegalArgumentException if the supplied value is not positive
    */
   public void setIdleTimeout(@Nullable Duration value) {
-    var resolved = value == null ? Duration.ofMinutes(30) : value;
+    var resolved = value == null ? Duration.ofMinutes(DEFAULT_IDLE_TIMEOUT_MINUTES) : value;
     if (!resolved.isPositive()) {
       throw new IllegalArgumentException("MCP idle timeout must be positive");
     }

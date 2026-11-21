@@ -5,6 +5,7 @@ import io.github.suppierk.shoostr.Response;
 import io.github.suppierk.shoostr.http.Cookie.SameSite;
 import io.github.suppierk.shoostr.http.HttpCharacters;
 import io.github.suppierk.shoostr.http.HttpHeaders;
+import io.github.suppierk.shoostr.http.MediaType;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.net.InetSocketAddress;
@@ -44,7 +45,7 @@ final class Pac4jContext implements WebContext {
    * @return independent array retaining query-first precedence
    */
   private static String[] concatenate(String[] query, String[] form) {
-    var combined = Arrays.copyOf(query, query.length + form.length);
+    final var combined = Arrays.copyOf(query, query.length + form.length);
     System.arraycopy(form, 0, combined, query.length, form.length);
 
     return combined;
@@ -53,7 +54,7 @@ final class Pac4jContext implements WebContext {
   /** {@inheritDoc} */
   @Override
   public Optional<String> getRequestParameter(String name) {
-    var values = getRequestParameters().get(name);
+    final var values = getRequestParameters().get(name);
 
     return values == null || values.length == 0 ? Optional.empty() : Optional.of(values[0]);
   }
@@ -61,31 +62,43 @@ final class Pac4jContext implements WebContext {
   /** {@inheritDoc} */
   @Override
   public Map<String, String[]> getRequestParameters() {
-    var parameters = new HashMap<String, String[]>();
+    final var parameters = new HashMap<String, String[]>();
     request
         .queryParamMap()
         .forEach((name, values) -> parameters.put(name, values.toArray(String[]::new)));
 
-    var contentType = request.header(HttpHeaders.CONTENT_TYPE.value()).orElse(null);
-    if (contentType != null) {
-      var separator = contentType.indexOf(HttpCharacters.SEMICOLON_SIGN);
-      var mediaType = (separator < 0 ? contentType : contentType.substring(0, separator)).trim();
-      if ("application/x-www-form-urlencoded".equalsIgnoreCase(mediaType)
-          || "multipart/form-data".equalsIgnoreCase(mediaType)) {
-        try {
-          request
-              .formParamMap()
-              .forEach(
-                  (name, values) ->
-                      parameters.merge(
-                          name, values.toArray(String[]::new), Pac4jContext::concatenate));
-        } catch (IOException failure) {
-          throw new UncheckedIOException(failure);
-        }
-      }
+    if (!hasFormContentType()) {
+      return parameters;
+    }
+
+    try {
+      request
+          .formParamMap()
+          .forEach((name, values) ->
+              parameters.merge(name, values.toArray(String[]::new), Pac4jContext::concatenate));
+    } catch (IOException failure) {
+      throw new UncheckedIOException(failure);
     }
 
     return parameters;
+  }
+
+  /**
+   * Checks whether the request declares a supported form media type before reading its body.
+   *
+   * @return whether form parameters can be read
+   */
+  private boolean hasFormContentType() {
+    final var contentType = request.header(HttpHeaders.CONTENT_TYPE.value()).orElse(null);
+    if (contentType == null) {
+      return false;
+    }
+
+    final var separator = contentType.indexOf(HttpCharacters.SEMICOLON_SIGN);
+    final var mediaType =
+        (separator < 0 ? contentType : contentType.substring(0, separator)).trim();
+    return MediaType.APPLICATION_FORM_URLENCODED.value().equalsIgnoreCase(mediaType)
+        || MediaType.MULTIPART_FORM_DATA.value().equalsIgnoreCase(mediaType);
   }
 
   /** {@inheritDoc} */
@@ -149,7 +162,7 @@ final class Pac4jContext implements WebContext {
   /** {@inheritDoc} */
   @Override
   public int getServerPort() {
-    var uri = effectiveOrigin();
+    final var uri = effectiveOrigin();
     if (uri.getPort() >= 0) {
       return uri.getPort();
     }
@@ -186,11 +199,11 @@ final class Pac4jContext implements WebContext {
   /** {@inheritDoc} */
   @Override
   public void addResponseCookie(Cookie cookie) {
-    var sameSite =
+    final var sameSite =
         cookie.getSameSitePolicy() == null
             ? null
             : SameSite.valueOf(cookie.getSameSitePolicy().toUpperCase(Locale.ROOT));
-    var converted = responseCookie(cookie, sameSite);
+    final var converted = responseCookie(cookie, sameSite);
 
     response.cookie(converted);
   }
@@ -240,11 +253,13 @@ final class Pac4jContext implements WebContext {
    * @return effective origin used by the SDK's server metadata accessors
    */
   private URI effectiveOrigin() {
-    var url = request.effectiveUrl();
+    final var url = request.effectiveUrl();
     var end = url.length();
-    for (int index = url.indexOf("://") + 3; index < end; index++) {
-      var character = url.charAt(index);
-      if (character == '/' || character == '?' || character == '#') {
+    for (var index = url.indexOf("://") + 3; index < end; index++) {
+      final var character = url.charAt(index);
+      if (character == HttpCharacters.PATH_SEPARATOR
+          || character == HttpCharacters.QUERY_SEPARATOR
+          || character == HttpCharacters.FRAGMENT_SEPARATOR) {
         end = index;
         break;
       }

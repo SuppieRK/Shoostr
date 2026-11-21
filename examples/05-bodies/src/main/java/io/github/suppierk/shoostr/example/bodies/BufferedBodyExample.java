@@ -60,7 +60,7 @@ public final class BufferedBodyExample {
     options.setMaxResponseBytes(4096);
     options.setStreamBufferBytes(512);
     options.setMaxParameters(4);
-    options.setMultipart(MultipartOptions.defaults());
+    options.setMultipart(new MultipartOptions());
 
     return options;
   }

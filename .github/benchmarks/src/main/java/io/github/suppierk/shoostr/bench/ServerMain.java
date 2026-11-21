@@ -64,49 +64,44 @@ public final class ServerMain {
     var app = new Shoostr();
 
     try {
-      return app.routes(
-          routes -> {
-            routes.get(
-                "/plaintext",
-                (ignored, response) -> response.body("text/plain;charset=utf-8", PLAIN));
-            routes.get(
-                "/json-bytes",
-                (ignoredRequest, response) -> response.body("application/json", JSON));
-            routes.post(
-                "/echo",
-                (request, response) ->
-                    response.body("application/octet-stream", request.bodyBytes()));
-            routes.get(
-                "/stream",
-                (ignoredRequest, response) -> {
-                  var stream = response.startStream("application/octet-stream");
+      return app.routes(routes -> {
+        routes.get(
+            "/plaintext", (ignored, response) -> response.body("text/plain;charset=utf-8", PLAIN));
+        routes.get(
+            "/json-bytes", (ignoredRequest, response) -> response.body("application/json", JSON));
+        routes.post(
+            "/echo",
+            (request, response) -> response.body("application/octet-stream", request.bodyBytes()));
+        routes.get(
+            "/stream",
+            (ignoredRequest, response) -> {
+              var stream = response.startStream("application/octet-stream");
 
-                  for (int index = 0; index < EVENT_COUNT; index++) {
-                    stream.write(CHUNK);
-                  }
-                });
-            routes.get(
-                "/virtual",
-                (ignoredRequest, response) ->
-                    response.text(Boolean.toString(Thread.currentThread().isVirtual())));
-            routes.sse(
-                "/sse-burst", (ignoredRequest, response) -> sendEvents(response, 0, EVENT_PAYLOAD));
-            routes.sse(
-                "/sse-paced",
-                (ignoredRequest, response) -> sendEvents(response, 20, EVENT_PAYLOAD));
-            routes.sse(
-                "/sse-slow",
-                (ignoredRequest, response) -> sendEvents(response, 0, LARGE_EVENT_PAYLOAD));
-            routes.websocket(
-                "/ws-text", (ignoredRequest, ignoredServerUpgradeResponse) -> new EchoListener());
-            routes.websocket(
-                "/ws-binary", (ignoredRequest, ignoredServerUpgradeResponse) -> new EchoListener());
-            if (staticRoot != null) {
-              routes.staticFiles("/static", staticRoot);
-            }
+              for (int index = 0; index < EVENT_COUNT; index++) {
+                stream.write(CHUNK);
+              }
+            });
+        routes.get(
+            "/virtual",
+            (ignoredRequest, response) ->
+                response.text(Boolean.toString(Thread.currentThread().isVirtual())));
+        routes.sse(
+            "/sse-burst", (ignoredRequest, response) -> sendEvents(response, 0, EVENT_PAYLOAD));
+        routes.sse(
+            "/sse-paced", (ignoredRequest, response) -> sendEvents(response, 20, EVENT_PAYLOAD));
+        routes.sse(
+            "/sse-slow",
+            (ignoredRequest, response) -> sendEvents(response, 0, LARGE_EVENT_PAYLOAD));
+        routes.websocket(
+            "/ws-text", (ignoredRequest, ignoredServerUpgradeResponse) -> new EchoListener());
+        routes.websocket(
+            "/ws-binary", (ignoredRequest, ignoredServerUpgradeResponse) -> new EchoListener());
+        if (staticRoot != null) {
+          routes.staticFiles("/static", staticRoot);
+        }
 
-            registerRouteGroups(routes, routeGroups);
-          });
+        registerRouteGroups(routes, routeGroups);
+      });
     } catch (RuntimeException | Error failure) {
       try {
         app.close();

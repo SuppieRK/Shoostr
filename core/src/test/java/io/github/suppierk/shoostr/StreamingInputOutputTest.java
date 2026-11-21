@@ -1,6 +1,8 @@
 package io.github.suppierk.shoostr;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
@@ -23,8 +25,10 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.Arrays;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.eclipse.jetty.server.ServerConnector;
 import org.junit.jupiter.api.Test;
@@ -190,7 +194,7 @@ class StreamingInputOutputTest {
     options.setMaxResponseBytes(1_048_576);
     options.setStreamBufferBytes(8192);
     options.setMaxParameters(1000);
-    options.setMultipart(MultipartOptions.defaults());
+    options.setMultipart(new MultipartOptions());
 
     {
       var app = createAppForRejectsChunkedStreamingInputAfterTheConsumedByteLimit(options);
@@ -216,13 +220,12 @@ class StreamingInputOutputTest {
   private Shoostr createAppForRejectsChunkedStreamingInputAfterTheConsumedByteLimit(
       Options options) {
     return new Shoostr(options)
-        .modifyServer(
-            listenerServer -> {
-              var listener = (ServerConnector) listenerServer.getConnectors()[0];
-              listener.setHost("127.0.0.1");
-              listener.setPort(0);
-              listener.setIdleTimeout(30000);
-            });
+        .modifyServer(listenerServer -> {
+          var listener = (ServerConnector) listenerServer.getConnectors()[0];
+          listener.setHost("127.0.0.1");
+          listener.setPort(0);
+          listener.setIdleTimeout(30000);
+        });
   }
 
   private HttpResponse<String> sendResultForRejectsChunkedStreamingInputAfterTheConsumedByteLimit(
@@ -243,7 +246,7 @@ class StreamingInputOutputTest {
     options.setMaxResponseBytes(1_048_576);
     options.setStreamBufferBytes(8192);
     options.setMaxParameters(1000);
-    options.setMultipart(MultipartOptions.defaults());
+    options.setMultipart(new MultipartOptions());
 
     {
       var app = createAppForRejectsChunkedStreamingInputSkippedPastTheConsumedByteLimit(options);
@@ -270,13 +273,12 @@ class StreamingInputOutputTest {
   private Shoostr createAppForRejectsChunkedStreamingInputSkippedPastTheConsumedByteLimit(
       Options options) {
     return new Shoostr(options)
-        .modifyServer(
-            listenerServer -> {
-              var listener = (ServerConnector) listenerServer.getConnectors()[0];
-              listener.setHost("127.0.0.1");
-              listener.setPort(0);
-              listener.setIdleTimeout(30000);
-            });
+        .modifyServer(listenerServer -> {
+          var listener = (ServerConnector) listenerServer.getConnectors()[0];
+          listener.setHost("127.0.0.1");
+          listener.setPort(0);
+          listener.setIdleTimeout(30000);
+        });
   }
 
   private HttpResponse<String>
@@ -424,7 +426,7 @@ class StreamingInputOutputTest {
     options.setMaxResponseBytes(3);
     options.setStreamBufferBytes(2);
     options.setMaxParameters(1000);
-    options.setMultipart(MultipartOptions.defaults());
+    options.setMultipart(new MultipartOptions());
     var oversizedBody = "abcd".getBytes(StandardCharsets.UTF_8);
 
     {
@@ -457,13 +459,12 @@ class StreamingInputOutputTest {
   private Shoostr createAppForRejectsOversizedFiniteBodiesWithoutChangingThePreviouslyStagedBody(
       Options options) {
     return new Shoostr(options)
-        .modifyServer(
-            listenerServer -> {
-              var listener = (ServerConnector) listenerServer.getConnectors()[0];
-              listener.setHost("127.0.0.1");
-              listener.setPort(0);
-              listener.setIdleTimeout(5000);
-            });
+        .modifyServer(listenerServer -> {
+          var listener = (ServerConnector) listenerServer.getConnectors()[0];
+          listener.setHost("127.0.0.1");
+          listener.setPort(0);
+          listener.setIdleTimeout(5000);
+        });
   }
 
   @Test
@@ -473,7 +474,7 @@ class StreamingInputOutputTest {
     options.setMaxResponseBytes(3);
     options.setStreamBufferBytes(2);
     options.setMaxParameters(1000);
-    options.setMultipart(MultipartOptions.defaults());
+    options.setMultipart(new MultipartOptions());
 
     {
       var app = createAppForStreamsOutputLargerThanTheFiniteResponseLimit(options);
@@ -483,9 +484,11 @@ class StreamingInputOutputTest {
             .get(
                 "/stream",
                 (ignoredRequest, response) ->
-                    response.input(
-                        new ByteArrayInputStream("streamed".getBytes(StandardCharsets.UTF_8)),
-                        "text/plain"));
+                    assertSame(
+                        response,
+                        response.input(
+                            new ByteArrayInputStream("streamed".getBytes(StandardCharsets.UTF_8)),
+                            "text/plain")));
 
         try (var test = TestServer.start(app)) {
           var result =
@@ -500,13 +503,12 @@ class StreamingInputOutputTest {
 
   private Shoostr createAppForStreamsOutputLargerThanTheFiniteResponseLimit(Options options) {
     return new Shoostr(options)
-        .modifyServer(
-            listenerServer -> {
-              var listener = (ServerConnector) listenerServer.getConnectors()[0];
-              listener.setHost("127.0.0.1");
-              listener.setPort(0);
-              listener.setIdleTimeout(30000);
-            });
+        .modifyServer(listenerServer -> {
+          var listener = (ServerConnector) listenerServer.getConnectors()[0];
+          listener.setHost("127.0.0.1");
+          listener.setPort(0);
+          listener.setIdleTimeout(30000);
+        });
   }
 
   @Test
@@ -571,6 +573,67 @@ class StreamingInputOutputTest {
   }
 
   @Test
+  void confinesHeadInputToItsHandlerThreadAndClosesSourcesWithoutReading() throws Exception {
+    var closes = new AtomicInteger();
+    var app = new Shoostr();
+
+    try (Closeable appCleanup = app::close) {
+      app.routes()
+          .head(
+              "/input",
+              (ignoredRequest, response) -> {
+                try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+                  executor
+                      .submit(() ->
+                          assertThrows(
+                              IllegalStateException.class,
+                              () -> response.input(unreadableInput(closes), "application/foreign")))
+                      .get(3, TimeUnit.SECONDS);
+                }
+
+                assertNull(response.header("Content-Type"));
+
+                response
+                    .input(unreadableInput(closes), "application/custom")
+                    .setHeader("X-Chain", "ok");
+              });
+
+      try (var test = TestServer.start(app)) {
+        var result =
+            test.send(
+                request -> request.path("/input").method("HEAD"),
+                HttpResponse.BodyHandlers.ofString());
+
+        assertEquals(200, result.statusCode());
+        assertEquals("", result.body());
+        assertEquals(
+            "application/custom", result.headers().firstValue("Content-Type").orElseThrow());
+        assertEquals("ok", result.headers().firstValue("X-Chain").orElseThrow());
+        assertEquals(2, closes.get());
+      }
+    }
+  }
+
+  private InputStream unreadableInput(AtomicInteger closes) {
+    return new InputStream() {
+      @Override
+      public int read() {
+        return fail("HEAD response read its source");
+      }
+
+      @Override
+      public int read(byte[] bytes, int offset, int length) {
+        return fail("HEAD response read its source");
+      }
+
+      @Override
+      public void close() {
+        closes.incrementAndGet();
+      }
+    };
+  }
+
+  @Test
   void closesInputWithoutReadingItForBodylessResponses() throws Exception {
     var closed = new AtomicBoolean();
 
@@ -583,24 +646,26 @@ class StreamingInputOutputTest {
                 "/empty",
                 (ignoredRequest, response) -> {
                   response.status(204);
-                  response.input(
-                      new InputStream() {
-                        @Override
-                        public int read() {
-                          return fail("bodyless response read its source");
-                        }
+                  assertSame(
+                      response,
+                      response.input(
+                          new InputStream() {
+                            @Override
+                            public int read() {
+                              return fail("bodyless response read its source");
+                            }
 
-                        @Override
-                        public int read(byte[] bytes, int offset, int length) {
-                          return fail("bodyless response read its source");
-                        }
+                            @Override
+                            public int read(byte[] bytes, int offset, int length) {
+                              return fail("bodyless response read its source");
+                            }
 
-                        @Override
-                        public void close() {
-                          closed.set(true);
-                        }
-                      },
-                      "text/plain");
+                            @Override
+                            public void close() {
+                              closed.set(true);
+                            }
+                          },
+                          "text/plain"));
                 });
 
         try (var test = TestServer.start(app)) {

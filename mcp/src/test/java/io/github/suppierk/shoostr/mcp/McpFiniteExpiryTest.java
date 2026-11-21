@@ -166,14 +166,13 @@ class McpFiniteExpiryTest {
   private HttpResponse<byte[]>
       sendInitializedRequestForRejectsFiniteMessageWhoseBodyArrivesAfterVerifiedExpiry(
           TestServer test) throws IOException, InterruptedException {
-    return test.send(
-        request ->
-            request
-                .path("/mcp")
-                .method("POST")
-                .header("Content-Type", "application/json")
-                .header("Accept", "application/json, text/event-stream")
-                .body(INITIALIZE.getBytes(StandardCharsets.UTF_8)));
+    return test.send(request ->
+        request
+            .path("/mcp")
+            .method("POST")
+            .header("Content-Type", "application/json")
+            .header("Accept", "application/json, text/event-stream")
+            .body(INITIALIZE.getBytes(StandardCharsets.UTF_8)));
   }
 
   private String createMessageForRejectsFiniteMessageWhoseBodyArrivesAfterVerifiedExpiry(
@@ -257,16 +256,15 @@ class McpFiniteExpiryTest {
 
   private Future<HttpResponse<String>> submitReceivedForExpiredInitialization(
       ExecutorService client, TestServer test) {
-    return client.submit(
-        () ->
-            test.send(
-                request ->
-                    request
-                        .path("/mcp")
-                        .method("POST")
-                        .header("Content-Type", "application/json")
-                        .header("Accept", "application/json, text/event-stream")
-                        .body(INITIALIZE.getBytes(StandardCharsets.UTF_8)),
-                HttpResponse.BodyHandlers.ofString()));
+    return client.submit(() ->
+        test.send(
+            request ->
+                request
+                    .path("/mcp")
+                    .method("POST")
+                    .header("Content-Type", "application/json")
+                    .header("Accept", "application/json, text/event-stream")
+                    .body(INITIALIZE.getBytes(StandardCharsets.UTF_8)),
+            HttpResponse.BodyHandlers.ofString()));
   }
 }

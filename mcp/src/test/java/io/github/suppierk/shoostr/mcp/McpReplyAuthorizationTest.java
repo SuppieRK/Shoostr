@@ -124,15 +124,14 @@ class McpReplyAuthorizationTest {
                     McpServerFeatures.AsyncToolSpecification.builder()
                         .tool(
                             McpSchema.Tool.builder("ping-client", Map.of("type", "object")).build())
-                        .callHandler(
-                            (exchange, ignored) ->
-                                exchange
-                                    .ping()
-                                    .doOnSuccess(ignoredObject -> completed.countDown())
-                                    .thenReturn(
-                                        McpSchema.CallToolResult.builder()
-                                            .addTextContent("reply accepted")
-                                            .build()))
+                        .callHandler((exchange, ignored) ->
+                            exchange
+                                .ping()
+                                .doOnSuccess(ignoredObject -> completed.countDown())
+                                .thenReturn(
+                                    McpSchema.CallToolResult.builder()
+                                        .addTextContent("reply accepted")
+                                        .build()))
                         .build())
                 .build());
   }
@@ -140,20 +139,19 @@ class McpReplyAuthorizationTest {
   private HttpResponse<byte[]>
       sendInitializedRequestForAnUnauthorizedReplyCannotCompleteNativeRequestButGrantedRetryCan(
           TestServer test) throws IOException, InterruptedException {
-    return test.send(
-        request ->
-            request
-                .path("/mcp")
-                .method("POST")
-                .header("Content-Type", "application/json")
-                .header("Accept", "application/json, text/event-stream")
-                .body(
-                    """
-                    {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
-                      "protocolVersion":"2025-11-25","capabilities":{},
-                      "clientInfo":{"name":"reply-authorization-fixture","version":"1.0"}}}
-                    """
-                        .getBytes(StandardCharsets.UTF_8)));
+    return test.send(request ->
+        request
+            .path("/mcp")
+            .method("POST")
+            .header("Content-Type", "application/json")
+            .header("Accept", "application/json, text/event-stream")
+            .body(
+                """
+                {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+                  "protocolVersion":"2025-11-25","capabilities":{},
+                  "clientInfo":{"name":"reply-authorization-fixture","version":"1.0"}}}
+                """
+                    .getBytes(StandardCharsets.UTF_8)));
   }
 
   private HttpResponse<InputStream>
@@ -181,32 +179,30 @@ class McpReplyAuthorizationTest {
       sendDeniedRequestForAnUnauthorizedReplyCannotCompleteNativeRequestButGrantedRetryCan(
           TestServer test, String sessionId, byte[] replyBody)
           throws IOException, InterruptedException {
-    return test.send(
-        request ->
-            request
-                .path("/mcp")
-                .method("POST")
-                .header("Content-Type", "application/json")
-                .header("Accept", "application/json, text/event-stream")
-                .header("Mcp-Session-Id", sessionId)
-                .header("MCP-Protocol-Version", "2025-11-25")
-                .body(replyBody));
+    return test.send(request ->
+        request
+            .path("/mcp")
+            .method("POST")
+            .header("Content-Type", "application/json")
+            .header("Accept", "application/json, text/event-stream")
+            .header("Mcp-Session-Id", sessionId)
+            .header("MCP-Protocol-Version", "2025-11-25")
+            .body(replyBody));
   }
 
   private HttpResponse<byte[]>
       sendGrantedRequestForAnUnauthorizedReplyCannotCompleteNativeRequestButGrantedRetryCan(
           TestServer test, String sessionId, byte[] replyBody)
           throws IOException, InterruptedException {
-    return test.send(
-        request ->
-            request
-                .path("/mcp")
-                .method("POST")
-                .header("Content-Type", "application/json")
-                .header("Accept", "application/json, text/event-stream")
-                .header("Mcp-Session-Id", sessionId)
-                .header("MCP-Protocol-Version", "2025-11-25")
-                .header("X-Verified-Grants", "client:reply")
-                .body(replyBody));
+    return test.send(request ->
+        request
+            .path("/mcp")
+            .method("POST")
+            .header("Content-Type", "application/json")
+            .header("Accept", "application/json, text/event-stream")
+            .header("Mcp-Session-Id", sessionId)
+            .header("MCP-Protocol-Version", "2025-11-25")
+            .header("X-Verified-Grants", "client:reply")
+            .body(replyBody));
   }
 }

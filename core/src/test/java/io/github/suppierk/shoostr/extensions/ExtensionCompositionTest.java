@@ -38,32 +38,30 @@ class ExtensionCompositionTest {
 
       try (Closeable appCleanup = app::close) {
 
-        app.routes(
-            routes -> {
-              routes.path(
-                  "/users",
-                  users -> {
-                    users.get(
-                        "/{id}",
-                        shared,
-                        lifecycle ->
-                            retained.set(lifecycle.withExtension(docs).summary("One user")));
-                    users.get("/search", shared);
-                  },
-                  lifecycle -> {
-                    groupCalls.incrementAndGet();
-                    lifecycle.withExtension(auth);
-                    lifecycle.withExtension(docs).tag("users").summary("Users");
-                    lifecycle.withExtension(otherDocs).tag("public").summary("Other document");
-                  });
-              routes.get(
-                  "/openapi.json",
-                  docs.handler(),
-                  lifecycle -> {
-                    lifecycle.withExtension(auth);
-                    lifecycle.withExtension(docs).summary("API description");
-                  });
-            });
+        app.routes(routes -> {
+          routes.path(
+              "/users",
+              users -> {
+                users.get(
+                    "/{id}",
+                    shared,
+                    lifecycle -> retained.set(lifecycle.withExtension(docs).summary("One user")));
+                users.get("/search", shared);
+              },
+              lifecycle -> {
+                groupCalls.incrementAndGet();
+                lifecycle.withExtension(auth);
+                lifecycle.withExtension(docs).tag("users").summary("Users");
+                lifecycle.withExtension(otherDocs).tag("public").summary("Other document");
+              });
+          routes.get(
+              "/openapi.json",
+              docs.handler(),
+              lifecycle -> {
+                lifecycle.withExtension(auth);
+                lifecycle.withExtension(docs).summary("API description");
+              });
+        });
 
         try (var test = TestServer.start(app)) {
 
@@ -124,16 +122,15 @@ class ExtensionCompositionTest {
 
       assertSame(
           endpoint,
-          endpoint.onRoute(
-              (method, path) ->
-                  operations.add(
-                      method.value()
-                          + " "
-                          + path
-                          + " "
-                          + description.tag
-                          + " "
-                          + description.summary)));
+          endpoint.onRoute((method, path) ->
+              operations.add(
+                  method.value()
+                      + " "
+                      + path
+                      + " "
+                      + description.tag
+                      + " "
+                      + description.summary)));
 
       return description;
     }

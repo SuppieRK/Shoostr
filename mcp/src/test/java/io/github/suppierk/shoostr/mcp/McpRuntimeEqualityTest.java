@@ -275,8 +275,8 @@ class McpRuntimeEqualityTest {
                   .verify();
               configuration
                   .forClass(sessions.getFirst().getClass())
-                  .withNonnullFields(
-                      "sdk", "owner", "dispatches", "terminating", "activity", "notifications")
+                  .suppress(
+                      Warning.INHERITED_DIRECTLY_FROM_OBJECT, Warning.ALL_FIELDS_SHOULD_BE_USED)
                   .verify();
               configuration
                   .forClass(frames.getFirst().getClass())
@@ -284,6 +284,7 @@ class McpRuntimeEqualityTest {
                   .verify();
 
               assertNotEquals(first, second);
+              assertNotEquals(sessions.get(0), sessions.get(1));
               assertNotEquals(streams.get(0), streams.get(1));
               assertNotEquals(lifetimes.get(0), lifetimes.get(1));
 
@@ -388,12 +389,11 @@ class McpRuntimeEqualityTest {
       throws IOException, InterruptedException {
     return servers
         .get(index)
-        .send(
-            request ->
-                request
-                    .path("/mcp")
-                    .method("DELETE")
-                    .header("Mcp-Session-Id", identifier)
-                    .header("MCP-Protocol-Version", "2025-11-25"));
+        .send(request ->
+            request
+                .path("/mcp")
+                .method("DELETE")
+                .header("Mcp-Session-Id", identifier)
+                .header("MCP-Protocol-Version", "2025-11-25"));
   }
 }

@@ -1,6 +1,5 @@
 package io.github.suppierk.shoostr.extensions;
 
-import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -9,7 +8,6 @@ import io.github.suppierk.shoostr.Lifecycle;
 import io.github.suppierk.shoostr.Routes;
 import io.github.suppierk.shoostr.Shoostr;
 import java.io.Closeable;
-import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -244,8 +242,8 @@ class RegistrationDepthTest {
   }
 
   @Test
-  void keepsConcurrentRegistrationThreadsDepthIndependent() throws Exception {
-    var reached = new CountDownLatch(2);
+  void restoresDepthBetweenSerializedRegistrationThreads() throws Exception {
+    var reached = new AtomicInteger();
 
     {
       var app = new Shoostr();
@@ -257,21 +255,13 @@ class RegistrationDepthTest {
         var second = executor.submit(registration);
         first.get(10, TimeUnit.SECONDS);
         second.get(10, TimeUnit.SECONDS);
+        assertEquals(2, reached.get());
       }
     }
   }
 
-  private Runnable nestedRegistration(Shoostr app, CountDownLatch reached) {
-    return () ->
-        nested(
-            app.routes(),
-            10,
-            true,
-            ignoredRoutes -> {
-              reached.countDown();
-
-              assertDoesNotThrow(() -> assertTrue(reached.await(5, TimeUnit.SECONDS)));
-            });
+  private Runnable nestedRegistration(Shoostr app, AtomicInteger reached) {
+    return () -> nested(app.routes(), 10, true, ignoredRoutes -> reached.incrementAndGet());
   }
 
   @Test

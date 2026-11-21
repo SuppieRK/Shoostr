@@ -214,13 +214,11 @@ class CookieTest {
 
               try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
                 executor
-                    .submit(
-                        () -> {
-                          assertThrows(IllegalStateException.class, () -> request.cookie("quoted"));
-                          assertThrows(
-                              IllegalStateException.class, () -> request.cookies("quoted"));
-                          assertThrows(IllegalStateException.class, request::cookieMap);
-                        })
+                    .submit(() -> {
+                      assertThrows(IllegalStateException.class, () -> request.cookie("quoted"));
+                      assertThrows(IllegalStateException.class, () -> request.cookies("quoted"));
+                      assertThrows(IllegalStateException.class, request::cookieMap);
+                    })
                     .get(3, TimeUnit.SECONDS);
               }
 
@@ -647,14 +645,12 @@ class CookieTest {
 
               try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
                 executor
-                    .submit(
-                        () -> {
-                          assertThrows(
-                              IllegalStateException.class,
-                              () -> response.cookie("foreign", "value"));
-                          assertThrows(
-                              IllegalStateException.class, () -> response.removeCookie("before"));
-                        })
+                    .submit(() -> {
+                      assertThrows(
+                          IllegalStateException.class, () -> response.cookie("foreign", "value"));
+                      assertThrows(
+                          IllegalStateException.class, () -> response.removeCookie("before"));
+                    })
                     .get(3, TimeUnit.SECONDS);
               }
 

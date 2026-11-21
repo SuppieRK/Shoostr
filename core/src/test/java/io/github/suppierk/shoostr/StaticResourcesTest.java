@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
+import com.sun.nio.file.ExtendedOpenOption;
 import io.github.suppierk.shoostr.extensions.AdmissionExtension;
 import io.github.suppierk.shoostr.http.HttpHeaders;
 import io.github.suppierk.shoostr.http.HttpMethods;
@@ -32,14 +33,23 @@ import java.nio.file.FileSystem;
 import java.nio.file.FileSystemException;
 import java.nio.file.FileSystems;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
+import java.nio.file.attribute.AclEntry;
+import java.nio.file.attribute.AclEntryPermission;
+import java.nio.file.attribute.AclEntryType;
+import java.nio.file.attribute.AclFileAttributeView;
 import java.nio.file.attribute.FileTime;
+import java.nio.file.attribute.PosixFilePermission;
+import java.nio.file.attribute.UserPrincipal;
 import java.security.KeyStore;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -59,12 +69,17 @@ import java.util.stream.Stream;
 import java.util.zip.GZIPInputStream;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.TrustManagerFactory;
+import org.eclipse.jetty.http.UriCompliance;
+import org.eclipse.jetty.server.HttpConnectionFactory;
+import org.eclipse.jetty.server.Server;
 import org.eclipse.jetty.server.ServerConnector;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 class StaticResourcesTest {
@@ -146,11 +161,10 @@ class StaticResourcesTest {
   }
 
   private static void configureStaticTransportTls(Shoostr app, KeyStore store) {
-    app.tls(
-        context -> {
-          context.setKeyStore(store);
-          context.setKeyStorePassword("changeit");
-        });
+    app.tls(context -> {
+      context.setKeyStore(store);
+      context.setKeyStorePassword("changeit");
+    });
   }
 
   private static SSLContext staticTransportTrust(KeyStore store) throws Exception {
@@ -229,17 +243,25 @@ class StaticResourcesTest {
     }
   }
 
-  @Test
-  void rejectsParameterizedFilesystemMounts() throws Exception {
+  @ParameterizedTest
+  @CsvSource({
+    "/assets/{tenant}, Static-resource mounts cannot contain path parameters",
+    "/files/{*tail}, Static-resource mounts cannot contain path parameters",
+    "/files/{*tail}/, Catch-all must be the final segment: {*tail}"
+  })
+  void rejectsParameterizedFilesystemMounts(String mount, String message) throws Exception {
     {
       var app = new Shoostr();
 
       try (Closeable appCleanup1 = app::close) {
         var routes = app.routes();
 
-        assertThrows(
-            IllegalArgumentException.class,
-            () -> routes.staticFiles("/assets/{tenant}", temporaryDirectory));
+        assertEquals(
+            message,
+            assertThrows(
+                    IllegalArgumentException.class,
+                    () -> routes.staticFiles(mount, temporaryDirectory))
+                .getMessage());
       }
     }
   }
@@ -312,6 +334,28 @@ class StaticResourcesTest {
   }
 
   @Test
+  void negotiatesMethodsForExistingMountedFilesOnly() throws Exception {
+    Files.writeString(temporaryDirectory.resolve("existing.txt"), "hello");
+    var app = new Shoostr();
+
+    try (Closeable appCleanup = app::close) {
+      app.routes().staticFiles("/static", temporaryDirectory);
+
+      try (var test = TestServer.start(app)) {
+        var existing = test.send(request -> request.path("/static/existing.txt").method("POST"));
+        assertEquals(405, existing.statusCode());
+        assertEquals(
+            Set.of("GET", "HEAD"),
+            Set.of(existing.headers().firstValue("Allow").orElseThrow().split(", ")));
+
+        var missing = test.send(request -> request.path("/static/missing.txt").method("POST"));
+        assertEquals(404, missing.statusCode());
+        assertTrue(missing.headers().firstValue("Allow").isEmpty());
+      }
+    }
+  }
+
+  @Test
   void servesFilesystemFilesBelowTheMountedPath() throws Exception {
     Files.writeString(temporaryDirectory.resolve("site.txt"), "filesystem resource");
 
@@ -348,18 +392,17 @@ class StaticResourcesTest {
       var app = new Shoostr();
 
       try (Closeable appCleanup5 = app::close) {
-        app.beforeResponseFlush(
-            (request, response) -> {
-              try {
-                Files.move(selected, relocated);
-                Files.writeString(selected, "replacement bytes");
-              } catch (AccessDeniedException denied) {
-                // Windows may prevent renaming an open file; the selected handle must still serve
-                // it.
-                assertTrue(Files.exists(selected));
-                assertFalse(Files.exists(relocated));
-              }
-            });
+        app.beforeResponseFlush((request, response) -> {
+          try {
+            Files.move(selected, relocated);
+            Files.writeString(selected, "replacement bytes");
+          } catch (AccessDeniedException denied) {
+            // Windows may prevent renaming an open file; the selected handle must still serve
+            // it.
+            assertTrue(Files.exists(selected));
+            assertFalse(Files.exists(relocated));
+          }
+        });
         app.afterRequest(outcome -> completed.countDown());
         app.routes().staticFiles("/assets", temporaryDirectory);
 
@@ -408,36 +451,49 @@ class StaticResourcesTest {
     }
   }
 
-  @Test
-  void runsMatchedHooksInOrderWithTheStaticMountPattern() throws Exception {
+  @ParameterizedTest
+  @CsvSource({
+    "/assets, /assets/site.txt, /assets",
+    "/assets/, /assets/site.txt, /assets",
+    "/, /site.txt, /",
+    "'', /site.txt, /",
+    "/assets//, /assets//site.txt, /assets/"
+  })
+  void runsMatchedHooksInOrderWithTheStaticMountPattern(String mount, String path, String pattern)
+      throws Exception {
     Files.writeString(temporaryDirectory.resolve("site.txt"), "filesystem resource");
 
     {
-      var app = new Shoostr();
+      var app = new Shoostr().modifyServer(StaticResourcesTest::allowEmptyPathSegments);
 
       try (Closeable appCleanup7 = app::close) {
-        app.onRouteMatched(
-            (request, response) ->
-                response.addHeader("X-Stage", "matched:" + request.routePattern().orElseThrow()));
-        app.afterRouteHandler(
-            (request, response) ->
-                response.addHeader("X-Stage", "after:" + request.routePattern().orElseThrow()));
-        app.routes().staticFiles("/assets", temporaryDirectory);
+        app.onRouteMatched((request, response) ->
+            response.addHeader("X-Stage", "matched:" + request.routePattern().orElseThrow()));
+        app.afterRouteHandler((request, response) ->
+            response.addHeader("X-Stage", "after:" + request.routePattern().orElseThrow()));
+        app.routes().staticFiles(mount, temporaryDirectory);
 
         try (var test = TestServer.start(app)) {
 
           var result =
               test.send(
-                  request -> request.path("/assets/site.txt").timeout(Duration.ofSeconds(3)),
+                  request -> request.path(path).timeout(Duration.ofSeconds(3)),
                   HttpResponse.BodyHandlers.ofString());
 
           assertEquals(200, result.statusCode());
           assertEquals("filesystem resource", result.body());
           assertEquals(
-              List.of("matched:/assets", "after:/assets"), result.headers().allValues("X-Stage"));
+              List.of("matched:" + pattern, "after:" + pattern),
+              result.headers().allValues("X-Stage"));
         }
       }
     }
+  }
+
+  private static void allowEmptyPathSegments(Server server) {
+    var connector = (ServerConnector) server.getConnectors()[0];
+    var http = connector.getConnectionFactory(HttpConnectionFactory.class).getHttpConfiguration();
+    http.setUriCompliance(UriCompliance.from("DEFAULT,AMBIGUOUS_EMPTY_SEGMENT"));
   }
 
   @ParameterizedTest
@@ -591,12 +647,10 @@ class StaticResourcesTest {
       var app = new Shoostr();
 
       try (Closeable appCleanup11 = app::close) {
-        app.onRouteMatched(
-            (request, response) ->
-                response.addHeader("X-Stage", "matched:" + request.routePattern().orElseThrow()));
-        app.afterRouteHandler(
-            (request, response) ->
-                response.addHeader("X-Stage", "after:" + request.routePattern().orElseThrow()));
+        app.onRouteMatched((request, response) ->
+            response.addHeader("X-Stage", "matched:" + request.routePattern().orElseThrow()));
+        app.afterRouteHandler((request, response) ->
+            response.addHeader("X-Stage", "after:" + request.routePattern().orElseThrow()));
         app.routes()
             .staticFiles(
                 "/assets",
@@ -693,12 +747,11 @@ class StaticResourcesTest {
       var app = new Shoostr();
 
       try (Closeable appCleanup14 = app::close) {
-        app.beforeRouteHandler(
-            (request, ignoredResponse) -> {
-              if ("/assets/blocked".equals(request.path())) {
-                throw new UnauthorizedException();
-              }
-            });
+        app.beforeRouteHandler((request, ignoredResponse) -> {
+          if ("/assets/blocked".equals(request.path())) {
+            throw new UnauthorizedException();
+          }
+        });
         app.routes()
             .staticFiles(
                 "/assets",
@@ -789,23 +842,23 @@ class StaticResourcesTest {
 
   private Cors createCorsForSpaPreflight() {
     return new Cors(
-        new CorsPolicy(
-            Set.of("https://client.example"),
-            Set.of(HttpMethods.GET),
-            Set.of(HttpHeaders.AUTHORIZATION),
-            true,
-            Set.of(),
-            5));
+        CorsPolicy.builder()
+            .origins(Set.of("https://client.example"))
+            .methods(Set.of(HttpMethods.GET))
+            .allowedHeaders(Set.of(HttpHeaders.AUTHORIZATION))
+            .credentials(true)
+            .exposedHeaders(Set.of())
+            .maxAgeSeconds(5)
+            .build());
   }
 
   private AdmissionExtension createAdmissionForSpaPreflight(AtomicInteger admissions) {
-    return new AdmissionExtension(
-        (request, ignoredResponse) -> {
-          admissions.incrementAndGet();
-          if (request.header("Authorization").filter("Bearer allowed"::equals).isEmpty()) {
-            throw new UnauthorizedException();
-          }
-        });
+    return new AdmissionExtension((request, ignoredResponse) -> {
+      admissions.incrementAndGet();
+      if (request.header("Authorization").filter("Bearer allowed"::equals).isEmpty()) {
+        throw new UnauthorizedException();
+      }
+    });
   }
 
   private HttpResponse<String> sendPreflightRequestForSpaPreflight(TestServer test)
@@ -859,6 +912,266 @@ class StaticResourcesTest {
           assertFalse(result.body().contains("fallback"));
         }
       }
+    }
+  }
+
+  @Test
+  @Timeout(15)
+  void rejectsClasspathDirectoryAliasesIntroducedAfterRouteAdmission() throws Exception {
+    var publication = Files.createDirectory(temporaryDirectory.resolve("classpath-admission"));
+    var nested = Files.createDirectory(publication.resolve("nested"));
+    Files.writeString(nested.resolve("site.txt"), "selected content");
+    var external = Files.createDirectory(temporaryDirectory.resolve("external"));
+    Files.writeString(external.resolve("site.txt"), "outside-mount-secret");
+    var previous = Thread.currentThread().getContextClassLoader();
+
+    try (var loader =
+        new URLClassLoader(new URL[] {temporaryDirectory.toUri().toURL()}, previous)) {
+      var app = new Shoostr();
+
+      try (Closeable appCleanup = app::close) {
+        Thread.currentThread().setContextClassLoader(loader);
+        app.beforeRouteHandler((request, response) -> {
+          Files.move(nested, temporaryDirectory.resolve("relocated"));
+          directoryLink(nested, external);
+        });
+        app.routes().classpathResources("/assets", "/classpath-admission");
+
+        try (var test = TestServer.start(app)) {
+          var result =
+              test.send(
+                  request -> request.path("/assets/nested/site.txt"),
+                  HttpResponse.BodyHandlers.ofString());
+          assertEquals(404, result.statusCode());
+          assertFalse(result.body().contains("outside-mount-secret"));
+        }
+      }
+    } finally {
+      Thread.currentThread().setContextClassLoader(previous);
+    }
+  }
+
+  @Test
+  void rejectsProtectedStaticMountWithoutExplicitSessionConfiguration() throws Exception {
+    var app = new Shoostr();
+
+    try (Closeable appCleanup = app::close) {
+      app.modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
+      app.withExtension(new Csrf()).routes().staticFiles("/assets", temporaryDirectory);
+
+      var failure = assertThrows(IllegalStateException.class, app::start);
+
+      assertEquals("CSRF protection requires application sessions", failure.getMessage());
+    }
+  }
+
+  @Test
+  void servesEmptyMountedFilesWithGetAndHead() throws Exception {
+    Files.createFile(temporaryDirectory.resolve("empty.txt"));
+    var app = new Shoostr();
+
+    try (Closeable appCleanup = app::close) {
+      app.routes().staticFiles("/assets", temporaryDirectory);
+
+      try (var test = TestServer.start(app)) {
+        for (var method : List.of("GET", "HEAD")) {
+          var result =
+              test.send(
+                  request -> request.path("/assets/empty.txt").method(method),
+                  HttpResponse.BodyHandlers.ofString());
+
+          assertEquals(200, result.statusCode());
+          assertEquals("", result.body());
+          assertEquals("0", result.headers().firstValue("Content-Length").orElseThrow());
+          assertEquals("text/plain", result.headers().firstValue("Content-Type").orElseThrow());
+        }
+      }
+    }
+  }
+
+  @Test
+  @Timeout(15)
+  void closesSelectedDescriptorWhenFiniteOutputPreventsFileStaging() throws Exception {
+    var selected = temporaryDirectory.resolve("site.txt");
+    Files.writeString(selected, "selected content");
+    assertNoOpenReadHandle(selected);
+
+    try (var witness =
+        Files.newByteChannel(selected, StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS)) {
+      assertTrue(witness.isOpen());
+      assertOpenReadHandle(selected);
+    }
+
+    assertNoOpenReadHandle(selected);
+
+    var app = new Shoostr();
+
+    try (Closeable appCleanup = app::close) {
+      var completed = new CompletableFuture<Void>();
+      var reported = new CompletableFuture<IllegalStateException>();
+      app.onRouteMatched((request, response) -> response.text("already pending"));
+      app.afterRequest(outcome -> completed.complete(null));
+      app.exception(
+          IllegalStateException.class,
+          (failure, request, response) -> {
+            reported.complete(failure);
+            response.status(409).text("staging rejected");
+          });
+      app.routes().staticFiles("/assets", temporaryDirectory);
+
+      try (var test = TestServer.start(app)) {
+        var result =
+            test.send(
+                request -> request.path("/assets/site.txt"), HttpResponse.BodyHandlers.ofString());
+        assertEquals(409, result.statusCode());
+        assertEquals("staging rejected", result.body());
+        assertEquals(
+            "Response cannot become a file", reported.get(3, TimeUnit.SECONDS).getMessage());
+        completed.get(3, TimeUnit.SECONDS);
+
+        assertNoOpenReadHandle(selected);
+      }
+    }
+  }
+
+  private void assertNoOpenReadHandle(Path file) throws IOException {
+    if (System.getProperty("os.name").startsWith("Windows")) {
+      probeExclusiveRead(file);
+    } else {
+      assertEquals(0, openDescriptorCount(file));
+    }
+  }
+
+  private void assertOpenReadHandle(Path file) throws IOException {
+    if (System.getProperty("os.name").startsWith("Windows")) {
+      assertThrows(FileSystemException.class, () -> probeExclusiveRead(file));
+    } else {
+      assertTrue(openDescriptorCount(file) > 0);
+    }
+  }
+
+  private void probeExclusiveRead(Path file) throws IOException {
+    try (var probe =
+        Files.newByteChannel(file, StandardOpenOption.READ, ExtendedOpenOption.NOSHARE_READ)) {
+      assertTrue(probe.isOpen());
+    }
+  }
+
+  private long openDescriptorCount(Path file) throws IOException {
+    var descriptors = Path.of("/proc/self/fd");
+    assumeTrue(Files.isDirectory(descriptors), "Open-descriptor observation unavailable");
+
+    try (var entries = Files.list(descriptors)) {
+      return entries.filter(entry -> refersToFile(entry, file)).count();
+    }
+  }
+
+  private boolean refersToFile(Path descriptor, Path file) {
+    try {
+      return Files.isSameFile(descriptor, file);
+    } catch (IOException closedDuringListing) {
+      return false;
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void rejectsSiblingMountPrefixesBeforeMatchingHooksOrFallback(boolean fallback) throws Exception {
+    Files.writeString(temporaryDirectory.resolve("site.txt"), "mounted-private-content");
+    Files.writeString(temporaryDirectory.resolve("index.html"), "fallback-private-content");
+    var app = new Shoostr();
+
+    try (Closeable appCleanup = app::close) {
+      var matched = new AtomicInteger();
+      app.onRouteMatched((request, response) -> matched.incrementAndGet());
+      var options = StaticOptions.defaults();
+      if (fallback) {
+        options = options.withSpaFallback("index.html");
+      }
+
+      app.routes().staticFiles("/assets", temporaryDirectory, options);
+
+      try (var test = TestServer.start(app)) {
+        assertEquals(
+            "mounted-private-content",
+            test.send(
+                    request -> request.path("/assets/site.txt"),
+                    HttpResponse.BodyHandlers.ofString())
+                .body());
+        assertEquals(1, matched.get());
+
+        for (var path : List.of("/assetsXsite.txt", "/assets-other")) {
+          var result =
+              test.send(request -> request.path(path), HttpResponse.BodyHandlers.ofString());
+          assertEquals(404, result.statusCode());
+          assertFalse(result.body().contains("private-content"));
+          assertEquals(1, matched.get());
+        }
+      }
+    }
+  }
+
+  @Test
+  void rejectsUnreadableStaticDirectoriesDuringRegistration() throws Exception {
+    var directory = Files.createDirectory(temporaryDirectory.resolve("unreadable"));
+    if (System.getProperty("os.name").startsWith("Windows")) {
+      rejectReadDeniedDirectory(directory);
+    } else {
+      rejectDirectoryWithoutReadPermissions(directory);
+    }
+  }
+
+  private void rejectReadDeniedDirectory(Path directory) throws Exception {
+    var view =
+        Objects.requireNonNull(Files.getFileAttributeView(directory, AclFileAttributeView.class));
+    var original = view.getAcl();
+
+    try (AutoCloseable permissionCleanup = () -> view.setAcl(original)) {
+      var denied = new ArrayList<>(original);
+      denied.addFirst(denyDirectoryRead(Files.getOwner(directory)));
+      view.setAcl(denied);
+
+      assertUnreadableMountRejected(directory);
+    }
+  }
+
+  private AclEntry denyDirectoryRead(UserPrincipal owner) {
+    return AclEntry.newBuilder()
+        .setType(AclEntryType.DENY)
+        .setPrincipal(owner)
+        .setPermissions(AclEntryPermission.READ_DATA)
+        .build();
+  }
+
+  private void rejectDirectoryWithoutReadPermissions(Path directory) throws Exception {
+    assumeTrue(Files.getFileStore(directory).supportsFileAttributeView("posix"));
+    var original = Files.getPosixFilePermissions(directory);
+
+    try (AutoCloseable permissionCleanup =
+        () -> Files.setPosixFilePermissions(directory, original)) {
+      var denied = EnumSet.copyOf(original);
+      denied.removeAll(
+          EnumSet.of(
+              PosixFilePermission.OWNER_READ,
+              PosixFilePermission.GROUP_READ,
+              PosixFilePermission.OTHERS_READ));
+      Files.setPosixFilePermissions(directory, denied);
+      assumeTrue(!Files.isReadable(directory), "Privileged host bypasses read permissions");
+
+      assertUnreadableMountRejected(directory);
+    }
+  }
+
+  private void assertUnreadableMountRejected(Path directory) throws Exception {
+    assertTrue(Files.isDirectory(directory.toRealPath()));
+    assertFalse(Files.isReadable(directory));
+    var app = new Shoostr();
+
+    try (Closeable appCleanup = app::close) {
+      var failure =
+          assertThrows(
+              IllegalArgumentException.class, () -> app.routes().staticFiles("/assets", directory));
+      assertEquals("Static source must be a readable directory", failure.getMessage());
     }
   }
 
@@ -1253,10 +1566,8 @@ class StaticResourcesTest {
 
   private Shoostr createAppForClosesArchiveResourcesWhenStartupFails(ServerSocket occupied) {
     return new Shoostr()
-        .modifyServer(
-            nativeServer ->
-                ((ServerConnector) nativeServer.getConnectors()[0])
-                    .setPort(occupied.getLocalPort()));
+        .modifyServer(nativeServer ->
+            ((ServerConnector) nativeServer.getConnectors()[0]).setPort(occupied.getLocalPort()));
   }
 
   @Test
@@ -1452,13 +1763,12 @@ class StaticResourcesTest {
 
       try (Closeable appCleanup30 = app::close;
           var client = staticTransportClient(app, tls, http2)) {
-        app.beforeRouteHandler(
-            (request, response) ->
-                response.setHeader(
-                    "Date",
-                    request.header("If-None-Match").isPresent()
-                        ? "Wed, 01 Jan 2020 00:00:01 GMT"
-                        : "Wed, 01 Jan 2020 00:00:00 GMT"));
+        app.beforeRouteHandler((request, response) ->
+            response.setHeader(
+                "Date",
+                request.header("If-None-Match").isPresent()
+                    ? "Wed, 01 Jan 2020 00:00:01 GMT"
+                    : "Wed, 01 Jan 2020 00:00:00 GMT"));
         app.routes().staticFiles("/assets", temporaryDirectory);
         app.start();
         var target =
@@ -1548,12 +1858,11 @@ class StaticResourcesTest {
 
   private HttpResponse<byte[]> sendResultForCompressesMountedFilesWhenGzipIsAccepted(
       TestServer test) throws IOException, InterruptedException {
-    return test.send(
-        request ->
-            request
-                .path("/assets/site.txt")
-                .timeout(Duration.ofSeconds(3))
-                .header("Accept-Encoding", "gzip"));
+    return test.send(request ->
+        request
+            .path("/assets/site.txt")
+            .timeout(Duration.ofSeconds(3))
+            .header("Accept-Encoding", "gzip"));
   }
 
   @ParameterizedTest
@@ -1587,12 +1896,11 @@ class StaticResourcesTest {
 
   private HttpResponse<byte[]> sendResultForServesMountedFilesUnencodedWhenGzipIsNotAccepted(
       TestServer test, String acceptEncoding) throws IOException, InterruptedException {
-    return test.send(
-        request ->
-            request
-                .path("/assets/site.txt")
-                .timeout(Duration.ofSeconds(3))
-                .header("Accept-Encoding", acceptEncoding));
+    return test.send(request ->
+        request
+            .path("/assets/site.txt")
+            .timeout(Duration.ofSeconds(3))
+            .header("Accept-Encoding", acceptEncoding));
   }
 
   @ParameterizedTest
@@ -1642,24 +1950,22 @@ class StaticResourcesTest {
 
   private HttpResponse<byte[]> sendFullRequestForCompressedFileValidator(
       TestServer test, String acceptEncoding) throws IOException, InterruptedException {
-    return test.send(
-        request ->
-            request
-                .path("/assets/site.txt")
-                .timeout(Duration.ofSeconds(3))
-                .header("Accept-Encoding", acceptEncoding));
+    return test.send(request ->
+        request
+            .path("/assets/site.txt")
+            .timeout(Duration.ofSeconds(3))
+            .header("Accept-Encoding", acceptEncoding));
   }
 
   private HttpResponse<byte[]> sendConditionalRequestForCompressedFileValidator(
       TestServer test, String acceptEncoding, String requestHeader, String validator)
       throws IOException, InterruptedException {
-    return test.send(
-        request ->
-            request
-                .path("/assets/site.txt")
-                .timeout(Duration.ofSeconds(3))
-                .header("Accept-Encoding", acceptEncoding)
-                .header(requestHeader, validator));
+    return test.send(request ->
+        request
+            .path("/assets/site.txt")
+            .timeout(Duration.ofSeconds(3))
+            .header("Accept-Encoding", acceptEncoding)
+            .header(requestHeader, validator));
   }
 
   @Test
@@ -1910,7 +2216,8 @@ class StaticResourcesTest {
     assertTrue(process.waitFor(5, TimeUnit.SECONDS));
     assertEquals(0, process.exitValue());
 
-    {
+    try (var peer = Files.newByteChannel(pipe, StandardOpenOption.READ, StandardOpenOption.WRITE)) {
+      assertTrue(peer.isOpen());
       var app = new Shoostr();
 
       try (Closeable appCleanup41 = app::close) {
@@ -1936,10 +2243,9 @@ class StaticResourcesTest {
       var app = new Shoostr();
 
       try (Closeable appCleanup42 = app::close) {
-        app.beforeRouteHandler(
-            (ignoredRequest, ignoredResponse) -> {
-              throw new UnauthorizedException();
-            });
+        app.beforeRouteHandler((ignoredRequest, ignoredResponse) -> {
+          throw new UnauthorizedException();
+        });
         app.routes().staticFiles("/assets", temporaryDirectory);
 
         try (var test = TestServer.start(app)) {
@@ -1965,11 +2271,10 @@ class StaticResourcesTest {
       var app = new Shoostr();
 
       try (Closeable appCleanup43 = app::close) {
-        app.afterRequest(
-            value -> {
-              outcome.set(value);
-              completed.countDown();
-            });
+        app.afterRequest(value -> {
+          outcome.set(value);
+          completed.countDown();
+        });
         app.routes().staticFiles("/assets", temporaryDirectory);
 
         try (var test = TestServer.start(app)) {
@@ -2033,11 +2338,10 @@ class StaticResourcesTest {
       var app = new Shoostr();
 
       try (Closeable appCleanup45 = app::close) {
-        app.beforeRouteHandler(
-            (ignoredRequest, ignoredResponse) -> {
-              Files.move(publicDirectory, relocatedDirectory);
-              directoryLink(publicDirectory, externalDirectory);
-            });
+        app.beforeRouteHandler((ignoredRequest, ignoredResponse) -> {
+          Files.move(publicDirectory, relocatedDirectory);
+          directoryLink(publicDirectory, externalDirectory);
+        });
         app.routes().staticFiles("/assets", publicDirectory);
 
         try (var test = TestServer.start(app)) {
@@ -2086,24 +2390,23 @@ class StaticResourcesTest {
           for (int worker = 0; worker < 8; worker++) {
             final int id = worker;
             tasks.add(
-                clients.submit(
-                    () -> {
-                      ready.countDown();
+                clients.submit(() -> {
+                  ready.countDown();
 
-                      assertTrue(start.await(3, TimeUnit.SECONDS));
+                  assertTrue(start.await(3, TimeUnit.SECONDS));
 
-                      for (int turn = 0; turn < 16; turn++) {
-                        var prefix = (turn & 1) == 0 ? "" : "nested/deeper/";
-                        int index = (id + turn) % 4;
-                        var response =
-                            sendResponseForServesConcurrentRequestsFromTrustedReplacementDirectory(
-                                test, prefix, index);
+                  for (int turn = 0; turn < 16; turn++) {
+                    var prefix = (turn & 1) == 0 ? "" : "nested/deeper/";
+                    int index = (id + turn) % 4;
+                    var response =
+                        sendResponseForServesConcurrentRequestsFromTrustedReplacementDirectory(
+                            test, prefix, index);
 
-                        assertEquals(200, response.statusCode());
-                        assertEquals("outside:" + prefix + index, response.body());
-                      }
-                      return null;
-                    }));
+                    assertEquals(200, response.statusCode());
+                    assertEquals("outside:" + prefix + index, response.body());
+                  }
+                  return null;
+                }));
           }
 
           try {
@@ -2151,20 +2454,19 @@ class StaticResourcesTest {
       var app = new Shoostr();
 
       try (Closeable appCleanup47 = app::close) {
-        app.beforeRouteHandler(
-            (request, response) -> {
-              if ("directory".equals(change)) {
-                Files.move(root.resolve("nested"), temporaryDirectory.resolve("relocated"));
-                directoryLink(root.resolve("nested"), temporaryDirectory.resolve("outside"));
-              } else {
-                Files.delete(mounted.resolve("file.txt"));
-                if ("leaf".equals(change)) {
-                  fileLink(mounted.resolve("file.txt"), outside.resolve("file.txt"));
-                } else {
-                  Files.delete(mounted);
-                }
-              }
-            });
+        app.beforeRouteHandler((request, response) -> {
+          if ("directory".equals(change)) {
+            Files.move(root.resolve("nested"), temporaryDirectory.resolve("relocated"));
+            directoryLink(root.resolve("nested"), temporaryDirectory.resolve("outside"));
+          } else {
+            Files.delete(mounted.resolve("file.txt"));
+            if ("leaf".equals(change)) {
+              fileLink(mounted.resolve("file.txt"), outside.resolve("file.txt"));
+            } else {
+              Files.delete(mounted);
+            }
+          }
+        });
         app.routes().staticFiles("/assets", root);
 
         try (var server = TestServer.start(app)) {
@@ -2197,13 +2499,12 @@ class StaticResourcesTest {
         app.modifyServer(
                 nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0))
             .beforeClose(release::countDown)
-            .beforeRouteHandler(
-                (request, response) -> {
-                  entered.countDown();
-                  if (!release.await(5, TimeUnit.SECONDS)) {
-                    throw new IOException("Request gate timed out");
-                  }
-                });
+            .beforeRouteHandler((request, response) -> {
+              entered.countDown();
+              if (!release.await(5, TimeUnit.SECONDS)) {
+                throw new IOException("Request gate timed out");
+              }
+            });
         app.routes().staticFiles("/assets", temporaryDirectory);
         app.start();
         var origin = "http://127.0.0.1:" + app.port();
@@ -2241,13 +2542,12 @@ class StaticResourcesTest {
       createPendingForCompletesShutdownWhileConcurrentShallowAndNestedRequestsAreAdmitted(
           HttpClient client, String origin) {
     return Stream.of("/assets/file.txt", "/assets/nested/deeper/file.txt")
-        .map(
-            path ->
-                client.sendAsync(
-                    HttpRequest.newBuilder(URI.create(origin + path))
-                        .timeout(Duration.ofSeconds(5))
-                        .build(),
-                    HttpResponse.BodyHandlers.ofString()))
+        .map(path ->
+            client.sendAsync(
+                HttpRequest.newBuilder(URI.create(origin + path))
+                    .timeout(Duration.ofSeconds(5))
+                    .build(),
+                HttpResponse.BodyHandlers.ofString()))
         .toList();
   }
 
@@ -2311,8 +2611,10 @@ class StaticResourcesTest {
     }
   }
 
-  @Test
-  void encodesDownloadFilenamesForModernAndLegacyClients() throws Exception {
+  @ParameterizedTest
+  @MethodSource("attachmentFilenames")
+  void encodesDownloadFilenamesForModernAndLegacyClients(String filename, String disposition)
+      throws Exception {
     var file = temporaryDirectory.resolve("report.txt");
     Files.writeString(file, "download");
 
@@ -2324,7 +2626,9 @@ class StaticResourcesTest {
             .get(
                 "/download",
                 (ignoredRequest, response) ->
-                    response.attachment(file, "text/plain", "résumé 2026.txt"));
+                    response
+                        .attachment(file, "text/plain", filename)
+                        .setHeader("X-Download", "ready"));
 
         try (var test = TestServer.start(app)) {
 
@@ -2333,12 +2637,24 @@ class StaticResourcesTest {
 
           assertEquals(200, result.statusCode());
           assertEquals("download", result.body());
+          assertEquals("ready", result.headers().firstValue("X-Download").orElseThrow());
           assertEquals(
-              "attachment; filename=\"r_sum_ 2026.txt\"; "
-                  + "filename*=UTF-8''r%C3%A9sum%C3%A9%202026.txt",
-              result.headers().firstValue("Content-Disposition").orElseThrow());
+              disposition, result.headers().firstValue("Content-Disposition").orElseThrow());
         }
       }
     }
+  }
+
+  private static Stream<Arguments> attachmentFilenames() {
+    return Stream.of(
+        Arguments.of(
+            "résumé 2026.txt",
+            "attachment; filename=\"r_sum_ 2026.txt\"; "
+                + "filename*=UTF-8''r%C3%A9sum%C3%A9%202026.txt"),
+        Arguments.of(
+            "report~.txt", "attachment; filename=\"report~.txt\"; filename*=UTF-8''report~.txt"),
+        Arguments.of(
+            "report%20's*.txt",
+            "attachment; filename=\"report%20's*.txt\"; filename*=UTF-8''report%2520%27s%2A.txt"));
   }
 }

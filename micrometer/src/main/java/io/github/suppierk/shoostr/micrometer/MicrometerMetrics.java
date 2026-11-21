@@ -4,8 +4,10 @@ import io.github.suppierk.shoostr.ApplicationExtension;
 import io.github.suppierk.shoostr.Lifecycle;
 import io.github.suppierk.shoostr.Request;
 import io.github.suppierk.shoostr.RequestObservation;
+import io.github.suppierk.shoostr.RequestOutcome;
 import io.github.suppierk.shoostr.RouteExtension;
 import io.github.suppierk.shoostr.http.HttpMethods;
+import io.github.suppierk.shoostr.http.HttpStatusCodes;
 import io.micrometer.core.instrument.LongTaskTimer;
 import io.micrometer.core.instrument.Meter;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -77,36 +79,56 @@ public final class MicrometerMetrics
    */
   @Override
   public RequestObservation apply(Request request) {
-    var sample = active.start();
+    final var sample = active.start();
 
     return outcome -> {
       try {
-        String error;
-        if (outcome.transportFailure() != null) {
-          error = "transport";
-        } else if (outcome.applicationFailure() != null) {
-          error = "application";
-        } else if (outcome.statusCode() >= 500) {
-          error = "server";
-        } else {
-          error = "none";
-        }
-
-        completed
-            .withTags(
-                "method",
-                HttpMethods.httpMethod(outcome.method()).map(HttpMethods::value).orElse("OTHER"),
-                "route",
-                Objects.requireNonNullElse(outcome.routePattern(), "UNMATCHED"),
-                "status",
-                Integer.toString(outcome.statusCode()),
-                "error",
-                error)
-            .record(outcome.durationNanos(), TimeUnit.NANOSECONDS);
+        recordCompleted(outcome);
       } finally {
         sample.stop();
       }
     };
+  }
+
+  /**
+   * Looks up the completed timer from terminal tags and records the request duration.
+   *
+   * @param outcome detached terminal request outcome
+   */
+  private void recordCompleted(RequestOutcome outcome) {
+    final var error = errorTag(outcome);
+
+    completed
+        .withTags(
+            "method",
+            HttpMethods.httpMethod(outcome.method()).map(HttpMethods::value).orElse("OTHER"),
+            "route",
+            Objects.requireNonNullElse(outcome.routePattern(), "UNMATCHED"),
+            "status",
+            Integer.toString(outcome.statusCode()),
+            "error",
+            error)
+        .record(outcome.durationNanos(), TimeUnit.NANOSECONDS);
+  }
+
+  /**
+   * Classifies the terminal outcome with transport failures taking precedence.
+   *
+   * @param outcome detached terminal request outcome
+   * @return finite error tag for the completed timer
+   */
+  private static String errorTag(RequestOutcome outcome) {
+    if (outcome.transportFailure() != null) {
+      return "transport";
+    }
+
+    if (outcome.applicationFailure() != null) {
+      return "application";
+    }
+
+    return outcome.statusCode() >= HttpStatusCodes.INTERNAL_SERVER_ERROR.value()
+        ? "server"
+        : "none";
   }
 
   /**

@@ -17,6 +17,7 @@ import java.io.IOException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.Socket;
+import java.net.http.HttpClient;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
@@ -35,6 +36,9 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import org.eclipse.jetty.http.HttpFields.Mutable;
+import org.eclipse.jetty.http.HttpURI;
+import org.eclipse.jetty.server.Request.Wrapper;
 import org.eclipse.jetty.server.ServerConnector;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
@@ -52,13 +56,42 @@ class CorsTest {
   }
 
   private CorsPolicy createExplicitForBuildsCompletePolicyValuesWithStandaloneDefaults() {
-    return new CorsPolicy(
-        Set.of("https://client.example"),
-        Set.of(HttpMethods.GET, HttpMethods.HEAD),
-        Set.of(),
-        false,
-        Set.of(),
-        5);
+    return CorsPolicy.builder()
+        .origins(Set.of("https://client.example"))
+        .methods(Set.of(HttpMethods.GET, HttpMethods.HEAD))
+        .allowedHeaders(Set.of())
+        .credentials(false)
+        .exposedHeaders(Set.of())
+        .maxAgeSeconds(5)
+        .build();
+  }
+
+  @Test
+  void copiesAllVarargPermissionsIntoFluentBuilderResults() {
+    var policy = policyFromVarargs();
+
+    assertEquals(Set.of("https://one.example", "https://two.example"), policy.origins());
+    assertEquals(Set.of(HttpMethods.GET, HttpMethods.POST), policy.methods());
+    assertEquals(
+        Set.of(HttpHeaders.AUTHORIZATION, HttpHeaders.CONTENT_TYPE), policy.allowedHeaders());
+    assertEquals(Set.of(HttpHeaders.ETAG, HttpHeaders.of("X-Proof")), policy.exposedHeaders());
+  }
+
+  private CorsPolicy policyFromVarargs() {
+    return CorsPolicy.builder()
+        .origins("https://one.example", "https://two.example")
+        .methods(HttpMethods.GET, HttpMethods.POST)
+        .allowedHeaders(HttpHeaders.AUTHORIZATION, HttpHeaders.CONTENT_TYPE)
+        .exposedHeaders(HttpHeaders.ETAG, HttpHeaders.of("X-Proof"))
+        .build();
+  }
+
+  @Test
+  void rejectsNegativeBuilderCacheLifetimeBeforeBuild() {
+    var builder = CorsPolicy.builder().maxAgeSeconds(60);
+
+    assertThrows(IllegalArgumentException.class, () -> builder.maxAgeSeconds(-1));
+    assertEquals(60, builder.build().maxAgeSeconds());
   }
 
   @ParameterizedTest
@@ -101,13 +134,14 @@ class CorsTest {
 
   private Cors createCorsForPreservesCorsSharingWhenFormParsingRejectsUnsupportedMedia() {
     return new Cors(
-        new CorsPolicy(
-            Set.of("https://client.example"),
-            Set.of(HttpMethods.POST),
-            Set.of(),
-            false,
-            Set.of(),
-            5));
+        CorsPolicy.builder()
+            .origins(Set.of("https://client.example"))
+            .methods(Set.of(HttpMethods.POST))
+            .allowedHeaders(Set.of())
+            .credentials(false)
+            .exposedHeaders(Set.of())
+            .maxAgeSeconds(5)
+            .build());
   }
 
   private HttpResponse<String>
@@ -168,13 +202,14 @@ class CorsTest {
 
   private Cors createCorsForSharesAcceptedFormResponsesOnlyWhenAnAllowedOriginIsPresent() {
     return new Cors(
-        new CorsPolicy(
-            Set.of("https://client.example"),
-            Set.of(HttpMethods.POST),
-            Set.of(),
-            false,
-            Set.of(),
-            5));
+        CorsPolicy.builder()
+            .origins(Set.of("https://client.example"))
+            .methods(Set.of(HttpMethods.POST))
+            .allowedHeaders(Set.of())
+            .credentials(false)
+            .exposedHeaders(Set.of())
+            .maxAgeSeconds(5)
+            .build());
   }
 
   private HttpResponse<String>
@@ -201,7 +236,7 @@ class CorsTest {
       var app = new Shoostr();
 
       try (Closeable appCleanup2 = app::close) {
-        var cors = new Cors(new CorsPolicy(Set.of("https://client.example")));
+        var cors = new Cors(CorsPolicy.builder().origins(Set.of("https://client.example")).build());
 
         app.routes()
             .path(
@@ -310,13 +345,14 @@ class CorsTest {
 
   private Cors createCorsForPreflightWithoutRouteWork() {
     return new Cors(
-        new CorsPolicy(
-            Set.of("https://client.example"),
-            Set.of(HttpMethods.GET),
-            Set.of(),
-            true,
-            Set.of(),
-            5));
+        CorsPolicy.builder()
+            .origins(Set.of("https://client.example"))
+            .methods(Set.of(HttpMethods.GET))
+            .allowedHeaders(Set.of())
+            .credentials(true)
+            .exposedHeaders(Set.of())
+            .maxAgeSeconds(5)
+            .build());
   }
 
   private AuthenticationExtension createAdmissionForPreflightWithoutRouteWork(
@@ -396,13 +432,14 @@ class CorsTest {
 
   private Cors createCorsForCredentialedPreflight() {
     return new Cors(
-        new CorsPolicy(
-            Set.of("https://client.example"),
-            Set.of(HttpMethods.PUT),
-            Set.of(HttpHeaders.AUTHORIZATION, HttpHeaders.CONTENT_TYPE),
-            true,
-            Set.of(HttpHeaders.ETAG),
-            600));
+        CorsPolicy.builder()
+            .origins(Set.of("https://client.example"))
+            .methods(Set.of(HttpMethods.PUT))
+            .allowedHeaders(Set.of(HttpHeaders.AUTHORIZATION, HttpHeaders.CONTENT_TYPE))
+            .credentials(true)
+            .exposedHeaders(Set.of(HttpHeaders.ETAG))
+            .maxAgeSeconds(600)
+            .build());
   }
 
   private HttpResponse<String> sendResultForCredentialedPreflight(TestServer test)
@@ -436,8 +473,10 @@ class CorsTest {
   void acceptsTheLargestOriginPortAndRejectsNonExactPortSpelling() {
     var nonExactOrigin = Set.of("https://client.example:00080");
 
-    assertDoesNotThrow(() -> new CorsPolicy(Set.of("https://client.example:65535")));
-    assertThrows(IllegalArgumentException.class, () -> new CorsPolicy(nonExactOrigin));
+    assertDoesNotThrow(
+        () -> CorsPolicy.builder().origins(Set.of("https://client.example:65535")).build());
+    assertThrows(
+        IllegalArgumentException.class, () -> CorsPolicy.builder().origins(nonExactOrigin).build());
   }
 
   @Test
@@ -450,17 +489,55 @@ class CorsTest {
 
     assertThrows(
         IllegalArgumentException.class,
-        () -> new CorsPolicy(wildcardOrigin, getMethod, emptyHeaders, true, emptyHeaders, 5));
+        () ->
+            CorsPolicy.builder()
+                .origins(wildcardOrigin)
+                .methods(getMethod)
+                .allowedHeaders(emptyHeaders)
+                .credentials(true)
+                .exposedHeaders(emptyHeaders)
+                .maxAgeSeconds(5)
+                .build());
     assertThrows(
         IllegalArgumentException.class,
-        () -> new CorsPolicy(validOrigin, getMethod, emptyHeaders, false, emptyHeaders, -1));
-    assertDoesNotThrow(
-        () -> new CorsPolicy(validOrigin, getMethod, wildcardHeader, false, emptyHeaders, 5));
-    assertDoesNotThrow(
-        () -> new CorsPolicy(validOrigin, getMethod, emptyHeaders, false, wildcardHeader, 5));
+        () ->
+            CorsPolicy.builder()
+                .origins(validOrigin)
+                .methods(getMethod)
+                .allowedHeaders(emptyHeaders)
+                .credentials(false)
+                .exposedHeaders(emptyHeaders)
+                .maxAgeSeconds(-1)
+                .build());
+    assertDoesNotThrow(() ->
+        CorsPolicy.builder()
+            .origins(validOrigin)
+            .methods(getMethod)
+            .allowedHeaders(wildcardHeader)
+            .credentials(false)
+            .exposedHeaders(emptyHeaders)
+            .maxAgeSeconds(5)
+            .build());
+    assertDoesNotThrow(() ->
+        CorsPolicy.builder()
+            .origins(validOrigin)
+            .methods(getMethod)
+            .allowedHeaders(emptyHeaders)
+            .credentials(false)
+            .exposedHeaders(wildcardHeader)
+            .maxAgeSeconds(5)
+            .build());
     assertThrows(
         IllegalArgumentException.class,
-        () -> new CorsPolicy(validOrigin, getMethod, emptyHeaders, true, wildcardHeader, 5));
+        () ->
+            CorsPolicy.builder()
+                .origins(validOrigin)
+                .methods(getMethod)
+                .allowedHeaders(emptyHeaders)
+                .credentials(true)
+                .exposedHeaders(wildcardHeader)
+                .maxAgeSeconds(5)
+                .build());
 
     for (var origin :
         Set.of(
@@ -475,7 +552,10 @@ class CorsTest {
             "https://*.example")) {
       var origins = Set.of(origin);
 
-      assertThrows(IllegalArgumentException.class, () -> new CorsPolicy(origins), origin);
+      assertThrows(
+          IllegalArgumentException.class,
+          () -> CorsPolicy.builder().origins(origins).build(),
+          origin);
     }
   }
 
@@ -489,7 +569,7 @@ class CorsTest {
       var app = new Shoostr();
 
       try (Closeable appCleanup5 = app::close) {
-        var cors = new Cors(new CorsPolicy(Set.of("https://client.example")));
+        var cors = new Cors(CorsPolicy.builder().origins(Set.of("https://client.example")).build());
 
         app.onRequestHeaders((ignoredRequest, ignoredResponse) -> admissions.incrementAndGet());
         app.routes()
@@ -529,6 +609,42 @@ class CorsTest {
         }
       }
     }
+  }
+
+  @Test
+  void rejectsDuplicatePreflightMethodsBeforeUnmatchedRouteHandling() throws Exception {
+    var calls = new AtomicInteger();
+    var app = new Shoostr();
+
+    try (Closeable appCleanup = app::close) {
+      var cors = new Cors(CorsPolicy.builder().origins(Set.of("https://client.example")).build());
+      app.routes()
+          .get(
+              "/data",
+              (ignoredRequest, ignoredResponse) -> calls.incrementAndGet(),
+              lifecycle -> lifecycle.withExtension(cors));
+
+      try (var test = TestServer.start(app)) {
+        var result = duplicateMethodPreflightToMissingRoute(test);
+
+        assertEquals(400, result.statusCode());
+        assertEquals(0, calls.get());
+        assertTrue(result.headers().firstValue("Access-Control-Allow-Origin").isEmpty());
+      }
+    }
+  }
+
+  private HttpResponse<String> duplicateMethodPreflightToMissingRoute(TestServer test)
+      throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/missing")
+                .method("OPTIONS")
+                .header("Origin", "https://client.example")
+                .header("Access-Control-Request-Method", "GET")
+                .header("Access-Control-Request-Method", "POST"),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   private String[][] createInvalidFieldsForInvalidPreflight() {
@@ -613,13 +729,12 @@ class CorsTest {
 
   private HttpResponse<byte[]> sendUnsupportedRequestForInvalidPreflight(TestServer test)
       throws IOException, InterruptedException {
-    return test.send(
-        request ->
-            request
-                .path("/data")
-                .method("OPTIONS")
-                .header("Origin", "https://client.example")
-                .header("Access-Control-Request-Method", "get"));
+    return test.send(request ->
+        request
+            .path("/data")
+            .method("OPTIONS")
+            .header("Origin", "https://client.example")
+            .header("Access-Control-Request-Method", "get"));
   }
 
   @Test
@@ -628,7 +743,7 @@ class CorsTest {
       var app = new Shoostr();
 
       try (Closeable appCleanup6 = app::close) {
-        var cors = new Cors(new CorsPolicy(Set.of()));
+        var cors = new Cors(CorsPolicy.builder().origins(Set.of()).build());
 
         app.routes()
             .path(
@@ -675,7 +790,7 @@ class CorsTest {
       var app = new Shoostr();
 
       try (Closeable appCleanup7 = app::close) {
-        var cors = new Cors(new CorsPolicy(Set.of(allowed)));
+        var cors = new Cors(CorsPolicy.builder().origins(Set.of(allowed)).build());
 
         app.routes()
             .path(
@@ -707,7 +822,7 @@ class CorsTest {
       var app = new Shoostr();
 
       try (Closeable appCleanup8 = app::close) {
-        var cors = new Cors(new CorsPolicy(Set.of("https://client.example")));
+        var cors = new Cors(CorsPolicy.builder().origins(Set.of("https://client.example")).build());
 
         Handler conflictingHeaders = createConflictingHeadersForProtectedSharingFields();
         app.onRequestHeaders(conflictingHeaders);
@@ -843,16 +958,15 @@ class CorsTest {
       var app = new Shoostr();
 
       try (Closeable appCleanup9 = app::close) {
-        var cors = new Cors(new CorsPolicy(Set.of("https://client.example")));
+        var cors = new Cors(CorsPolicy.builder().origins(Set.of("https://client.example")).build());
 
-        app.onRequestHeaders(
-            (request, response) -> {
-              assertThrows(IllegalStateException.class, () -> response.startStream("text/plain"));
+        app.onRequestHeaders((request, response) -> {
+          assertThrows(IllegalStateException.class, () -> response.startStream("text/plain"));
 
-              if (request.header("X-Deny").isPresent()) {
-                throw new ForbiddenException();
-              }
-            });
+          if (request.header("X-Deny").isPresent()) {
+            throw new ForbiddenException();
+          }
+        });
 
         app.routes()
             .path(
@@ -918,11 +1032,10 @@ class CorsTest {
       var app = new Shoostr();
 
       try (Closeable appCleanup10 = app::close) {
-        var cors = new Cors(new CorsPolicy(Set.of("https://client.example")));
+        var cors = new Cors(CorsPolicy.builder().origins(Set.of("https://client.example")).build());
 
-        app.onRequestHeaders(
-            (ignoredRequest, response) ->
-                response.setHeader("X-Admission", "checked").text("staged"));
+        app.onRequestHeaders((ignoredRequest, response) ->
+            response.setHeader("X-Admission", "checked").text("staged"));
 
         app.routes()
             .path(
@@ -1007,13 +1120,14 @@ class CorsTest {
 
   private Cors createCorsForExplicitOptions() {
     return new Cors(
-        new CorsPolicy(
-            Set.of("https://client.example"),
-            Set.of(HttpMethods.OPTIONS),
-            Set.of(),
-            false,
-            Set.of(),
-            0));
+        CorsPolicy.builder()
+            .origins(Set.of("https://client.example"))
+            .methods(Set.of(HttpMethods.OPTIONS))
+            .allowedHeaders(Set.of())
+            .credentials(false)
+            .exposedHeaders(Set.of())
+            .maxAgeSeconds(0)
+            .build());
   }
 
   private HttpResponse<String> sendOptionsRequest(TestServer test, boolean enabled)
@@ -1039,7 +1153,8 @@ class CorsTest {
     var methods = new HashSet<>(Set.of(HttpMethods.GET));
     var headers = new HashSet<>(Set.of(HttpHeaders.AUTHORIZATION));
     var exposed = new HashSet<>(Set.of(HttpHeaders.ETAG));
-    final var policy = new CorsPolicy(origins, methods, headers, true, exposed, 0);
+    final var policy =
+        createPolicyForConcurrentConfigurationMutation(origins, methods, headers, exposed);
     origins.clear();
     methods.clear();
     headers.clear();
@@ -1073,17 +1188,16 @@ class CorsTest {
           for (int index = 0; index < 12; index++) {
             var origin = index % 2 == 0 ? "https://one.example" : "https://two.example";
             futures.add(
-                executor.submit(
-                    () ->
-                        Map.entry(
-                            origin,
-                            test.send(
-                                request ->
-                                    request
-                                        .path("/data")
-                                        .timeout(Duration.ofSeconds(5))
-                                        .header("Origin", origin),
-                                HttpResponse.BodyHandlers.ofString()))));
+                executor.submit(() ->
+                    Map.entry(
+                        origin,
+                        test.send(
+                            request ->
+                                request
+                                    .path("/data")
+                                    .timeout(Duration.ofSeconds(5))
+                                    .header("Origin", origin),
+                            HttpResponse.BodyHandlers.ofString()))));
           }
           for (var future : futures) {
             var result = future.get(10, TimeUnit.SECONDS);
@@ -1116,6 +1230,21 @@ class CorsTest {
     }
   }
 
+  private CorsPolicy createPolicyForConcurrentConfigurationMutation(
+      Set<String> origins,
+      Set<HttpMethods> methods,
+      Set<HttpHeaders> headers,
+      Set<HttpHeaders> exposed) {
+    return CorsPolicy.builder()
+        .origins(origins)
+        .methods(methods)
+        .allowedHeaders(headers)
+        .credentials(true)
+        .exposedHeaders(exposed)
+        .maxAgeSeconds(0)
+        .build();
+  }
+
   private HttpResponse<String> sendPreflightRequestForConcurrentPolicySnapshots(TestServer test)
       throws IOException, InterruptedException {
     return test.send(
@@ -1137,7 +1266,7 @@ class CorsTest {
 
       try (Closeable appCleanup13 = app::close) {
         app.trustedProxies(InetAddress::isLoopbackAddress);
-        var cors = new Cors(new CorsPolicy(Set.of()));
+        var cors = new Cors(CorsPolicy.builder().origins(Set.of()).build());
 
         app.routes()
             .path(
@@ -1212,6 +1341,54 @@ class CorsTest {
   }
 
   @Test
+  void deniesCrossOriginRequestsWhenNativeUriHasNoOrigin() throws Exception {
+    var calls = new AtomicInteger();
+    var app = new Shoostr();
+
+    try (Closeable appCleanup = app::close) {
+      app.modifyHttpConfiguration(
+          configuration -> configuration.addCustomizer(CorsTest::withoutNativeOrigin));
+      var cors = new Cors(CorsPolicy.builder().origins(Set.of()).build());
+      app.routes()
+          .get(
+              "/data",
+              (ignoredRequest, response) -> {
+                calls.incrementAndGet();
+                response.text("unexpected");
+              },
+              lifecycle -> lifecycle.withExtension(cors));
+
+      try (var test =
+          TestServer.start(app, client -> client.version(HttpClient.Version.HTTP_1_1))) {
+        var result =
+            test.send(
+                request -> request.path("/data").header("Origin", "https://client.example"),
+                HttpResponse.BodyHandlers.ofString());
+
+        assertEquals(403, result.statusCode());
+        assertEquals(0, calls.get());
+        assertFalse(result.headers().firstValue("Access-Control-Allow-Origin").isPresent());
+      }
+    }
+  }
+
+  private static org.eclipse.jetty.server.Request withoutNativeOrigin(
+      org.eclipse.jetty.server.Request nativeRequest, Mutable ignoredMutable) {
+    var uri =
+        HttpURI.build(nativeRequest.getHttpURI())
+            .scheme((String) null)
+            .authority(null, -1)
+            .asImmutable();
+
+    return new Wrapper(nativeRequest) {
+      @Override
+      public HttpURI getHttpURI() {
+        return uri;
+      }
+    };
+  }
+
+  @Test
   void acceptsExplicitHttpOriginFormsAndDoesNotInferPermissionFromReferer() throws Exception {
     var origins =
         createOriginsForAcceptsExplicitHttpOriginFormsAndDoesNotInferPermissionFromReferer();
@@ -1220,7 +1397,7 @@ class CorsTest {
       var app = new Shoostr();
 
       try (Closeable appCleanup14 = app::close) {
-        var cors = new Cors(new CorsPolicy(origins));
+        var cors = new Cors(CorsPolicy.builder().origins(origins).build());
 
         app.routes()
             .path(
@@ -1310,13 +1487,14 @@ class CorsTest {
 
   private Cors createCorsForUnmatchedRoutes() {
     return new Cors(
-        new CorsPolicy(
-            Set.of("https://client.example"),
-            Set.of(HttpMethods.GET),
-            Set.of(),
-            true,
-            Set.of(),
-            5));
+        CorsPolicy.builder()
+            .origins(Set.of("https://client.example"))
+            .methods(Set.of(HttpMethods.GET))
+            .allowedHeaders(Set.of())
+            .credentials(true)
+            .exposedHeaders(Set.of())
+            .maxAgeSeconds(5)
+            .build());
   }
 
   private HttpResponse<String> sendResultForUnmatchedRoutes(TestServer test)
@@ -1334,7 +1512,7 @@ class CorsTest {
   @SuppressWarnings("NullAway")
   // Null is the invalid policy under test.
   void freezesScopedCorsConfigurationAndRejectsInstallationAfterStartupOrClose() throws Exception {
-    var policy = new CorsPolicy(Set.of("https://client.example"));
+    var policy = CorsPolicy.builder().origins(Set.of("https://client.example")).build();
 
     assertThrows(NullPointerException.class, () -> new Cors(null));
 
@@ -1354,6 +1532,12 @@ class CorsTest {
         var configuration = retained.get();
 
         assertThrows(IllegalStateException.class, () -> configuration.policy(policy));
+
+        var invalidPolicy = new CorsPolicy();
+        invalidPolicy.setOrigins(Set.of("*"));
+        invalidPolicy.setCredentials(true);
+
+        assertThrows(IllegalStateException.class, () -> configuration.policy(invalidPolicy));
 
         try (var test = TestServer.start(app);
             var afterStart = new Cors(policy)) {
@@ -1377,13 +1561,12 @@ class CorsTest {
       var app = new Shoostr();
 
       try (Closeable appCleanup17 = app::close) {
-        var cors = new Cors(new CorsPolicy(Set.of("https://client.example")));
+        var cors = new Cors(CorsPolicy.builder().origins(Set.of("https://client.example")).build());
 
-        app.onRequestHeaders(
-            (ignoredRequest, response) -> {
-              response.setHeader("Vary", vary);
-              throw new ForbiddenException();
-            });
+        app.onRequestHeaders((ignoredRequest, response) -> {
+          response.setHeader("Vary", vary);
+          throw new ForbiddenException();
+        });
 
         app.routes()
             .path(
@@ -1429,7 +1612,7 @@ class CorsTest {
       var app = new Shoostr();
 
       try (Closeable appCleanup18 = app::close) {
-        var cors = new Cors(new CorsPolicy(Set.of("https://client.example")));
+        var cors = new Cors(CorsPolicy.builder().origins(Set.of("https://client.example")).build());
 
         app.routes()
             .path(
@@ -1487,7 +1670,10 @@ class CorsTest {
 
       try (Closeable appCleanup19 = app::close) {
         var cors =
-            new Cors(new CorsPolicy(Set.of("http://example.test", "https://client.example")));
+            new Cors(
+                CorsPolicy.builder()
+                    .origins(Set.of("http://example.test", "https://client.example"))
+                    .build());
 
         app.onRequestHeaders((ignoredRequest, ignoredResponse) -> admissions.incrementAndGet());
         app.routes()

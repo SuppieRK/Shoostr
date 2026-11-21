@@ -1,9 +1,11 @@
 package io.github.suppierk.shoostr;
 
+import static io.github.suppierk.shoostr.Locks.getUnderLock;
 import static org.awaitility.Awaitility.await;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -30,6 +32,7 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
@@ -37,6 +40,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.stream.Collectors;
 import org.eclipse.jetty.http.HttpTester;
 import org.eclipse.jetty.server.ServerConnector;
@@ -51,6 +55,54 @@ class MultipartRequestTest {
   private static final String BOUNDARY = "multipart-test-boundary";
   private static final byte[] BINARY_CONTENT = {0, 1, -1, 127, -128};
   @TempDir Path temporaryDirectory;
+
+  @Test
+  void snapshotsMultipartLimitsForEachApplicationBeforeStartup() throws Exception {
+    var multipart = new MultipartOptions();
+    multipart.setMaxFileBytes(8L);
+    multipart.setMaxBytes(4096L);
+    var options = new Options();
+    options.setMultipart(multipart);
+    var first = multipartSnapshotApplication(options);
+
+    try (Closeable firstCleanup = first::close) {
+      multipart.setMaxFileBytes(4L);
+      var second = multipartSnapshotApplication(options);
+
+      try (Closeable secondCleanup = second::close) {
+        options.getMultipart().setMaxFileBytes(1L);
+
+        try (var firstServer = TestServer.start(first);
+            var secondServer = TestServer.start(second)) {
+          var accepted = sendSnapshotFile(firstServer, "123456");
+
+          assertEquals(200, accepted.statusCode());
+          assertEquals("6", new String(accepted.body(), StandardCharsets.UTF_8));
+          assertEquals(413, sendSnapshotFile(secondServer, "123456").statusCode());
+          assertEquals(200, sendSnapshotFile(secondServer, "123").statusCode());
+        }
+      }
+    }
+  }
+
+  private Shoostr multipartSnapshotApplication(Options options) {
+    return new Shoostr(options)
+        .routes(routes ->
+            routes.post(
+                "/snapshot",
+                (request, response) ->
+                    response.text(Long.toString(request.file("document").orElseThrow().size()))));
+  }
+
+  private HttpResponse<byte[]> sendSnapshotFile(TestServer test, String content)
+      throws IOException, InterruptedException {
+    return test.send(request ->
+        request
+            .path("/snapshot")
+            .method("POST")
+            .header("Content-Type", "multipart/form-data; boundary=" + BOUNDARY)
+            .body(fileBody(content)));
+  }
 
   private static void assertNoUploads(Request request) throws IOException {
     var files = request.files();
@@ -151,11 +203,13 @@ class MultipartRequestTest {
         .getBytes(StandardCharsets.UTF_8);
   }
 
-  private static byte[] nonUtf8TextFieldBody() {
+  private static byte[] textFieldBody(String contentType) {
     return ("--"
             + BOUNDARY
             + "\r\nContent-Disposition: form-data; name=\"title\"\r\n"
-            + "Content-Type: text/plain; charset=ISO-8859-1\r\n\r\n"
+            + "Content-Type: "
+            + contentType
+            + "\r\n\r\n"
             + "report\r\n--"
             + BOUNDARY
             + "--\r\n")
@@ -183,6 +237,10 @@ class MultipartRequestTest {
     return partBody("Content-Disposition: form-data");
   }
 
+  private static byte[] emptyNameBody() {
+    return partBody("Content-Disposition: form-data; name=\"\"");
+  }
+
   private static byte[] partBody(String header) {
     return ("--" + BOUNDARY + "\r\n" + header + "\r\n\r\ncontents\r\n--" + BOUNDARY + "--\r\n")
         .getBytes(StandardCharsets.UTF_8);
@@ -192,12 +250,11 @@ class MultipartRequestTest {
     await()
         .pollInterval(Duration.ofMillis(20))
         .atMost(Duration.ofSeconds(1))
-        .untilAsserted(
-            () -> {
-              try (var files = Files.list(directory)) {
-                assertEquals(expected, files.findAny().isPresent());
-              }
-            });
+        .untilAsserted(() -> {
+          try (var files = Files.list(directory)) {
+            assertEquals(expected, files.findAny().isPresent());
+          }
+        });
   }
 
   private static List<Path> awaitSpoolFiles(Path directory, int expected) {
@@ -274,13 +331,12 @@ class MultipartRequestTest {
   private HttpResponse<byte[]>
       sendResultForPreservesNonmultipartBodyBytesWhenFileAccessorsAreCalledFirst(
           TestServer test, String contentType) throws IOException, InterruptedException {
-    return test.send(
-        request -> {
-          request.path("/files").timeout(Duration.ofSeconds(3)).method("POST").body(BINARY_CONTENT);
-          if (!contentType.isEmpty()) {
-            request.header("Content-Type", contentType);
-          }
-        });
+    return test.send(request -> {
+      request.path("/files").timeout(Duration.ofSeconds(3)).method("POST").body(BINARY_CONTENT);
+      if (!contentType.isEmpty()) {
+        request.header("Content-Type", contentType);
+      }
+    });
   }
 
   @ParameterizedTest
@@ -319,13 +375,12 @@ class MultipartRequestTest {
   private HttpResponse<byte[]>
       sendResultForAllowsNonmultipartFileAccessAfterBufferedBodyConsumption(
           TestServer test, String contentType) throws IOException, InterruptedException {
-    return test.send(
-        request -> {
-          request.path("/files").timeout(Duration.ofSeconds(3)).method("POST").body(BINARY_CONTENT);
-          if (!contentType.isEmpty()) {
-            request.header("Content-Type", contentType);
-          }
-        });
+    return test.send(request -> {
+      request.path("/files").timeout(Duration.ofSeconds(3)).method("POST").body(BINARY_CONTENT);
+      if (!contentType.isEmpty()) {
+        request.header("Content-Type", contentType);
+      }
+    });
   }
 
   @ParameterizedTest
@@ -367,14 +422,13 @@ class MultipartRequestTest {
 
   private HttpResponse<byte[]> sendResultForPreservesNonmultipartInputRegardlessOfFileAccessOrder(
       TestServer test) throws IOException, InterruptedException {
-    return test.send(
-        request ->
-            request
-                .path("/files")
-                .timeout(Duration.ofSeconds(3))
-                .header("Content-Type", "application/octet-stream")
-                .method("POST")
-                .body(BINARY_CONTENT));
+    return test.send(request ->
+        request
+            .path("/files")
+            .timeout(Duration.ofSeconds(3))
+            .header("Content-Type", "application/octet-stream")
+            .method("POST")
+            .body(BINARY_CONTENT));
   }
 
   @Test
@@ -591,7 +645,13 @@ class MultipartRequestTest {
   void preservesLargeUtf8MultipartFieldAsTextAndCleansItsTemporaryStorage() throws Exception {
     var content = "é".repeat(95 * 1024);
     var directory = Files.createDirectory(temporaryDirectory.resolve("large-text"));
-    var multipart = new MultipartOptions(300_000, 250_000, 2, 8192, 1024, directory);
+    var multipart = new MultipartOptions();
+    multipart.setMaxFileBytes(250_000L);
+    multipart.setMaxBytes(300_000L);
+    multipart.setMaxParts(2);
+    multipart.setMaxPartHeadersBytes(8192);
+    multipart.setMaxMemoryPartBytes(1024L);
+    multipart.setTemporaryDirectory(directory);
     var completed = new CompletableFuture<Void>();
     var body =
         createBodyForPreservesLargeUtf8MultipartFieldAsTextAndCleansItsTemporaryStorage(content);
@@ -651,21 +711,26 @@ class MultipartRequestTest {
   private HttpResponse<byte[]>
       sendResultForPreservesLargeUtf8MultipartFieldAsTextAndCleansItsTemporaryStorage(
           TestServer test, byte[] body) throws IOException, InterruptedException {
-    return test.send(
-        request ->
-            request
-                .path("/upload")
-                .timeout(Duration.ofSeconds(3))
-                .header("Content-Type", "multipart/form-data; boundary=" + BOUNDARY)
-                .method("POST")
-                .body(body));
+    return test.send(request ->
+        request
+            .path("/upload")
+            .timeout(Duration.ofSeconds(3))
+            .header("Content-Type", "multipart/form-data; boundary=" + BOUNDARY)
+            .method("POST")
+            .body(body));
   }
 
   @Test
   void preservesSameSizedNamedMultipartPartAsFileAndCleansItsTemporaryStorage() throws Exception {
     var content = "é".repeat(95 * 1024);
     var directory = Files.createDirectory(temporaryDirectory.resolve("large-file"));
-    var multipart = new MultipartOptions(300_000, 250_000, 2, 8192, 1024, directory);
+    var multipart = new MultipartOptions();
+    multipart.setMaxFileBytes(250_000L);
+    multipart.setMaxBytes(300_000L);
+    multipart.setMaxParts(2);
+    multipart.setMaxPartHeadersBytes(8192);
+    multipart.setMaxMemoryPartBytes(1024L);
+    multipart.setTemporaryDirectory(directory);
     var completed = new CompletableFuture<Void>();
 
     var configuredOptions = new Options();
@@ -718,14 +783,13 @@ class MultipartRequestTest {
   private HttpResponse<byte[]>
       sendResultForPreservesSameSizedNamedMultipartPartAsFileAndCleansItsTemporaryStorage(
           TestServer test, String content) throws IOException, InterruptedException {
-    return test.send(
-        request ->
-            request
-                .path("/upload")
-                .timeout(Duration.ofSeconds(3))
-                .header("Content-Type", "multipart/form-data; boundary=" + BOUNDARY)
-                .method("POST")
-                .body(fileBody(content)));
+    return test.send(request ->
+        request
+            .path("/upload")
+            .timeout(Duration.ofSeconds(3))
+            .header("Content-Type", "multipart/form-data; boundary=" + BOUNDARY)
+            .method("POST")
+            .body(fileBody(content)));
   }
 
   @Test
@@ -776,6 +840,44 @@ class MultipartRequestTest {
   }
 
   @Test
+  void confinesCachedMultipartMapsToTheirHandlerThreadAndLifetime() throws Exception {
+    var retained = new AtomicReference<Request>();
+    var app = new Shoostr();
+
+    try (Closeable appCleanup = app::close) {
+      app.routes()
+          .post(
+              "/upload",
+              (request, response) -> {
+                assertFalse(request.files().isEmpty());
+                assertFalse(request.formParamMap().isEmpty());
+                retained.set(request);
+
+                try (var workers = Executors.newVirtualThreadPerTaskExecutor()) {
+                  workers
+                      .submit(() -> assertCachedMultipartMapsUnavailable(request))
+                      .get(3, TimeUnit.SECONDS);
+                }
+
+                response.text("ok");
+              });
+
+      try (var server = TestServer.start(app)) {
+        var result = sendResultForReadsMultipartTextAndFileFields(server);
+
+        assertEquals(200, result.statusCode());
+        assertEquals("ok", result.body());
+        assertCachedMultipartMapsUnavailable(retained.get());
+      }
+    }
+  }
+
+  private void assertCachedMultipartMapsUnavailable(Request request) {
+    assertThrows(IllegalStateException.class, request::files);
+    assertThrows(IllegalStateException.class, request::formParamMap);
+  }
+
+  @Test
   void preservesBinaryUploadContent() throws Exception {
     var body = binaryBody();
 
@@ -820,7 +922,13 @@ class MultipartRequestTest {
   @Test
   void spillsOnlyUploadsAboveTheMemoryThresholdToTheConfiguredDirectory() throws Exception {
     var directory = Files.createTempDirectory(temporaryDirectory, "multipart-threshold-test");
-    var multipart = new MultipartOptions(1000, 1000, 100, 8192, 8, directory);
+    var multipart = new MultipartOptions();
+    multipart.setMaxFileBytes(1000L);
+    multipart.setMaxBytes(1000L);
+    multipart.setMaxParts(100);
+    multipart.setMaxPartHeadersBytes(8192);
+    multipart.setMaxMemoryPartBytes(8L);
+    multipart.setTemporaryDirectory(directory);
 
     var configuredOptions = new Options();
     configuredOptions.setMultipart(multipart);
@@ -889,8 +997,14 @@ class MultipartRequestTest {
   @Test
   void treatsHostileFilenamesAsMetadataInsteadOfDestinationPaths() throws Exception {
     var directory = Files.createTempDirectory(temporaryDirectory, "multipart-filename-test");
-    var destination = directory.resolve("saved.bin");
-    var multipart = new MultipartOptions(1000, 1000, 100, 8192, 0, directory);
+    final var destination = directory.resolve("saved.bin");
+    var multipart = new MultipartOptions();
+    multipart.setMaxFileBytes(1000L);
+    multipart.setMaxBytes(1000L);
+    multipart.setMaxParts(100);
+    multipart.setMaxPartHeadersBytes(8192);
+    multipart.setMaxMemoryPartBytes(0L);
+    multipart.setTemporaryDirectory(directory);
 
     var configuredOptions = new Options();
     configuredOptions.setMultipart(multipart);
@@ -1029,7 +1143,14 @@ class MultipartRequestTest {
         app.routes()
             .post(
                 "/upload",
-                (request, response) -> response.text(String.join(",", request.formParams("tag"))));
+                (request, response) -> {
+                  var values = request.formParamMap().get("tag");
+
+                  assertNotNull(values);
+                  assertThrows(UnsupportedOperationException.class, values::clear);
+
+                  response.text(String.join(",", request.formParams("tag")));
+                });
 
         try (var test = TestServer.start(app)) {
           var result = sendResultForPreservesRepeatedMultipartTextFieldsInArrivalOrder(test);
@@ -1055,10 +1176,71 @@ class MultipartRequestTest {
   }
 
   @Test
+  void restoresInterruptionWhileWaitingForIncompleteMultipartInput() throws Exception {
+    var observed = new CompletableFuture<Boolean>();
+    var app = interruptedMultipartApplication(observed);
+
+    try (Closeable appCleanup = app::close;
+        var server = TestServer.start(app);
+        var socket = new Socket()) {
+      socket.connect(
+          new InetSocketAddress(InetAddress.getLoopbackAddress(), server.baseUri().getPort()),
+          3000);
+      var output = socket.getOutputStream();
+      output.write(interruptedMultipartPrefix().getBytes(StandardCharsets.US_ASCII));
+      output.flush();
+
+      assertTrue(observed.get(3, TimeUnit.SECONDS));
+    }
+  }
+
+  private Shoostr interruptedMultipartApplication(CompletableFuture<Boolean> observed) {
+    return new Shoostr()
+        .routes(routes ->
+            routes.post(
+                "/upload",
+                (request, response) -> {
+                  Thread.currentThread().interrupt();
+
+                  try {
+                    var failure = assertThrows(IOException.class, request::files);
+                    assertInstanceOf(InterruptedException.class, failure.getCause());
+                    observed.complete(Thread.currentThread().isInterrupted());
+                  } catch (Throwable failure) {
+                    observed.completeExceptionally(failure);
+                  } finally {
+                    Thread.interrupted();
+                  }
+
+                  response.status(204);
+                }));
+  }
+
+  private String interruptedMultipartPrefix() {
+    var content =
+        "--" + BOUNDARY + "\r\nContent-Disposition: form-data; name=\"title\"\r\n\r\npartial";
+
+    return "POST /upload HTTP/1.1\r\nHost: localhost\r\n"
+        + "Content-Type: multipart/form-data; boundary="
+        + BOUNDARY
+        + "\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n"
+        + Integer.toHexString(content.length())
+        + "\r\n"
+        + content
+        + "\r\n";
+  }
+
+  @Test
   void persistsAnUploadBeyondRequestCompletion() throws Exception {
     var directory = Files.createTempDirectory(temporaryDirectory, "multipart-request-test");
     var destination = directory.resolve("saved.txt");
-    var multipart = new MultipartOptions(1000, 1000, 100, 8192, 0, directory);
+    var multipart = new MultipartOptions();
+    multipart.setMaxFileBytes(1000L);
+    multipart.setMaxBytes(1000L);
+    multipart.setMaxParts(100);
+    multipart.setMaxPartHeadersBytes(8192);
+    multipart.setMaxMemoryPartBytes(0L);
+    multipart.setTemporaryDirectory(directory);
 
     var configuredOptions = new Options();
     configuredOptions.setMultipart(multipart);
@@ -1071,12 +1253,13 @@ class MultipartRequestTest {
             .post(
                 "/upload",
                 (request, response) -> {
-                  request.file("document").orElseThrow().persistTo(destination);
+                  assertEquals(
+                      destination, request.file("document").orElseThrow().persistTo(destination));
                   response.text("saved");
                 });
 
         try (var test = TestServer.start(app)) {
-          var result = sendResultForPersistsAnUploadBeyondRequestCompletion(test);
+          var result = sendFileUpload(test);
 
           assertEquals(200, result.statusCode());
           assertEquals("saved", result.body());
@@ -1092,7 +1275,7 @@ class MultipartRequestTest {
     }
   }
 
-  private HttpResponse<String> sendResultForPersistsAnUploadBeyondRequestCompletion(TestServer test)
+  private HttpResponse<String> sendFileUpload(TestServer test)
       throws IOException, InterruptedException {
     return test.send(
         request ->
@@ -1103,6 +1286,113 @@ class MultipartRequestTest {
                 .method("POST")
                 .body(fileBody("contents")),
         HttpResponse.BodyHandlers.ofString());
+  }
+
+  @Test
+  void confinesUploadOperationsToTheirHandlerThreadAndLifetime() throws Exception {
+    var retained = new AtomicReference<Upload>();
+    var foreignDestination = temporaryDirectory.resolve("foreign.txt");
+    var completedDestination = temporaryDirectory.resolve("completed.txt");
+
+    try (var owner = Executors.newSingleThreadExecutor()) {
+      var app = new Shoostr();
+
+      try (Closeable appCleanup = app::close) {
+        app.routes()
+            .post(
+                "/upload",
+                owner,
+                (request, response) -> {
+                  var upload = request.file("document").orElseThrow();
+                  retained.set(upload);
+
+                  assertEquals("document", upload.name());
+                  assertEquals(8, upload.size());
+                  assertEquals("report.txt", upload.fileName());
+
+                  try (var foreign = Executors.newVirtualThreadPerTaskExecutor()) {
+                    foreign
+                        .submit(() -> assertUploadUnavailable(upload, foreignDestination))
+                        .get(3, TimeUnit.SECONDS);
+                  }
+
+                  response.text("ready");
+                });
+
+        try (var test = TestServer.start(app)) {
+          var result = sendFileUpload(test);
+
+          assertEquals(200, result.statusCode());
+          assertEquals("ready", result.body());
+
+          owner
+              .submit(() -> assertUploadUnavailable(retained.get(), completedDestination))
+              .get(3, TimeUnit.SECONDS);
+        }
+      }
+    }
+  }
+
+  private void assertUploadUnavailable(Upload upload, Path destination) {
+    assertThrows(IllegalStateException.class, upload::name);
+    assertThrows(IllegalStateException.class, upload::fileName);
+    assertThrows(IllegalStateException.class, upload::size);
+    assertThrows(
+        IllegalStateException.class,
+        () -> {
+          try (var content = upload.content()) {
+            // Close unexpected content as well so mutation failures cannot leak it.
+          }
+        });
+    assertThrows(IllegalStateException.class, () -> upload.persistTo(destination));
+    assertFalse(Files.exists(destination));
+  }
+
+  @Test
+  void releasesOwnedUploadStreamsAfterServerCleanup() throws Exception {
+    var retained = new AtomicReference<Upload>();
+    var multipart = new MultipartOptions();
+    multipart.setMaxMemoryPartBytes(16_384L);
+    var options = new Options();
+    options.setMultipart(multipart);
+    var app = new Shoostr(options);
+
+    try (Closeable appCleanup = app::close) {
+      app.routes()
+          .post(
+              "/upload",
+              (request, response) -> {
+                var upload = request.file("document").orElseThrow();
+                retained.set(upload);
+
+                try (var content = upload.content()) {
+                  assertNotNull(content);
+                  assertEquals(1, ownedUploadStreamCount(upload));
+                }
+
+                response.text("ready");
+              });
+
+      try (var test = TestServer.start(app)) {
+        var result = sendFileUpload(test);
+
+        assertEquals(200, result.statusCode());
+        assertEquals("ready", result.body());
+      }
+
+      assertEquals(0, ownedUploadStreamCount(retained.get()));
+    }
+  }
+
+  private int ownedUploadStreamCount(Upload upload) throws ReflectiveOperationException {
+    var guardField = Upload.class.getDeclaredField("streamsLock");
+    guardField.setAccessible(true);
+    var guard = (ReentrantLock) Objects.requireNonNull(guardField.get(upload));
+    var streamsField = Upload.class.getDeclaredField("streams");
+    streamsField.setAccessible(true);
+    var streams = (List<?>) Objects.requireNonNull(streamsField.get(upload));
+
+    return Objects.requireNonNull(getUnderLock(guard, streams::size));
   }
 
   @Test
@@ -1166,15 +1456,14 @@ class MultipartRequestTest {
                             () -> assertThrows(IllegalStateException.class, () -> content.skip(2)))
                         .get(3, TimeUnit.SECONDS);
                     executor
-                        .submit(
-                            () ->
-                                assertThrows(
-                                    IllegalStateException.class, () -> content.skipNBytes(2)))
+                        .submit(() ->
+                            assertThrows(IllegalStateException.class, () -> content.skipNBytes(2)))
                         .get(3, TimeUnit.SECONDS);
                   }
 
-                  assertEquals(
-                      "contents", new String(content.readAllBytes(), StandardCharsets.UTF_8));
+                  content.skipNBytes(3);
+
+                  assertEquals("tents", new String(content.readAllBytes(), StandardCharsets.UTF_8));
 
                   response.text("ready");
                 });
@@ -1209,7 +1498,12 @@ class MultipartRequestTest {
 
   @Test
   void rejectsMultipartBodiesExceedingTheAggregateLimit() throws Exception {
-    var multipart = new MultipartOptions(100, 100, 100, 8192, 16_384, null);
+    var multipart = new MultipartOptions();
+    multipart.setMaxFileBytes(100L);
+    multipart.setMaxBytes(100L);
+    multipart.setMaxParts(100);
+    multipart.setMaxPartHeadersBytes(8192);
+    multipart.setMaxMemoryPartBytes(16_384L);
 
     var configuredOptions = new Options();
     configuredOptions.setMultipart(multipart);
@@ -1288,7 +1582,12 @@ class MultipartRequestTest {
 
   @Test
   void rejectsChunkedMultipartBodiesExceedingTheAggregateLimit() throws Exception {
-    var multipart = new MultipartOptions(100, 100, 100, 8192, 16_384, null);
+    var multipart = new MultipartOptions();
+    multipart.setMaxFileBytes(100L);
+    multipart.setMaxBytes(100L);
+    multipart.setMaxParts(100);
+    multipart.setMaxPartHeadersBytes(8192);
+    multipart.setMaxMemoryPartBytes(16_384L);
 
     var configuredOptions = new Options();
     configuredOptions.setMultipart(multipart);
@@ -1329,7 +1628,13 @@ class MultipartRequestTest {
   @Test
   void cleansUpAndRepeatsLimitRejectionsWithoutPublishingPartialParts() throws Exception {
     var directory = Files.createTempDirectory(temporaryDirectory, "multipart-limit-test");
-    var multipart = new MultipartOptions(100, 100, 100, 8192, 0, directory);
+    var multipart = new MultipartOptions();
+    multipart.setMaxFileBytes(100L);
+    multipart.setMaxBytes(100L);
+    multipart.setMaxParts(100);
+    multipart.setMaxPartHeadersBytes(8192);
+    multipart.setMaxMemoryPartBytes(0L);
+    multipart.setTemporaryDirectory(directory);
 
     var configuredOptions = new Options();
     configuredOptions.setMultipart(multipart);
@@ -1383,7 +1688,13 @@ class MultipartRequestTest {
   @Test
   void cleansUpTemporaryPartsCreatedBeforeChunkedLimitRejection() throws Exception {
     var directory = Files.createTempDirectory(temporaryDirectory, "multipart-chunked-limit-test");
-    var multipart = new MultipartOptions(1000, 1000, 100, 8192, 0, directory);
+    var multipart = new MultipartOptions();
+    multipart.setMaxFileBytes(1000L);
+    multipart.setMaxBytes(1000L);
+    multipart.setMaxParts(100);
+    multipart.setMaxPartHeadersBytes(8192);
+    multipart.setMaxMemoryPartBytes(0L);
+    multipart.setTemporaryDirectory(directory);
 
     var configuredOptions = new Options();
     configuredOptions.setMultipart(multipart);
@@ -1444,7 +1755,12 @@ class MultipartRequestTest {
 
   @Test
   void rejectsFilesExceedingThePerFileLimit() throws Exception {
-    var multipart = new MultipartOptions(1000, 3, 100, 8192, 16_384, null);
+    var multipart = new MultipartOptions();
+    multipart.setMaxFileBytes(3L);
+    multipart.setMaxBytes(1000L);
+    multipart.setMaxParts(100);
+    multipart.setMaxPartHeadersBytes(8192);
+    multipart.setMaxMemoryPartBytes(16_384L);
 
     var configuredOptions = new Options();
     configuredOptions.setMultipart(multipart);
@@ -1484,7 +1800,12 @@ class MultipartRequestTest {
 
   @Test
   void rejectsMultipartRequestsExceedingThePartLimit() throws Exception {
-    var multipart = new MultipartOptions(1000, 1000, 1, 8192, 16_384, null);
+    var multipart = new MultipartOptions();
+    multipart.setMaxFileBytes(1000L);
+    multipart.setMaxBytes(1000L);
+    multipart.setMaxParts(1);
+    multipart.setMaxPartHeadersBytes(8192);
+    multipart.setMaxMemoryPartBytes(16_384L);
 
     var configuredOptions = new Options();
     configuredOptions.setMultipart(multipart);
@@ -1523,7 +1844,12 @@ class MultipartRequestTest {
 
   @Test
   void rejectsMultipartPartsExceedingTheHeaderLimit() throws Exception {
-    var multipart = new MultipartOptions(1000, 1000, 100, 10, 16_384, null);
+    var multipart = new MultipartOptions();
+    multipart.setMaxFileBytes(1000L);
+    multipart.setMaxBytes(1000L);
+    multipart.setMaxParts(100);
+    multipart.setMaxPartHeadersBytes(10);
+    multipart.setMaxMemoryPartBytes(16_384L);
 
     var configuredOptions = new Options();
     configuredOptions.setMultipart(multipart);
@@ -1595,8 +1921,14 @@ class MultipartRequestTest {
         HttpResponse.BodyHandlers.ofString());
   }
 
-  @Test
-  void rejectsMultipartTextFieldsWithNonUtf8Charset() throws Exception {
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "text/plain; charset=ISO-8859-1",
+        "application/json",
+        "application/json; charset=UTF-8"
+      })
+  void rejectsUnsupportedMultipartTextFieldRepresentations(String contentType) throws Exception {
     {
       var app = new Shoostr();
 
@@ -1607,7 +1939,7 @@ class MultipartRequestTest {
                 (request, response) -> response.text(request.formParam("title").orElseThrow()));
 
         try (var test = TestServer.start(app)) {
-          var result = sendResultForRejectsMultipartTextFieldsWithNonUtf8Charset(test);
+          var result = sendMultipartTextField(test, contentType);
 
           assertEquals(415, result.statusCode());
           assertEquals("Unsupported Media Type", result.body());
@@ -1616,8 +1948,8 @@ class MultipartRequestTest {
     }
   }
 
-  private HttpResponse<String> sendResultForRejectsMultipartTextFieldsWithNonUtf8Charset(
-      TestServer test) throws IOException, InterruptedException {
+  private HttpResponse<String> sendMultipartTextField(TestServer test, String contentType)
+      throws IOException, InterruptedException {
     return test.send(
         request ->
             request
@@ -1625,7 +1957,7 @@ class MultipartRequestTest {
                 .timeout(Duration.ofSeconds(3))
                 .header("Content-Type", "multipart/form-data; boundary=" + BOUNDARY)
                 .method("POST")
-                .body(nonUtf8TextFieldBody()),
+                .body(textFieldBody(contentType)),
         HttpResponse.BodyHandlers.ofString());
   }
 
@@ -1688,7 +2020,11 @@ class MultipartRequestTest {
         try (var test = TestServer.start(app)) {
 
           for (var body :
-              List.of(wrongDispositionBody(), missingDispositionBody(), missingNameBody())) {
+              List.of(
+                  wrongDispositionBody(),
+                  missingDispositionBody(),
+                  missingNameBody(),
+                  emptyNameBody())) {
             var result = sendResultForRejectsEachRequiredMultipartMetadataBranch(test, body);
 
             assertEquals(200, result.statusCode());
@@ -1715,7 +2051,13 @@ class MultipartRequestTest {
   @Test
   void deletesTemporaryUploadsAfterMalformedMultipartInput() throws Exception {
     var directory = Files.createTempDirectory(temporaryDirectory, "multipart-cleanup-test");
-    var multipart = new MultipartOptions(1000, 1000, 100, 8192, 0, directory);
+    var multipart = new MultipartOptions();
+    multipart.setMaxFileBytes(1000L);
+    multipart.setMaxBytes(1000L);
+    multipart.setMaxParts(100);
+    multipart.setMaxPartHeadersBytes(8192);
+    multipart.setMaxMemoryPartBytes(0L);
+    multipart.setTemporaryDirectory(directory);
 
     var configuredOptions = new Options();
     configuredOptions.setMultipart(multipart);
@@ -1764,7 +2106,13 @@ class MultipartRequestTest {
   @Test
   void deletesTemporaryUploadsAfterHandlerFailure() throws Exception {
     var directory = Files.createTempDirectory(temporaryDirectory, "multipart-cleanup-test");
-    var multipart = new MultipartOptions(1000, 1000, 100, 8192, 0, directory);
+    var multipart = new MultipartOptions();
+    multipart.setMaxFileBytes(1000L);
+    multipart.setMaxBytes(1000L);
+    multipart.setMaxParts(100);
+    multipart.setMaxPartHeadersBytes(8192);
+    multipart.setMaxMemoryPartBytes(0L);
+    multipart.setTemporaryDirectory(directory);
     var firstByte = new AtomicInteger(-1);
 
     var configuredOptions = new Options();
@@ -1818,7 +2166,13 @@ class MultipartRequestTest {
   @Test
   void deletesTemporaryUploadsAfterSuccessfulResponse() throws Exception {
     var directory = Files.createTempDirectory(temporaryDirectory, "multipart-cleanup-test");
-    var multipart = new MultipartOptions(1000, 1000, 100, 8192, 0, directory);
+    var multipart = new MultipartOptions();
+    multipart.setMaxFileBytes(1000L);
+    multipart.setMaxBytes(1000L);
+    multipart.setMaxParts(100);
+    multipart.setMaxPartHeadersBytes(8192);
+    multipart.setMaxMemoryPartBytes(0L);
+    multipart.setTemporaryDirectory(directory);
 
     var configuredOptions = new Options();
     configuredOptions.setMultipart(multipart);
@@ -1864,10 +2218,18 @@ class MultipartRequestTest {
         HttpResponse.BodyHandlers.ofString());
   }
 
-  @Test
-  void reportsServerErrorsWhenTemporaryUploadStorageCannotBeCreated() throws Exception {
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void reportsTemporaryUploadStorageFailuresThroughConfiguredExceptionHandling(boolean mapped)
+      throws Exception {
     var storage = Files.createTempFile(temporaryDirectory, "multipart-storage-test", ".tmp");
-    var multipart = new MultipartOptions(1000, 1000, 100, 8192, 0, storage);
+    var multipart = new MultipartOptions();
+    multipart.setMaxFileBytes(1000L);
+    multipart.setMaxBytes(1000L);
+    multipart.setMaxParts(100);
+    multipart.setMaxPartHeadersBytes(8192);
+    multipart.setMaxMemoryPartBytes(0L);
+    multipart.setTemporaryDirectory(storage);
 
     var configuredOptions = new Options();
     configuredOptions.setMultipart(multipart);
@@ -1876,6 +2238,12 @@ class MultipartRequestTest {
       var app = new Shoostr(configuredOptions);
 
       try (Closeable appCleanup35 = app::close) {
+        if (mapped) {
+          app.exception(
+              IOException.class,
+              (failure, request, response) -> response.status(507).text("Storage unavailable"));
+        }
+
         app.routes()
             .post(
                 "/upload",
@@ -1886,8 +2254,8 @@ class MultipartRequestTest {
           var result =
               sendResultForReportsServerErrorsWhenTemporaryUploadStorageCannotBeCreated(test);
 
-          assertEquals(500, result.statusCode());
-          assertEquals("Internal Server Error", result.body());
+          assertEquals(mapped ? 507 : 500, result.statusCode());
+          assertEquals(mapped ? "Storage unavailable" : "Internal Server Error", result.body());
         }
       }
     } finally {
@@ -1912,7 +2280,13 @@ class MultipartRequestTest {
   @Test
   void deletesTemporaryUploadsAfterClientDisconnect() throws Exception {
     var directory = Files.createTempDirectory(temporaryDirectory, "multipart-cleanup-test");
-    var multipart = new MultipartOptions(1000, 1000, 100, 8192, 0, directory);
+    var multipart = new MultipartOptions();
+    multipart.setMaxFileBytes(1000L);
+    multipart.setMaxBytes(1000L);
+    multipart.setMaxParts(100);
+    multipart.setMaxPartHeadersBytes(8192);
+    multipart.setMaxMemoryPartBytes(0L);
+    multipart.setTemporaryDirectory(directory);
 
     var configuredOptions = new Options();
     configuredOptions.setMultipart(multipart);
@@ -1959,7 +2333,13 @@ class MultipartRequestTest {
   void abortingOneSpilledUploadPreservesAnotherUntilItsHandlerCompletes() throws Exception {
     for (var repeat = 0; repeat < 2; repeat++) {
       var directory = Files.createDirectory(temporaryDirectory.resolve("overlap-" + repeat));
-      var multipart = new MultipartOptions(32_768, 16_384, 2, 8192, 128, directory);
+      var multipart = new MultipartOptions();
+      multipart.setMaxFileBytes(16_384L);
+      multipart.setMaxBytes(32_768L);
+      multipart.setMaxParts(2);
+      multipart.setMaxPartHeadersBytes(8192);
+      multipart.setMaxMemoryPartBytes(128L);
+      multipart.setTemporaryDirectory(directory);
       var abandonedPublished = new AtomicBoolean();
       var abandonedCompleted = new CompletableFuture<Void>();
       var survivorCompleted = new CompletableFuture<Void>();
@@ -1977,14 +2357,13 @@ class MultipartRequestTest {
         var app = new Shoostr(configuredOptions);
 
         try (Closeable appCleanup37 = app::close) {
-          app.afterRequest(
-              outcome -> {
-                if ("/abandon".equals(outcome.routePattern())) {
-                  abandonedCompleted.complete(null);
-                } else if ("/survive".equals(outcome.routePattern())) {
-                  survivorCompleted.complete(null);
-                }
-              });
+          app.afterRequest(outcome -> {
+            if ("/abandon".equals(outcome.routePattern())) {
+              abandonedCompleted.complete(null);
+            } else if ("/survive".equals(outcome.routePattern())) {
+              survivorCompleted.complete(null);
+            }
+          });
           app.routes()
               .post(
                   "/abandon",
@@ -2077,11 +2456,17 @@ class MultipartRequestTest {
         app.routes()
             .post(
                 "/upload",
-                (request, response) ->
-                    response.text(
-                        request.files("document").stream()
-                            .map(Upload::fileName)
-                            .collect(Collectors.joining(","))));
+                (request, response) -> {
+                  var uploads = request.files().get("document");
+
+                  assertNotNull(uploads);
+                  assertThrows(UnsupportedOperationException.class, uploads::clear);
+
+                  response.text(
+                      request.files("document").stream()
+                          .map(Upload::fileName)
+                          .collect(Collectors.joining(",")));
+                });
 
         try (var test = TestServer.start(app)) {
           var result = sendResultForRetainsRepeatedUploadsInArrivalOrder(test);

@@ -16,31 +16,29 @@ import org.junit.jupiter.params.provider.MethodSource;
 class RoutePatternBenchmarkTest {
   private static Stream<Arguments> cases() {
     return Stream.of(1, 100, 1000)
-        .flatMap(
-            groups ->
-                Stream.of(
-                        "literal",
-                        "oneParameter",
-                        "twoParameters",
-                        "encodedParameter",
-                        "precedence",
-                        "fallback",
-                        "notFound",
-                        "wrongMethod",
-                        "catchAllNoRead",
-                        "catchAllRead",
-                        "catchAllFallback",
-                        "catchAllWrongMethod",
-                        "catchAllMiss",
-                        "regexNoRead",
-                        "regexRead",
-                        "regexFallback",
-                        "regexWrongMethod",
-                        "regexMiss")
-                    .flatMap(
-                        workload ->
-                            Stream.of("reused", "fresh")
-                                .map(input -> Arguments.of(groups, workload, input))));
+        .flatMap(groups ->
+            Stream.of(
+                    "literal",
+                    "oneParameter",
+                    "twoParameters",
+                    "encodedParameter",
+                    "precedence",
+                    "fallback",
+                    "notFound",
+                    "wrongMethod",
+                    "catchAllNoRead",
+                    "catchAllRead",
+                    "catchAllFallback",
+                    "catchAllWrongMethod",
+                    "catchAllMiss",
+                    "regexNoRead",
+                    "regexRead",
+                    "regexFallback",
+                    "regexWrongMethod",
+                    "regexMiss")
+                .flatMap(workload ->
+                    Stream.of("reused", "fresh")
+                        .map(input -> Arguments.of(groups, workload, input))));
   }
 
   @ParameterizedTest

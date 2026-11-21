@@ -9,7 +9,10 @@ import io.github.suppierk.shoostr.Request;
 import io.github.suppierk.shoostr.Response;
 import io.github.suppierk.shoostr.RouteExtension;
 import io.github.suppierk.shoostr.Routes;
+import io.github.suppierk.shoostr.http.HttpCharacters;
+import io.github.suppierk.shoostr.http.HttpHeaders;
 import io.github.suppierk.shoostr.http.HttpMethods;
+import io.github.suppierk.shoostr.http.HttpStatusCodes;
 import io.github.suppierk.shoostr.http.MediaType;
 import io.github.suppierk.shoostr.http.exceptions.AuthenticationRequiredException;
 import io.github.suppierk.shoostr.http.exceptions.BadRequestException;
@@ -44,9 +47,8 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import org.eclipse.jetty.http.HttpField;
@@ -73,14 +75,21 @@ public final class Mcp<S> implements RouteExtension<Mcp<S>> {
   private static final String FIELD_METHOD = "method";
   private static final String FIELD_RESULT = "result";
   private static final String FIELD_ERROR = "error";
+  private static final String JSONRPC = "jsonrpc";
+  private static final String ID = "id";
+  private static final String VERSION_2_0 = "2.0";
+  private static final String PARAMS = "params";
+  private static final String CODE = "code";
+  private static final String MESSAGE = "message";
+  private static final String MCP_SESSION_ID = "Mcp-Session-Id";
+
   private final McpHttpSecurity security;
   private final String expiredTokenChallenge;
   private final Provider provider;
   private final S server;
-  private final AtomicBoolean owned;
   private final ScheduledThreadPoolExecutor deadlines;
   private final String lifetimeAttribute;
-  private @Nullable String mount;
+  private final AtomicReference<@Nullable String> mount;
 
   /**
    * Invokes the native factory eagerly and verifies that it bound the supplied transport.
@@ -96,7 +105,7 @@ public final class Mcp<S> implements RouteExtension<Mcp<S>> {
     this.security = Objects.requireNonNull(security);
     Objects.requireNonNull(limits);
 
-    var metadata = security.resourceMetadata();
+    final var metadata = security.resourceMetadata();
     this.expiredTokenChallenge =
         "Bearer error=\"invalid_token\""
             + (metadata == null ? "" : ", resource_metadata=\"" + metadata.toASCIIString() + "\"");
@@ -104,7 +113,6 @@ public final class Mcp<S> implements RouteExtension<Mcp<S>> {
     Objects.requireNonNull(factory);
 
     this.provider = new Provider(limits);
-    this.owned = new AtomicBoolean();
     this.deadlines =
         new ScheduledThreadPoolExecutor(
             1, task -> Thread.ofPlatform().daemon().name("shoostr-mcp-expiry").unstarted(task));
@@ -114,6 +122,7 @@ public final class Mcp<S> implements RouteExtension<Mcp<S>> {
 
     this.lifetimeAttribute = McpRequestLifetime.class.getName() + "." + UUID.randomUUID();
 
+    this.mount = new AtomicReference<>();
     this.server = createServer(factory);
   }
 
@@ -174,53 +183,45 @@ public final class Mcp<S> implements RouteExtension<Mcp<S>> {
   }
 
   /**
-   * Checks required initialization fields before native coercion and session allocation.
-   *
-   * @param parameters uncoerced initialization parameters
-   * @return whether the required version, capability and client-info shapes are present
-   */
-  private static boolean validInitialization(@Nullable Object parameters) {
-    return parameters instanceof Map<?, ?> fields
-        && fields.get("protocolVersion") instanceof String
-        && fields.get("capabilities") instanceof Map<?, ?>
-        && fields.get("clientInfo") instanceof Map<?, ?> client
-        && client.get("name") instanceof String
-        && client.get("version") instanceof String;
-  }
-
-  /**
    * Validates the wire envelope before native mapper coercion can erase invalid field types. Native
    * SDK dispatch remains responsible for method-specific parameters.
    *
    * @param fields parsed JSON object
-   * @return whether one dated MCP message can be passed to native decoding
+   * @return native message class for a valid envelope, or null if the envelope is invalid
    */
-  private static boolean validEnvelope(Map<?, ?> fields) {
-    if (!"2.0".equals(fields.get("jsonrpc"))
-        || (fields.containsKey("id") && !validId(fields.get("id")))) {
-      return false;
+  private static @Nullable Class<? extends McpSchema.JSONRPCMessage> classifyEnvelope(
+      Map<?, ?> fields) {
+    final var hasId = fields.containsKey(ID);
+    if (!VERSION_2_0.equals(fields.get(JSONRPC)) || (hasId && !validId(fields.get(ID)))) {
+      return null;
     }
 
     if (fields.containsKey(FIELD_METHOD)) {
-      return fields.get(FIELD_METHOD) instanceof String method
-          && !method.isBlank()
-          && !fields.containsKey(FIELD_RESULT)
-          && !fields.containsKey(FIELD_ERROR)
-          && (!fields.containsKey("params") || fields.get("params") instanceof Map<?, ?>);
+      if (!(fields.get(FIELD_METHOD) instanceof String method)
+          || method.isBlank()
+          || fields.containsKey(FIELD_RESULT)
+          || fields.containsKey(FIELD_ERROR)
+          || (fields.containsKey(PARAMS) && !(fields.get(PARAMS) instanceof Map<?, ?>))) {
+        return null;
+      }
+
+      return hasId ? McpSchema.JSONRPCRequest.class : McpSchema.JSONRPCNotification.class;
     }
 
-    if (!fields.containsKey("id")
-        || fields.containsKey(FIELD_RESULT) == fields.containsKey(FIELD_ERROR)) {
-      return false;
+    final var hasResult = fields.containsKey(FIELD_RESULT);
+    if (!hasId || hasResult == fields.containsKey(FIELD_ERROR)) {
+      return null;
     }
 
-    if (fields.containsKey(FIELD_RESULT)) {
-      return fields.get(FIELD_RESULT) instanceof Map<?, ?>;
+    if (hasResult) {
+      return fields.get(FIELD_RESULT) instanceof Map<?, ?> ? McpSchema.JSONRPCResponse.class : null;
     }
 
     return fields.get(FIELD_ERROR) instanceof Map<?, ?> error
-        && error.get("code") instanceof Integer
-        && error.get("message") instanceof String;
+            && error.get(CODE) instanceof Integer
+            && error.get(MESSAGE) instanceof String
+        ? McpSchema.JSONRPCResponse.class
+        : null;
   }
 
   /**
@@ -241,7 +242,7 @@ public final class Mcp<S> implements RouteExtension<Mcp<S>> {
    * @throws NotAcceptableException if Accept is absent or excludes event streams
    */
   private static void requireAccept(Request request, Response response) {
-    if (request.headers("Accept").isEmpty()) {
+    if (request.headers(HttpHeaders.ACCEPT.value()).isEmpty()) {
       throw new NotAcceptableException();
     }
 
@@ -255,7 +256,7 @@ public final class Mcp<S> implements RouteExtension<Mcp<S>> {
    * @throws UnsupportedMediaTypeException if an explicit representation is not JSON
    */
   private static void requireJson(Request request) {
-    var values = request.headers("Content-Type");
+    final var values = request.headers(HttpHeaders.CONTENT_TYPE.value());
     if (!values.isEmpty()
         && (values.size() != 1
             || !MediaType.APPLICATION_JSON
@@ -273,8 +274,6 @@ public final class Mcp<S> implements RouteExtension<Mcp<S>> {
    * @throws IllegalArgumentException if the factory does not bind the supplied transport
    */
   private S createServer(Function<McpStreamableServerTransportProvider, S> factory) {
-    boolean created = false;
-
     try {
       final var nativeServer = Objects.requireNonNull(factory.apply(provider));
       if (provider.factory == null) {
@@ -283,17 +282,11 @@ public final class Mcp<S> implements RouteExtension<Mcp<S>> {
       }
 
       provider.startIdleExpiry(deadlines);
-      created = true;
 
       return nativeServer;
-    } finally {
-      if (!created) {
-        try {
-          provider.closeGracefully().block();
-        } finally {
-          deadlines.shutdownNow();
-        }
-      }
+    } catch (Throwable failure) {
+      closeTransport();
+      throw failure;
     }
   }
 
@@ -313,12 +306,7 @@ public final class Mcp<S> implements RouteExtension<Mcp<S>> {
    */
   @Override
   public void claimOwnership() {
-    synchronized (provider) {
-      if (provider.stopping || !owned.compareAndSet(false, true)) {
-        throw new IllegalStateException(
-            "An MCP capability must be open and can belong to only one application");
-      }
-    }
+    provider.claimOwnership();
   }
 
   /**
@@ -328,29 +316,26 @@ public final class Mcp<S> implements RouteExtension<Mcp<S>> {
    */
   @Override
   public void install(ApplicationCallbacks callbacks) {
-    callbacks.observe(
-        request -> {
-          if (!Objects.equals(mount, request.path())) {
-            return ignored -> {};
-          }
+    callbacks.observe(request -> {
+      if (!Objects.equals(mount.get(), request.path())) {
+        return ignored -> {};
+      }
 
-          var lifetime = new McpRequestLifetime(deadlines, expiredTokenChallenge);
-          request.attribute(lifetimeAttribute, lifetime);
+      final var lifetime = new McpRequestLifetime(deadlines, expiredTokenChallenge);
+      request.attribute(lifetimeAttribute, lifetime);
 
-          return lifetime;
-        });
-    callbacks.beforeResponseFlush(
-        (request, response) -> {
-          if (Objects.equals(mount, request.path())) {
-            lifetime(request).beforeFlush(response.status() == 401);
-          }
-        });
-    callbacks.onRequestHeaders(
-        (request, ignoredResponse) -> {
-          if (Objects.equals(mount, request.path())) {
-            validateOrigin(request);
-          }
-        });
+      return lifetime;
+    });
+    callbacks.beforeResponseFlush((request, response) -> {
+      if (Objects.equals(mount.get(), request.path())) {
+        lifetime(request).beforeFlush(response.status() == HttpStatusCodes.UNAUTHORIZED.value());
+      }
+    });
+    callbacks.onRequestHeaders((request, ignoredResponse) -> {
+      if (Objects.equals(mount.get(), request.path())) {
+        validateOrigin(request);
+      }
+    });
   }
 
   /**
@@ -364,12 +349,11 @@ public final class Mcp<S> implements RouteExtension<Mcp<S>> {
    */
   @Override
   public Mcp<S> configure(Lifecycle lifecycle, @Nullable Mcp<S> inherited) {
-    lifecycle.onRoute(
-        info -> {
-          if (info.method() == HttpMethods.POST) {
-            bind(info.pathTemplate());
-          }
-        });
+    lifecycle.onRoute(info -> {
+      if (info.method() == HttpMethods.POST) {
+        bind(info.pathTemplate());
+      }
+    });
     return this;
   }
 
@@ -419,6 +403,11 @@ public final class Mcp<S> implements RouteExtension<Mcp<S>> {
   /** Closes the owned native sessions and transport. */
   @Override
   public void close() {
+    closeTransport();
+  }
+
+  /** Closes the provider before shutting down the deadline executor. */
+  private void closeTransport() {
     try {
       provider.closeGracefully().block();
     } finally {
@@ -439,16 +428,15 @@ public final class Mcp<S> implements RouteExtension<Mcp<S>> {
    * @throws IllegalArgumentException if the mount contains dynamic path segments
    * @throws IllegalStateException if this instance already has a mount
    */
-  private synchronized void bind(String path) {
-    if (path.indexOf('{') >= 0 || path.indexOf('*') >= 0) {
+  private void bind(String path) {
+    if (path.indexOf(HttpCharacters.OPEN_CURLY_BRACE) >= 0
+        || path.indexOf(HttpCharacters.ASTERISK) >= 0) {
       throw new IllegalArgumentException("An MCP mount must be a literal path");
     }
 
-    if (mount != null) {
+    if (!mount.compareAndSet(null, path)) {
       throw new IllegalStateException("An MCP capability can be mounted only once");
     }
-
-    mount = path;
   }
 
   /**
@@ -458,7 +446,7 @@ public final class Mcp<S> implements RouteExtension<Mcp<S>> {
    * @throws ForbiddenException if a present Origin is malformed or not allowlisted
    */
   private void validateOrigin(Request request) {
-    var values = request.headers("Origin");
+    final var values = request.headers(HttpHeaders.ORIGIN.value());
     if (values.isEmpty()) {
       return;
     }
@@ -501,41 +489,8 @@ public final class Mcp<S> implements RouteExtension<Mcp<S>> {
     }
 
     lifetime(request).requireFresh();
-    Object decoded;
-
-    try {
-      var body = StandardCharsets.UTF_8.newDecoder().decode(ByteBuffer.wrap(bytes)).toString();
-      decoded = provider.mapper.readValue(body, new TypeRef<>() {});
-    } catch (IOException ignoredFailure) {
-      rejectMessage(response, -32700, "Parse error", null);
-      return;
-    }
-
-    if (!(decoded instanceof Map<?, ?> fields) || !validEnvelope(fields)) {
-      rejectMessage(
-          response,
-          -32600,
-          "Invalid Request",
-          decoded instanceof Map<?, ?> invalid ? invalid.get("id") : null);
-      return;
-    }
-
-    McpSchema.JSONRPCMessage message;
-
-    try {
-      Class<? extends McpSchema.JSONRPCMessage> type;
-      if (fields.containsKey(FIELD_METHOD)) {
-        type =
-            fields.containsKey("id")
-                ? McpSchema.JSONRPCRequest.class
-                : McpSchema.JSONRPCNotification.class;
-      } else {
-        type = McpSchema.JSONRPCResponse.class;
-      }
-
-      message = provider.mapper.convertValue(fields, type);
-    } catch (IllegalArgumentException ignoredFailure) {
-      rejectMessage(response, -32600, "Invalid Request", fields.get("id"));
+    final var message = decodeMessage(bytes, response);
+    if (message == null) {
       return;
     }
 
@@ -545,24 +500,57 @@ public final class Mcp<S> implements RouteExtension<Mcp<S>> {
       return;
     }
 
-    var session = session(request, identity);
+    final var session = session(request, identity);
     authorize(lifetime(request), identity, message);
     if (message instanceof McpSchema.JSONRPCRequest rpc) {
-      var stream = new McpStream(provider.mapper, identity.expiresAt());
-      lifetime(request).stream(stream);
-      var nativeStream = provider.dispatch(session, stream, rpc, identity.context());
-
-      try {
-        stream.pump(response);
-      } finally {
-        nativeStream.releaseTransport();
-        stream.finish();
-        provider.streams.remove(stream);
-      }
+      streamResponse(
+          request,
+          response,
+          identity,
+          stream -> provider.dispatch(session, stream, rpc, identity.context()));
     } else {
       provider.accept(session, message, identity.context());
-      response.status(202);
+      response.status(HttpStatusCodes.ACCEPTED.value());
     }
+  }
+
+  /**
+   * Decodes one strict JSON-RPC message or stages a finite protocol rejection.
+   *
+   * @param bytes current request body
+   * @param response owner-thread response
+   * @return decoded SDK message, or null if a rejection was staged
+   * @throws IOException if writing the rejection fails
+   */
+  private McpSchema.@Nullable JSONRPCMessage decodeMessage(byte[] bytes, Response response)
+      throws IOException {
+    Object decoded;
+
+    try {
+      final var body =
+          StandardCharsets.UTF_8.newDecoder().decode(ByteBuffer.wrap(bytes)).toString();
+      decoded = provider.mapper.readValue(body, new TypeRef<>() {});
+    } catch (IOException ignoredFailure) {
+      rejectMessage(response, McpSchema.ErrorCodes.PARSE_ERROR, "Parse error", null);
+      return null;
+    }
+
+    Object id = null;
+    if (decoded instanceof Map<?, ?> fields) {
+      final var type = classifyEnvelope(fields);
+      if (type != null) {
+        try {
+          return provider.mapper.convertValue(fields, type);
+        } catch (IllegalArgumentException ignoredFailure) {
+          // A message the SDK cannot convert gets the same rejection as an invalid envelope.
+        }
+      }
+
+      id = fields.get(ID);
+    }
+
+    rejectMessage(response, McpSchema.ErrorCodes.INVALID_REQUEST, "Invalid Request", id);
+    return null;
   }
 
   /**
@@ -580,17 +568,9 @@ public final class Mcp<S> implements RouteExtension<Mcp<S>> {
       Response response,
       McpRequestLifetime lifetime)
       throws IOException {
-    if (!validInitialization(rpc.params())) {
-      rejectMessage(response, -32602, "Invalid params", rpc.id());
-      return;
-    }
-
-    McpSchema.InitializeRequest parameters;
-
-    try {
-      parameters = provider.mapper.convertValue(rpc.params(), McpSchema.InitializeRequest.class);
-    } catch (IllegalArgumentException ignoredFailure) {
-      rejectMessage(response, -32602, "Invalid params", rpc.id());
+    final var parameters = decodeInitialization(rpc.params());
+    if (parameters == null) {
+      rejectMessage(response, McpSchema.ErrorCodes.INVALID_PARAMS, "Invalid params", rpc.id());
       return;
     }
 
@@ -598,7 +578,7 @@ public final class Mcp<S> implements RouteExtension<Mcp<S>> {
     provider.reserve(identity.sessionOwner());
     McpStreamableServerSession.McpStreamableServerSessionInit initialized;
     Session session;
-    boolean constructed = false;
+    var constructed = false;
 
     try {
       initialized =
@@ -617,22 +597,23 @@ public final class Mcp<S> implements RouteExtension<Mcp<S>> {
     boolean staged = false;
 
     try {
-      lifetime.initialization(
-          outcome -> {
-            if (outcome.statusCode() != 200
-                || outcome.applicationFailure() != null
-                || outcome.transportFailure() != null) {
-              provider.rollback(session);
-            }
-          });
-      var cancellation = provider.provision(session);
-      var result = initializationResponse(initialized, cancellation, identity);
-      var body =
+      lifetime.initialization(outcome -> {
+        if (outcome.statusCode() != HttpStatusCodes.OK.value()
+            || outcome.applicationFailure() != null
+            || outcome.transportFailure() != null) {
+          provider.rollback(session);
+        }
+      });
+      final var cancellation = provider.provision(session);
+      final var result = initializationResponse(initialized, cancellation, identity);
+      final var body =
           provider.mapper.writeValueAsBytes(McpSchema.JSONRPCResponse.result(rpc.id(), result));
       lifetime.requireFresh();
       provider.publish(session);
 
-      response.setHeader("Mcp-Session-Id", session.sdk().getId()).body("application/json", body);
+      response
+          .setHeader(MCP_SESSION_ID, session.sdk.getId())
+          .body(MediaType.APPLICATION_JSON.value(), body);
       staged = true;
     } catch (IOException | RuntimeException failure) {
       lifetime.requireFresh();
@@ -641,6 +622,30 @@ public final class Mcp<S> implements RouteExtension<Mcp<S>> {
       if (!staged) {
         provider.rollback(session);
       }
+    }
+  }
+
+  /**
+   * Checks required wire field types before converting initialization parameters with the SDK
+   * mapper.
+   *
+   * @param parameters uncoerced initialization parameters
+   * @return decoded initialization parameters, or null if validation or conversion fails
+   */
+  private McpSchema.@Nullable InitializeRequest decodeInitialization(@Nullable Object parameters) {
+    if (!(parameters instanceof Map<?, ?> fields)
+        || !(fields.get("protocolVersion") instanceof String)
+        || !(fields.get("capabilities") instanceof Map<?, ?>)
+        || !(fields.get("clientInfo") instanceof Map<?, ?> client)
+        || !(client.get("name") instanceof String)
+        || !(client.get("version") instanceof String)) {
+      return null;
+    }
+
+    try {
+      return provider.mapper.convertValue(fields, McpSchema.InitializeRequest.class);
+    } catch (IllegalArgumentException ignoredFailure) {
+      return null;
     }
   }
 
@@ -696,14 +701,16 @@ public final class Mcp<S> implements RouteExtension<Mcp<S>> {
    */
   private void rejectMessage(Response response, int code, String message, @Nullable Object id)
       throws IOException {
-    var envelope = new HashMap<String, Object>();
-    envelope.put("jsonrpc", "2.0");
-    envelope.put(FIELD_ERROR, Map.of("code", code, "message", message));
+    final var envelope = new HashMap<String, Object>();
+    envelope.put(JSONRPC, VERSION_2_0);
+    envelope.put(FIELD_ERROR, Map.of(CODE, code, MESSAGE, message));
     if (validId(id)) {
-      envelope.put("id", id);
+      envelope.put(ID, id);
     }
 
-    response.status(400).body("application/json", provider.mapper.writeValueAsBytes(envelope));
+    response
+        .status(HttpStatusCodes.BAD_REQUEST.value())
+        .body(MediaType.APPLICATION_JSON.value(), provider.mapper.writeValueAsBytes(envelope));
   }
 
   /**
@@ -716,17 +723,35 @@ public final class Mcp<S> implements RouteExtension<Mcp<S>> {
   private void get(Request request, Response response) throws IOException {
     validateProtocolVersion(request);
     requireAccept(request, response);
-    var identity = identity(request);
-    var session = session(request, identity);
-    var stream = new McpStream(provider.mapper, identity.expiresAt());
+    final var identity = identity(request);
+    final var session = session(request, identity);
+
+    streamResponse(request, response, identity, stream -> provider.listen(session, stream));
+  }
+
+  /**
+   * Attaches a mailbox to the request, opens the native transport and pumps HTTP output.
+   *
+   * @param request current authenticated request
+   * @param response owner-thread response
+   * @param identity verified identity whose expiry bounds HTTP output
+   * @param openStream native operation that opens the transport for the mailbox
+   * @throws IOException if streaming fails
+   */
+  private void streamResponse(
+      Request request,
+      Response response,
+      McpIdentity identity,
+      Function<McpStream, McpStreamableServerSession.McpStreamableServerSessionStream> openStream)
+      throws IOException {
+    final var stream = new McpStream(provider.mapper, identity.expiresAt());
     lifetime(request).stream(stream);
-    var listening = provider.listen(session, stream);
+    final var nativeStream = openStream.apply(stream);
 
     try {
       stream.pump(response);
     } finally {
-      listening.releaseTransport();
-      provider.streams.remove(stream);
+      provider.releaseStream(stream, nativeStream);
     }
   }
 
@@ -738,14 +763,14 @@ public final class Mcp<S> implements RouteExtension<Mcp<S>> {
    */
   private void delete(Request request, Response response) {
     validateProtocolVersion(request);
-    var identity = identity(request);
-    var session = session(request, identity);
+    final var identity = identity(request);
+    final var session = session(request, identity);
     lifetime(request).requireFresh();
     provider
-        .terminate(session, true)
+        .terminate(session, TerminationReason.DELETE)
         .contextWrite(context -> context.put(McpTransportContext.KEY, identity.context()))
         .block();
-    response.status(200);
+    response.status(HttpStatusCodes.OK.value());
   }
 
   /**
@@ -756,7 +781,7 @@ public final class Mcp<S> implements RouteExtension<Mcp<S>> {
    * @throws BadRequestException if the version is duplicated or unsupported
    */
   private void validateProtocolVersion(Request request) {
-    var versions = request.headers("MCP-Protocol-Version");
+    final var versions = request.headers("MCP-Protocol-Version");
     if (!versions.isEmpty()
         && (versions.size() != 1 || !provider.protocolVersions().contains(versions.getFirst()))) {
       throw new BadRequestException("Unsupported MCP protocol version");
@@ -771,7 +796,7 @@ public final class Mcp<S> implements RouteExtension<Mcp<S>> {
    * @throws AuthenticationRequiredException if the verified token has expired
    */
   private McpIdentity identity(Request request) {
-    var identity = Objects.requireNonNull(security.identity().apply(request));
+    final var identity = Objects.requireNonNull(security.identity().apply(request));
     lifetime(request).arm(identity.expiresAt());
 
     return identity;
@@ -802,71 +827,64 @@ public final class Mcp<S> implements RouteExtension<Mcp<S>> {
    * @throws NotFoundException if the session does not belong to this caller
    */
   private Session session(Request request, McpIdentity identity) {
-    var values = request.headers("Mcp-Session-Id");
+    final var values = request.headers(MCP_SESSION_ID);
     if (values.size() != 1 || values.getFirst().isBlank()) {
       throw new BadRequestException();
     }
 
-    var session = provider.sessions.get(values.getFirst());
-    if (session == null || !session.owner().equals(identity.sessionOwner())) {
+    final var session = provider.sessions.get(values.getFirst());
+    if (session == null || !session.owner.equals(identity.sessionOwner())) {
       throw new NotFoundException();
     }
 
     return session;
   }
 
-  /** Correlates native session state with the detached authenticated owner. */
-  private record Session(
-      McpStreamableServerSession sdk,
-      String owner,
-      Disposable.Composite dispatches,
-      AtomicBoolean terminating,
-      AtomicLong activity,
-      AtomicInteger notifications) {
-    /**
-     * Creates independent ownership for native operations, including detached HTTP work.
-     *
-     * @param sdk native session state
-     * @param owner stable authenticated owner key
-     */
-    private Session(McpStreamableServerSession sdk, String owner) {
-      this(
-          sdk,
-          owner,
-          Disposables.composite(),
-          new AtomicBoolean(),
-          new AtomicLong(System.nanoTime()),
-          new AtomicInteger());
-    }
+  /** Uses object identity for one live session allocation and its detached owner. */
+  private static final class Session {
+    private final McpStreamableServerSession sdk;
+    private final String owner;
+    private final Disposable.Composite dispatches;
+
+    // The provider lock guards termination and idle bookkeeping after construction.
+    private boolean terminating;
+    private long lastActivityNanos;
+    private int pendingNotifications;
 
     /**
      * Validates detached session ownership before publishing it.
      *
      * @param sdk native session state
      * @param owner stable authenticated owner key
-     * @param dispatches session-owned native operations
-     * @param terminating exactly-once native termination claim
-     * @param activity monotonic accepted-activity time
-     * @param notifications pending adapter-owned native notifications
      * @throws IllegalArgumentException if the owner is blank
      */
-    private Session {
-      Objects.requireNonNull(sdk);
-      Objects.requireNonNull(owner);
-      Objects.requireNonNull(dispatches);
-      Objects.requireNonNull(terminating);
-      Objects.requireNonNull(activity);
-      Objects.requireNonNull(notifications);
+    private Session(McpStreamableServerSession sdk, String owner) {
+      this.sdk = Objects.requireNonNull(sdk);
+      this.owner = Objects.requireNonNull(owner);
       if (owner.isBlank()) {
         throw new IllegalArgumentException("A session owner must not be blank");
       }
+
+      this.dispatches = Disposables.composite();
+      this.lastActivityNanos = System.nanoTime();
     }
+  }
+
+  /** Determines the admission check and native operation for session termination. */
+  private enum TerminationReason {
+    DELETE,
+    IDLE_EXPIRY,
+    CLOSE
   }
 
   /**
    * Native SDK transport/session ownership, kept separate from the public configuration surface.
    */
   private static final class Provider implements McpStreamableServerTransportProvider {
+    private static final int SESSION_CLOSE_CONCURRENCY = 32;
+    private static final int SESSION_CLOSE_PREFETCH = 1;
+
+    private final ReentrantLock lock;
     private final McpJsonMapper mapper;
     private final McpSessionLimits limits;
     private final Map<String, Integer> owners;
@@ -878,6 +896,7 @@ public final class Mcp<S> implements RouteExtension<Mcp<S>> {
     private int allocations;
     private @Nullable ScheduledFuture<?> idleExpiry;
     private McpStreamableServerSession.@Nullable Factory factory;
+    private boolean claimed;
     private boolean stopping;
 
     /**
@@ -886,6 +905,7 @@ public final class Mcp<S> implements RouteExtension<Mcp<S>> {
      * @param limits configured session capacity and idle timeout
      */
     private Provider(McpSessionLimits limits) {
+      this.lock = new ReentrantLock();
       this.limits = new McpSessionLimits(limits);
       this.idleNanos =
           this.limits.idleTimeout().compareTo(Duration.ofNanos(Long.MAX_VALUE)) > 0
@@ -905,42 +925,73 @@ public final class Mcp<S> implements RouteExtension<Mcp<S>> {
     }
 
     /**
+     * Records one application claim while the transport is open.
+     *
+     * @throws IllegalStateException if the provider is stopping or already claimed
+     */
+    private void claimOwnership() {
+      lock.lock();
+
+      try {
+        if (stopping || claimed) {
+          throw new IllegalStateException(
+              "An MCP capability must be open and can belong to only one application");
+        }
+
+        claimed = true;
+      } finally {
+        lock.unlock();
+      }
+    }
+
+    /**
      * Starts bounded idle checks after the native server has bound its transport successfully.
      *
      * @param scheduler owned deadline scheduler; never used for native cleanup
      */
-    private synchronized void startIdleExpiry(ScheduledThreadPoolExecutor scheduler) {
-      long interval = Math.min(idleNanos, TimeUnit.SECONDS.toNanos(1));
-      idleExpiry =
-          scheduler.scheduleWithFixedDelay(
-              this::expireIdle, interval, interval, TimeUnit.NANOSECONDS);
+    private void startIdleExpiry(ScheduledThreadPoolExecutor scheduler) {
+      lock.lock();
+
+      try {
+        final var interval = Math.min(idleNanos, TimeUnit.SECONDS.toNanos(1));
+        idleExpiry =
+            scheduler.scheduleWithFixedDelay(
+                this::expireIdle, interval, interval, TimeUnit.NANOSECONDS);
+      } finally {
+        lock.unlock();
+      }
     }
 
     /** Claims idle ownership before scheduling any native cleanup outside the timer thread. */
     private void expireIdle() {
       List<Session> candidates;
-      synchronized (this) {
+      lock.lock();
+
+      try {
         if (stopping) {
           return;
         }
 
         candidates = sessions.values().stream().filter(this::idle).toList();
+      } finally {
+        lock.unlock();
       }
-      for (var session : candidates) {
-        cleanup(terminate(session, false, true));
+
+      for (final var session : candidates) {
+        cleanup(terminate(session, TerminationReason.IDLE_EXPIRY));
       }
     }
 
     /**
-     * Checks quiescence while the caller holds the admission monitor.
+     * Checks quiescence while the caller holds the admission lock.
      *
      * @param session current session candidate
      * @return whether accepted activity and all owned native work have been idle long enough
      */
     private boolean idle(Session session) {
-      return session.dispatches().size() == 0
-          && session.notifications().get() == 0
-          && System.nanoTime() - session.activity().get() >= idleNanos;
+      return session.dispatches.size() == 0
+          && session.pendingNotifications == 0
+          && System.nanoTime() - session.lastActivityNanos >= idleNanos;
     }
 
     /**
@@ -950,18 +1001,24 @@ public final class Mcp<S> implements RouteExtension<Mcp<S>> {
      * @throws ServiceUnavailableException if shutdown has begun or total capacity is exhausted
      * @throws TooManyRequestsException if this owner has reached its capacity
      */
-    private synchronized void reserve(String owner) {
-      if (stopping || allocations >= limits.maxSessions()) {
-        throw new ServiceUnavailableException();
-      }
+    private void reserve(String owner) {
+      lock.lock();
 
-      int count = owners.getOrDefault(owner, 0);
-      if (count >= limits.maxSessionsPerOwner()) {
-        throw new TooManyRequestsException();
-      }
+      try {
+        if (stopping || allocations >= limits.maxSessions()) {
+          throw new ServiceUnavailableException();
+        }
 
-      owners.put(owner, count + 1);
-      allocations++;
+        final int count = owners.getOrDefault(owner, 0);
+        if (count >= limits.maxSessionsPerOwner()) {
+          throw new TooManyRequestsException();
+        }
+
+        owners.put(owner, count + 1);
+        allocations++;
+      } finally {
+        lock.unlock();
+      }
     }
 
     /**
@@ -969,13 +1026,19 @@ public final class Mcp<S> implements RouteExtension<Mcp<S>> {
      *
      * @param owner verified owner whose reservation terminates
      */
-    private synchronized void release(String owner) {
-      int count = Objects.requireNonNull(owners.get(owner));
-      allocations--;
-      if (count == 1) {
-        owners.remove(owner);
-      } else {
-        owners.put(owner, count - 1);
+    private void release(String owner) {
+      lock.lock();
+
+      try {
+        final int count = Objects.requireNonNull(owners.get(owner));
+        allocations--;
+        if (count == 1) {
+          owners.remove(owner);
+        } else {
+          owners.put(owner, count - 1);
+        }
+      } finally {
+        lock.unlock();
       }
     }
 
@@ -986,13 +1049,19 @@ public final class Mcp<S> implements RouteExtension<Mcp<S>> {
      * @throws IllegalStateException if the native factory was already bound
      */
     @Override
-    public synchronized void setSessionFactory(McpStreamableServerSession.Factory sessionFactory) {
-      Objects.requireNonNull(sessionFactory);
-      if (factory != null) {
-        throw new IllegalStateException("The MCP transport is already bound");
-      }
+    public void setSessionFactory(McpStreamableServerSession.Factory sessionFactory) {
+      lock.lock();
 
-      factory = sessionFactory;
+      try {
+        Objects.requireNonNull(sessionFactory);
+        if (factory != null) {
+          throw new IllegalStateException("The MCP transport is already bound");
+        }
+
+        factory = sessionFactory;
+      } finally {
+        lock.unlock();
+      }
     }
 
     /**
@@ -1005,19 +1074,17 @@ public final class Mcp<S> implements RouteExtension<Mcp<S>> {
     @Override
     public Mono<Void> notifyClients(String method, Object params) {
       return Flux.fromIterable(sessions.values())
-          .flatMap(
-              session ->
-                  notification(session, method, params)
-                      .onErrorResume(
-                          failure -> {
-                            System.getLogger(Mcp.class.getName())
-                                .log(
-                                    System.Logger.Level.WARNING,
-                                    "MCP notification delivery failed",
-                                    failure);
+          .flatMap(session ->
+              notification(session, method, params)
+                  .onErrorResume(failure -> {
+                    System.getLogger(Mcp.class.getName())
+                        .log(
+                            System.Logger.Level.WARNING,
+                            "MCP notification delivery failed",
+                            failure);
 
-                            return Mono.empty();
-                          }))
+                    return Mono.empty();
+                  }))
           .then();
     }
 
@@ -1031,12 +1098,11 @@ public final class Mcp<S> implements RouteExtension<Mcp<S>> {
      */
     @Override
     public Mono<Void> notifyClient(String sessionId, String method, Object params) {
-      return Mono.defer(
-          () -> {
-            var session = sessions.get(sessionId);
+      return Mono.defer(() -> {
+        var session = sessions.get(sessionId);
 
-            return session == null ? Mono.empty() : notification(session, method, params);
-          });
+        return session == null ? Mono.empty() : notification(session, method, params);
+      });
     }
 
     /**
@@ -1048,16 +1114,20 @@ public final class Mcp<S> implements RouteExtension<Mcp<S>> {
      * @return owned delivery completion
      */
     private Mono<Void> notification(Session session, String method, Object params) {
-      return Mono.defer(
-          () -> {
-            synchronized (this) {
-              requireActive(session);
-              session.notifications().incrementAndGet();
-              session.activity().set(System.nanoTime());
-            }
-            return Mono.defer(() -> session.sdk().sendNotification(method, params))
-                .doFinally(ignoredSignalType -> notificationComplete(session));
-          });
+      return Mono.defer(() -> {
+        lock.lock();
+
+        try {
+          requireActive(session);
+          session.pendingNotifications++;
+          session.lastActivityNanos = System.nanoTime();
+        } finally {
+          lock.unlock();
+        }
+
+        return Mono.defer(() -> session.sdk.sendNotification(method, params))
+            .doFinally(ignoredSignalType -> notificationComplete(session));
+      });
     }
 
     /**
@@ -1065,9 +1135,15 @@ public final class Mcp<S> implements RouteExtension<Mcp<S>> {
      *
      * @param session native notification owner
      */
-    private synchronized void notificationComplete(Session session) {
-      session.notifications().decrementAndGet();
-      session.activity().set(System.nanoTime());
+    private void notificationComplete(Session session) {
+      lock.lock();
+
+      try {
+        session.pendingNotifications--;
+        session.lastActivityNanos = System.nanoTime();
+      } finally {
+        lock.unlock();
+      }
     }
 
     /**
@@ -1077,18 +1153,24 @@ public final class Mcp<S> implements RouteExtension<Mcp<S>> {
      */
     @Override
     public Mono<Void> closeGracefully() {
-      return Mono.defer(
-          () -> {
-            stop();
-            List<Mono<Void>> terminations;
-            synchronized (this) {
-              List.copyOf(sessions.values()).forEach(session -> terminate(session, false));
-              terminations = List.copyOf(closing.values());
-            }
-            return Flux.fromIterable(terminations)
-                .flatMapDelayError(termination -> termination, 32, 1)
-                .then();
-          });
+      return Mono.defer(() -> {
+        stop();
+        List<Mono<Void>> terminations;
+        lock.lock();
+
+        try {
+          List.copyOf(sessions.values())
+              .forEach(session -> claimTermination(session, TerminationReason.CLOSE));
+          terminations = List.copyOf(closing.values());
+        } finally {
+          lock.unlock();
+        }
+
+        return Flux.fromIterable(terminations)
+            .flatMapDelayError(
+                termination -> termination, SESSION_CLOSE_CONCURRENCY, SESSION_CLOSE_PREFETCH)
+            .then();
+      });
     }
 
     /**
@@ -1109,13 +1191,17 @@ public final class Mcp<S> implements RouteExtension<Mcp<S>> {
      * @throws ServiceUnavailableException if shutdown won registration
      */
     private Sinks.Empty<Void> provision(Session session) {
-      synchronized (this) {
+      lock.lock();
+
+      try {
         if (!stopping) {
-          var cancellation = Sinks.<Void>empty();
+          final var cancellation = Sinks.<Void>empty();
           initializing.put(session, cancellation);
 
           return cancellation;
         }
+      } finally {
+        lock.unlock();
       }
 
       rollback(session);
@@ -1129,12 +1215,16 @@ public final class Mcp<S> implements RouteExtension<Mcp<S>> {
      * @throws ServiceUnavailableException if termination won publication
      */
     private void publish(Session session) {
-      synchronized (this) {
-        if (!stopping && !session.terminating().get() && initializing.remove(session) != null) {
-          session.activity().set(System.nanoTime());
-          sessions.put(session.sdk().getId(), session);
+      lock.lock();
+
+      try {
+        if (!stopping && !session.terminating && initializing.remove(session) != null) {
+          session.lastActivityNanos = System.nanoTime();
+          sessions.put(session.sdk.getId(), session);
           return;
         }
+      } finally {
+        lock.unlock();
       }
 
       throw new ServiceUnavailableException();
@@ -1144,7 +1234,7 @@ public final class Mcp<S> implements RouteExtension<Mcp<S>> {
      * Admits and attaches a GET atomically against session deletion and application shutdown.
      * Native attachment creates its detached stream, publishes an atomic reference and finishes the
      * previous detached transport, if any. That closure only signals its mailbox; transport I/O and
-     * native callbacks run outside this registry monitor.
+     * native callbacks run outside this registry lock.
      *
      * @param session freshly authenticated native session
      * @param stream detached transport
@@ -1152,14 +1242,20 @@ public final class Mcp<S> implements RouteExtension<Mcp<S>> {
      * @throws ServiceUnavailableException if shutdown already began
      * @throws NotFoundException if the session was deleted before admission
      */
-    private synchronized McpStreamableServerSession.McpStreamableServerSessionStream listen(
+    private McpStreamableServerSession.McpStreamableServerSessionStream listen(
         Session session, McpStream stream) {
-      requireActive(session);
-      session.activity().set(System.nanoTime());
-      var listening = session.sdk().listeningStream(stream);
-      streams.put(stream, session);
+      lock.lock();
 
-      return listening;
+      try {
+        requireActive(session);
+        session.lastActivityNanos = System.nanoTime();
+        final var listening = session.sdk.listeningStream(stream);
+        streams.put(stream, session);
+
+        return listening;
+      } finally {
+        lock.unlock();
+      }
     }
 
     /**
@@ -1181,69 +1277,45 @@ public final class Mcp<S> implements RouteExtension<Mcp<S>> {
         McpStream stream,
         McpSchema.JSONRPCRequest request,
         McpTransportContext context) {
-      var dispatch = messageSubscriber(stream, session);
+      final var dispatch = dispatchSubscriber(session, stream);
       McpStreamableServerSession.McpStreamableServerSessionStream nativeStream;
-      synchronized (this) {
-        requireActive(session);
-        nativeStream = session.sdk().responseStream(stream);
-        session.dispatches().add(dispatch);
-
-        session.activity().set(System.nanoTime());
-
-        streams.put(stream, session);
-      }
-
-      boolean subscribed = false;
+      lock.lock();
 
       try {
-        nativeStream
-            .handle(request)
-            .contextWrite(current -> current.put(McpTransportContext.KEY, context))
-            .subscribeOn(Schedulers.boundedElastic())
-            .subscribe(dispatch);
-        subscribed = true;
+        requireActive(session);
+        nativeStream = session.sdk.responseStream(stream);
+        session.dispatches.add(dispatch);
+
+        session.lastActivityNanos = System.nanoTime();
+
+        streams.put(stream, session);
+      } finally {
+        lock.unlock();
+      }
+
+      try {
+        subscribeDispatch(nativeStream.handle(request), context, dispatch);
 
         return nativeStream;
-      } finally {
-        if (!subscribed) {
-          dispatch.dispose();
-          nativeStream.releaseTransport();
-          streams.remove(stream);
-          stream.finish();
-        }
+      } catch (Throwable failure) {
+        dispatch.dispose();
+        releaseStream(stream, nativeStream);
+        stream.finish();
+        throw failure;
       }
     }
 
     /**
-     * Creates the subscriber that completes or fails one accepted message dispatch.
+     * Releases the native transport before removing its mailbox from the registry.
      *
-     * @param stream accepted HTTP event stream
-     * @param session native session whose work is being observed
-     * @return subscriber retained by the message lifecycle
+     * @param stream registered mailbox
+     * @param nativeStream native handle for the same transport
      */
-    private BaseSubscriber<Void> messageSubscriber(McpStream stream, Session session) {
-      return new BaseSubscriber<Void>() {
-        /**
-         * Signals native failure without touching live HTTP output.
-         *
-         * @param failure native dispatch failure
-         */
-        @Override
-        protected void hookOnError(Throwable failure) {
-          stream.fail(failure);
-        }
-
-        /**
-         * Releases detached ownership after completion, failure or cancellation.
-         *
-         * @param type native terminal signal
-         */
-        @Override
-        protected void hookFinally(SignalType type) {
-          stream.finish();
-          dispatchComplete(session, this);
-        }
-      };
+    private void releaseStream(
+        McpStream stream,
+        McpStreamableServerSession.McpStreamableServerSessionStream nativeStream) {
+      nativeStream.releaseTransport();
+      streams.remove(stream);
     }
 
     /**
@@ -1257,57 +1329,78 @@ public final class Mcp<S> implements RouteExtension<Mcp<S>> {
      */
     private void accept(
         Session session, McpSchema.JSONRPCMessage message, McpTransportContext context) {
-      var dispatch = completionSubscriber(session);
-      synchronized (this) {
+      final var dispatch = dispatchSubscriber(session, null);
+      lock.lock();
+
+      try {
         requireActive(session);
-        if (!session.dispatches().add(dispatch)) {
+        if (!session.dispatches.add(dispatch)) {
           throw new NotFoundException();
         }
 
-        session.activity().set(System.nanoTime());
+        session.lastActivityNanos = System.nanoTime();
+      } finally {
+        lock.unlock();
       }
 
-      boolean subscribed = false;
-
       try {
-        Mono.defer(
-                () -> {
-                  if (message instanceof McpSchema.JSONRPCNotification notification) {
-                    return session.sdk().accept(notification);
-                  }
+        subscribeDispatch(
+            Mono.defer(() -> {
+              if (message instanceof McpSchema.JSONRPCNotification notification) {
+                return session.sdk.accept(notification);
+              }
 
-                  if (message instanceof McpSchema.JSONRPCResponse reply) {
-                    return session.sdk().accept(reply);
-                  }
+              if (message instanceof McpSchema.JSONRPCResponse reply) {
+                return session.sdk.accept(reply);
+              }
 
-                  return Mono.error(new BadRequestException());
-                })
-            .contextWrite(current -> current.put(McpTransportContext.KEY, context))
-            .subscribeOn(Schedulers.boundedElastic())
-            .subscribe(dispatch);
-        subscribed = true;
-      } finally {
-        if (!subscribed) {
-          dispatch.dispose();
-        }
+              return Mono.error(new BadRequestException());
+            }),
+            context,
+            dispatch);
+      } catch (Throwable failure) {
+        dispatch.dispose();
+        throw failure;
       }
     }
 
     /**
-     * Creates the subscriber that observes completion of an accepted session operation.
+     * Subscribes owned native work on the bounded-elastic scheduler with its authenticated context.
+     *
+     * @param operation native work to subscribe to
+     * @param context detached authenticated context
+     * @param dispatch subscriber already owned by the session
+     */
+    private static void subscribeDispatch(
+        Mono<Void> operation, McpTransportContext context, BaseSubscriber<Void> dispatch) {
+      operation
+          .contextWrite(current -> current.put(McpTransportContext.KEY, context))
+          .subscribeOn(Schedulers.boundedElastic())
+          .subscribe(dispatch);
+    }
+
+    /**
+     * Tracks an accepted session operation until completion, failure or cancellation.
      *
      * @param session native session whose work is being observed
+     * @param stream detached HTTP mailbox for a streamed request, or null for a notification or
+     *     reply
      * @return session completion subscriber
      */
-    private BaseSubscriber<Void> completionSubscriber(Session session) {
+    private BaseSubscriber<Void> dispatchSubscriber(Session session, @Nullable McpStream stream) {
       return new BaseSubscriber<Void>() {
         /**
-         * Reports asynchronous processing failure after HTTP acceptance.
+         * Signals the mailbox or logs a failure for a message accepted without an event stream.
          *
          * @param failure native processing failure
          */
         @Override
         protected void hookOnError(Throwable failure) {
+          if (stream != null) {
+            stream.fail(failure);
+            return;
+          }
+
           System.getLogger(Mcp.class.getName())
               .log(System.Logger.Level.WARNING, "Accepted MCP message processing failed", failure);
         }
@@ -1319,6 +1412,10 @@ public final class Mcp<S> implements RouteExtension<Mcp<S>> {
          */
         @Override
         protected void hookFinally(SignalType type) {
+          if (stream != null) {
+            stream.finish();
+          }
+
           dispatchComplete(session, this);
         }
       };
@@ -1330,9 +1427,15 @@ public final class Mcp<S> implements RouteExtension<Mcp<S>> {
      * @param session native operation owner
      * @param dispatch finished native subscriber
      */
-    private synchronized void dispatchComplete(Session session, Disposable dispatch) {
-      if (session.dispatches().remove(dispatch)) {
-        session.activity().set(System.nanoTime());
+    private void dispatchComplete(Session session, Disposable dispatch) {
+      lock.lock();
+
+      try {
+        if (session.dispatches.remove(dispatch)) {
+          session.lastActivityNanos = System.nanoTime();
+        }
+      } finally {
+        lock.unlock();
       }
     }
 
@@ -1342,7 +1445,7 @@ public final class Mcp<S> implements RouteExtension<Mcp<S>> {
      * @param session failed initialization whose allocation must be released
      */
     private void rollback(Session session) {
-      cleanup(terminate(session, false));
+      cleanup(terminate(session, TerminationReason.CLOSE));
     }
 
     /**
@@ -1361,50 +1464,54 @@ public final class Mcp<S> implements RouteExtension<Mcp<S>> {
     }
 
     /**
-     * Claims registry removal before closing transports, dispatches and native session state.
+     * Checks eligibility and claims termination under the same admission lock.
      *
-     * @param session session allocation to release
-     * @param deletion whether an explicit DELETE requires current membership
-     * @return native cleanup completion
+     * @param session allocation to terminate
+     * @param reason why the session is terminating
+     * @return native cleanup completion, without executing native work during the claim
      */
-    private Mono<Void> terminate(Session session, boolean deletion) {
-      return terminate(session, deletion, false);
+    private Mono<Void> terminate(Session session, TerminationReason reason) {
+      lock.lock();
+
+      try {
+        return claimTermination(session, reason);
+      } finally {
+        lock.unlock();
+      }
     }
 
     /**
-     * Checks an idle candidate and claims termination under the same admission monitor.
+     * Claims termination while the caller holds the provider lock.
      *
      * @param session allocation to terminate
-     * @param deletion whether current membership is required by an explicit DELETE
-     * @param idle whether eligibility must be rechecked against concurrent activity
-     * @return native cleanup completion, without executing native work during the claim
+     * @param reason why the session is terminating
+     * @return deferred native cleanup completion
      */
-    private Mono<Void> terminate(Session session, boolean deletion, boolean idle) {
-      synchronized (this) {
-        if (idle && (stopping || !idle(session))) {
-          return Mono.empty();
-        }
-
-        if (deletion && !session.equals(sessions.get(session.sdk().getId()))) {
-          return Mono.error(new NotFoundException());
-        }
-
-        if (!session.terminating().compareAndSet(false, true)) {
-          return closing.getOrDefault(session, Mono.empty());
-        }
-
-        sessions.remove(session.sdk().getId(), session);
-        var cancellation = initializing.remove(session);
-        var active =
-            streams.entrySet().stream()
-                .filter(entry -> session.equals(entry.getValue()))
-                .map(Map.Entry::getKey)
-                .toList();
-        var termination = terminationPublisher(cancellation, active, session, deletion);
-        closing.put(session, termination);
-
-        return termination;
+    private Mono<Void> claimTermination(Session session, TerminationReason reason) {
+      if (reason == TerminationReason.IDLE_EXPIRY && (stopping || !idle(session))) {
+        return Mono.empty();
       }
+
+      if (reason == TerminationReason.DELETE && session != sessions.get(session.sdk.getId())) {
+        return Mono.error(new NotFoundException());
+      }
+
+      if (session.terminating) {
+        return closing.getOrDefault(session, Mono.empty());
+      }
+
+      session.terminating = true;
+      sessions.remove(session.sdk.getId(), session);
+      final var cancellation = initializing.remove(session);
+      final var active =
+          streams.entrySet().stream()
+              .filter(entry -> session == entry.getValue())
+              .map(Map.Entry::getKey)
+              .toList();
+      final var termination = terminationPublisher(cancellation, active, session, reason);
+      closing.put(session, termination);
+
+      return termination;
     }
 
     /**
@@ -1413,14 +1520,14 @@ public final class Mcp<S> implements RouteExtension<Mcp<S>> {
      * @param cancellation signal that stops initialization or termination work
      * @param active streams retained for termination cleanup
      * @param session native session whose work is being observed
-     * @param deletion whether termination follows explicit session deletion
+     * @param reason why the session is terminating
      * @return termination publisher cached by the session
      */
     private Mono<Void> terminationPublisher(
         @Nullable Empty<Void> cancellation,
         List<McpStream> active,
         Session session,
-        boolean deletion) {
+        TerminationReason reason) {
       return Mono.fromRunnable(
               () -> {
                 if (cancellation != null) {
@@ -1428,10 +1535,13 @@ public final class Mcp<S> implements RouteExtension<Mcp<S>> {
                 }
 
                 active.forEach(McpStream::finish);
-                session.dispatches().dispose();
+                session.dispatches.dispose();
               })
           .then(
-              Mono.defer(() -> deletion ? session.sdk().delete() : session.sdk().closeGracefully()))
+              Mono.defer(() ->
+                  reason == TerminationReason.DELETE
+                      ? session.sdk.delete()
+                      : session.sdk.closeGracefully()))
           .doFinally(ignoredSignalType -> terminationComplete(session))
           .cache();
     }
@@ -1441,13 +1551,19 @@ public final class Mcp<S> implements RouteExtension<Mcp<S>> {
      *
      * @param session terminated allocation
      */
-    private synchronized void terminationComplete(Session session) {
-      closing.remove(session);
-      release(session.owner());
+    private void terminationComplete(Session session) {
+      lock.lock();
+
+      try {
+        closing.remove(session);
+        release(session.owner);
+      } finally {
+        lock.unlock();
+      }
     }
 
     /**
-     * Checks session membership while the caller holds the admission/deletion monitor.
+     * Checks session membership while the caller holds the admission/deletion lock.
      *
      * @param session freshly authenticated native session
      * @throws ServiceUnavailableException if application shutdown has begun
@@ -1458,7 +1574,7 @@ public final class Mcp<S> implements RouteExtension<Mcp<S>> {
         throw new ServiceUnavailableException();
       }
 
-      if (!session.equals(sessions.get(session.sdk().getId()))) {
+      if (session != sessions.get(session.sdk.getId())) {
         throw new NotFoundException();
       }
     }
@@ -1467,7 +1583,9 @@ public final class Mcp<S> implements RouteExtension<Mcp<S>> {
     private void stop() {
       List<McpStream> active;
       List<Mono<Void>> pending;
-      synchronized (this) {
+      lock.lock();
+
+      try {
         stopping = true;
         if (idleExpiry != null) {
           idleExpiry.cancel(false);
@@ -1477,8 +1595,10 @@ public final class Mcp<S> implements RouteExtension<Mcp<S>> {
         active = List.copyOf(streams.keySet());
         pending =
             List.copyOf(initializing.keySet()).stream()
-                .map(session -> terminate(session, false))
+                .map(session -> claimTermination(session, TerminationReason.CLOSE))
                 .toList();
+      } finally {
+        lock.unlock();
       }
 
       active.forEach(McpStream::finish);

@@ -10,15 +10,89 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Random;
 import java.util.Set;
+import java.util.concurrent.Executors;
+import org.eclipse.jetty.websocket.api.Session;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
 class RoutePatternTest {
   private static final Handler HANDLER = (ignored, ignoredResponse) -> {};
+  private static final WebSocket.Factory FACTORY =
+      (request, response, runtime) -> new Session.Listener() {};
+
+  @Test
+  @SuppressWarnings("NullAway")
+  void validatesPathBeforeCallbacksInBothEndpointFactories() {
+    assertThrows(
+        IllegalArgumentException.class, () -> RadixRoutes.endpoint(null, "relative", null));
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> RadixRoutes.websocketEndpoint("relative", null, null));
+    assertThrows(
+        NullPointerException.class,
+        () -> RadixRoutes.endpoint(HttpMethods.GET, "/items/{id}", null));
+    assertThrows(
+        NullPointerException.class,
+        () -> RadixRoutes.websocketEndpoint("/items/{id}", null, FACTORY));
+    assertThrows(
+        NullPointerException.class,
+        () -> RadixRoutes.websocketEndpoint("/items/{id}", HANDLER, null));
+  }
+
+  @Test
+  void preservesWebSocketMetadataAcrossBothRuntimeCopyOrdersAndNullNoOps() {
+    var original =
+        RadixRoutes.websocketEndpoint("/items/{id:[0-9]+}/events/{*tail}", HANDLER, FACTORY);
+    var behavior = copyBehavior();
+
+    try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+      var copied = original.withBehavior(behavior).withExecutor(executor);
+      var reversed = original.withExecutor(executor).withBehavior(behavior);
+
+      assertEquals(copied, reversed);
+      assertCopiedMetadata(copied);
+      assertSame(behavior, copied.behavior());
+      assertSame(executor, copied.executor());
+      assertNull(original.behavior());
+      assertNull(original.executor());
+      assertSame(original, original.withBehavior(null));
+      assertSame(original, original.withExecutor(null));
+      assertSame(copied, copied.withBehavior(null));
+      assertSame(copied, copied.withExecutor(null));
+
+      executor.shutdown();
+
+      assertSame(copied, copied.withBehavior(null));
+      assertSame(copied, copied.withExecutor(null));
+      assertThrows(IllegalArgumentException.class, () -> copied.withBehavior(behavior));
+      assertThrows(IllegalArgumentException.class, () -> original.withExecutor(executor));
+    }
+  }
+
+  private static EndpointBehavior copyBehavior() {
+    return new EndpointBehavior(
+        HANDLER, null, null, List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+        List.of(), Map.of(), Map.of(), List.of());
+  }
+
+  private static void assertCopiedMetadata(RadixRoutes.Endpoint endpoint) {
+    assertEquals(HttpMethods.GET, endpoint.method());
+    assertEquals("/items/{:[0-9]+}/events/{*}", endpoint.pattern());
+    assertEquals("/items/{id:[0-9]+}/events/{*tail}", endpoint.routePattern());
+    assertEquals(Map.of("id", 2, "tail", -4), endpoint.parameters());
+    assertEquals(7, endpoint.firstParameterOffset());
+    assertEquals(2, endpoint.firstParameterSegment());
+    assertSame(HANDLER, endpoint.handler());
+    assertSame(FACTORY, endpoint.websocketFactory());
+    assertThrows(UnsupportedOperationException.class, () -> endpoint.parameters().put("extra", 5));
+    assertEquals("42", endpoint.parameter("/items/42/events/a/b", "id"));
+    assertEquals("a/b", endpoint.parameter("/items/42/events/a/b", "tail"));
+  }
 
   private static RadixRoutes compile(String... specs) {
     return RadixRoutes.from(registrations(specs));

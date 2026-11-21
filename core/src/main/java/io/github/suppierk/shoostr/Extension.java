@@ -47,7 +47,7 @@ public sealed interface Extension extends Closeable permits ApplicationExtension
    * promptly without waiting for handlers or disposing resources still needed by draining requests
    * and terminal observers; final resource disposal belongs in {@link #close()}.
    *
-   * <p>Prevent new work atomically while signalling active work. Never access a live request or
+   * <p>Prevent new work atomically while signaling active work. Never access a live request or
    * response from this shutdown callback. Runtime failures are collected without skipping other
    * extensions, native shutdown or final cleanup. The default contributes no shutdown work.
    */

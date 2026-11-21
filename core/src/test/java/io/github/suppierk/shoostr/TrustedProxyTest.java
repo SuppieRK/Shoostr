@@ -12,12 +12,15 @@ import java.io.Closeable;
 import java.io.IOException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.net.Socket;
 import java.net.http.HttpClient;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.Collections;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import org.eclipse.jetty.http.HttpTester;
 import org.eclipse.jetty.server.ServerConnector;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -25,6 +28,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 @Timeout(15)
@@ -222,6 +226,47 @@ class TrustedProxyTest {
     }
   }
 
+  @ParameterizedTest
+  @EnumSource(ForwardedHeaders.class)
+  void selectsTheFirstClientAndOriginWhenTheEntireChainIsTrusted(ForwardedHeaders family)
+      throws Exception {
+    app.trustedProxies(InetAddress::isLoopbackAddress, family);
+    app.routes()
+        .get(
+            "/trusted-chain",
+            (request, response) ->
+                response.text(
+                    request.clientAddress().orElseThrow().getAddress().getHostAddress()
+                        + "|"
+                        + request.effectiveUrl()));
+
+    try (var test = TestServer.start(app)) {
+      var result = sendEntirelyTrustedChain(test, family);
+
+      assertEquals(200, result.statusCode());
+      assertEquals("127.0.0.2|https://first.example/trusted-chain", result.body());
+    }
+  }
+
+  private HttpResponse<String> sendEntirelyTrustedChain(TestServer test, ForwardedHeaders family)
+      throws IOException, InterruptedException {
+    return test.send(
+        request -> {
+          request.path("/trusted-chain");
+          if (family == ForwardedHeaders.RFC7239) {
+            request.header(
+                "Forwarded",
+                "for=127.0.0.2;host=first.example;proto=https, "
+                    + "for=127.0.0.3;host=last.example;proto=http");
+          } else {
+            request.header("X-Forwarded-For", "127.0.0.2, 127.0.0.3");
+            request.header("X-Forwarded-Host", "first.example, last.example");
+            request.header("X-Forwarded-Proto", "https, http");
+          }
+        },
+        HttpResponse.BodyHandlers.ofString());
+  }
+
   private HttpResponse<String>
       sendCombinedRequestForSelectsTheSameBoundaryForCombinedAndRepeatedForwardedLines(
           TestServer test, String attacker, String boundary, String ingress)
@@ -254,15 +299,14 @@ class TrustedProxyTest {
   void exposesTrustedMetadataToRouteGatesAndGlobalErrorHandlers() throws Exception {
     var gateInvoked = new AtomicBoolean();
     app.trustedProxies(InetAddress::isLoopbackAddress);
-    app.beforeRouteHandler(
-        (request, ignoredResponse) -> {
-          gateInvoked.set(true);
+    app.beforeRouteHandler((request, ignoredResponse) -> {
+      gateInvoked.set(true);
 
-          assertTrue(request.isForwarded());
-          assertEquals(
-              "203.0.113.7", request.clientAddress().orElseThrow().getAddress().getHostAddress());
-          assertEquals("https://public.example/gated", request.effectiveUrl());
-        });
+      assertTrue(request.isForwarded());
+      assertEquals(
+          "203.0.113.7", request.clientAddress().orElseThrow().getAddress().getHostAddress());
+      assertEquals("https://public.example/gated", request.effectiveUrl());
+    });
     app.exception(
         IllegalStateException.class,
         (ignoredFailure, request, response) ->
@@ -392,6 +436,32 @@ class TrustedProxyTest {
     }
   }
 
+  @Test
+  void rejectsLegacyPortAssertionsWithoutHost() throws Exception {
+    var calls = new AtomicInteger();
+    app.trustedProxies(InetAddress::isLoopbackAddress, ForwardedHeaders.X_FORWARDED);
+    app.beforeRouteHandler((ignoredRequest, ignoredResponse) -> calls.incrementAndGet());
+    app.routes().get("/legacy", (ignoredRequest, response) -> response.text("unexpected"));
+
+    try (var test = TestServer.start(app)) {
+      var result = sendLegacyPortWithoutHost(test);
+
+      assertEquals(400, result.statusCode());
+      assertEquals(0, calls.get());
+    }
+  }
+
+  private HttpResponse<String> sendLegacyPortWithoutHost(TestServer test)
+      throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/legacy")
+                .header("X-Forwarded-For", "203.0.113.7")
+                .header("X-Forwarded-Port", "8443"),
+        HttpResponse.BodyHandlers.ofString());
+  }
+
   private HttpResponse<String> sendResultForRejectsMisalignedLegacyForwardingLists(TestServer test)
       throws IOException, InterruptedException {
     return test.send(
@@ -466,6 +536,99 @@ class TrustedProxyTest {
                 .header("X-Forwarded-For", "2001:db8::7")
                 .header("X-Forwarded-Host", "public.example:8443")
                 .header("X-Forwarded-Port", "8443"),
+        HttpResponse.BodyHandlers.ofString());
+  }
+
+  @ParameterizedTest
+  @CsvSource(
+      value = {
+        "public.example,absent,public.example",
+        "public.example,1,public.example:1",
+        "public.example,080,public.example",
+        "public.example,65535,public.example:65535",
+        "public.example:8443,absent,public.example:8443",
+        "public.example:8443,08443,public.example:8443",
+        "[2001:db8::7],absent,[2001:db8::7]",
+        "[2001:db8::7],8443,[2001:db8::7]:8443",
+        "[2001:db8::7]:8443,8443,[2001:db8::7]:8443"
+      },
+      nullValues = "absent")
+  void preservesLegacyAuthoritiesAndRawQuery(String host, String forwardedPort, String expected)
+      throws Exception {
+    app.trustedProxies(InetAddress::isLoopbackAddress, ForwardedHeaders.X_FORWARDED);
+    app.routes().get("/authority", (request, response) -> response.text(request.effectiveUrl()));
+
+    try (var test = TestServer.start(app, client -> client.version(HttpClient.Version.HTTP_1_1))) {
+      var result = legacyAuthority(test, host, forwardedPort);
+
+      assertEquals(200, result.statusCode());
+      assertEquals("http://" + expected + "/authority?raw=%2F+value", result.body());
+    }
+  }
+
+  @ParameterizedTest
+  @CsvSource(
+      value = {
+        "public.example,0",
+        "public.example,00000",
+        "public.example,65536",
+        "public.example,2147483648",
+        "public.example,+80",
+        "public.example,-1",
+        "public.example,8O",
+        "public.example:8443,443",
+        "public.example:0,absent",
+        "public.example:65536,absent",
+        "::1,absent",
+        "public.example:+80,absent",
+        "[2001:db8::7],0",
+        "[2001:db8::7]:8443,443"
+      },
+      nullValues = "absent")
+  void rejectsMalformedLegacyAuthorities(String host, String forwardedPort) throws Exception {
+    app.trustedProxies(InetAddress::isLoopbackAddress, ForwardedHeaders.X_FORWARDED);
+    app.routes().get("/authority", (request, response) -> response.text("unexpected"));
+
+    try (var test = TestServer.start(app, client -> client.version(HttpClient.Version.HTTP_1_1))) {
+      assertEquals(400, legacyAuthority(test, host, forwardedPort).statusCode());
+    }
+  }
+
+  private HttpResponse<String> legacyAuthority(TestServer test, String host, String forwardedPort)
+      throws IOException, InterruptedException {
+    return test.send(
+        request -> {
+          request
+              .path("/authority?raw=%2F+value")
+              .header("X-Forwarded-For", "198.51.100.7")
+              .header("X-Forwarded-Host", host);
+          if (forwardedPort != null) {
+            request.header("X-Forwarded-Port", forwardedPort);
+          }
+        },
+        HttpResponse.BodyHandlers.ofString());
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"0", "65536", "2147483648"})
+  void rejectsMalformedLegacyPortsOutsideTheSelectedBoundary(String invalidPort) throws Exception {
+    app.trustedProxies(InetAddress::isLoopbackAddress, ForwardedHeaders.X_FORWARDED);
+    app.routes().get("/authority", (request, response) -> response.text("unexpected"));
+
+    try (var test = TestServer.start(app, client -> client.version(HttpClient.Version.HTTP_1_1))) {
+      assertEquals(400, unselectedLegacyPort(test, invalidPort).statusCode());
+    }
+  }
+
+  private HttpResponse<String> unselectedLegacyPort(TestServer test, String invalidPort)
+      throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/authority")
+                .header("X-Forwarded-For", "198.51.100.7, 192.0.2.10")
+                .header("X-Forwarded-Host", "bad.example, selected.example")
+                .header("X-Forwarded-Port", invalidPort + ", 443"),
         HttpResponse.BodyHandlers.ofString());
   }
 
@@ -617,6 +780,7 @@ class TrustedProxyTest {
         "for=203.0.113.7;proto=\"https trailing\"",
         "for=203.0.113.7;extension=bare space",
         "for=203.0.113.7;extension=\"quoted\"suffix",
+        "for=203.0.113.7;extension=\"a\"b\"c\"",
         "for=203.0.113.7;extension=\"unterminated",
         "for=203.0.113.7;extension=",
         "for=203.0.113.7;;proto=https",
@@ -634,6 +798,7 @@ class TrustedProxyTest {
         "for=\"[::ffff:999.0.0.1]\"",
         "for=\"[::1\"",
         "for=\"[::1]:port\"",
+        "for=\"[::1]123\"",
         "for=localhost"
       })
   void rejectsMalformedTrustedMetadata(String value) throws Exception {
@@ -659,8 +824,37 @@ class TrustedProxyTest {
   }
 
   @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "for=203.0.113.7;host=\"invalid.example/path\"",
+        "for=203.0.113.7;host=%invalid.example",
+        "for=203.0.113.7;host=%65xample.com",
+        "for=203.0.113.7;by=localhost"
+      })
+  void rejectsMalformedRfcMetadataBeforeTheSelectedTrustBoundary(String predecessor)
+      throws Exception {
+    var calls = new AtomicInteger();
+    app.trustedProxies(InetAddress::isLoopbackAddress);
+    app.beforeRouteHandler((ignoredRequest, ignoredResponse) -> calls.incrementAndGet());
+    app.routes().get("/invalid", (ignoredRequest, response) -> response.text("unexpected"));
+
+    try (var test = TestServer.start(app)) {
+      var result =
+          sendResultForRejectsMalformedTrustedMetadata(
+              test, predecessor + ", for=198.51.100.8;host=selected.example");
+
+      assertEquals(400, result.statusCode());
+      assertEquals(0, calls.get());
+    }
+  }
+
+  @ParameterizedTest
   @CsvSource(
-      value = {"001.002.003.004|1.2.3.4", "[::ffff:192.000.2.1]|192.0.2.1"},
+      value = {
+        "001.002.003.004|1.2.3.4",
+        "192.000.002.255|192.0.2.255",
+        "[::ffff:192.000.2.1]|192.0.2.1"
+      },
       delimiter = '|')
   void decodesLiteralAddressesWithDecimalLeadingZeros(String node, String expected)
       throws Exception {
@@ -730,7 +924,15 @@ class TrustedProxyTest {
   }
 
   @ParameterizedTest
-  @ValueSource(strings = {"", ",", ",,", "for=203.0.113.7,"})
+  @ValueSource(
+      strings = {
+        "",
+        ",",
+        ",,",
+        "for=203.0.113.7,",
+        ", for=203.0.113.7",
+        "for=203.0.113.7,,for=198.51.100.8"
+      })
   void rejectsEmptyForwardedChainElements(String value) throws Exception {
     var calls = new AtomicInteger();
     app.trustedProxies(InetAddress::isLoopbackAddress);
@@ -851,24 +1053,47 @@ class TrustedProxyTest {
 
   @ParameterizedTest
   @ValueSource(
-      strings = {"for=203.0.113.7;extension=\"a\\\"b\"", "for=203.0.113.7;extension=\"a\\\\b\""})
-  void acceptsEscapedQuotedForwardedExtensions(String value) throws Exception {
+      strings = {
+        "for=203.0.113.7;extension=\"a\\\"b\"",
+        "for=203.0.113.7;extension=\"a\\\\b\"",
+        "for=203.0.113.7;x=\"a\"",
+        "for=203.0.113.7;extension=\"\"",
+        "for=203.0.113.7;extension=\"a b\"",
+        "for=203.0.113.7;extension=\"a\tb\"",
+        "for=203.0.113.7;extension=\"aÿb\"",
+        "for=203.0.113.7;extension=\"a\\ b\"",
+        "for=203.0.113.7;extension=\"a\\\tb\"",
+        "for=203.0.113.7;extension=\"a\\ÿb\""
+      })
+  void acceptsQuotedForwardedExtensions(String value) throws Exception {
     app.trustedProxies(InetAddress::isLoopbackAddress);
     app.routes().get("/quoted", (ignoredRequest, response) -> response.text("accepted"));
 
     try (var test = TestServer.start(app, client -> client.version(HttpClient.Version.HTTP_1_1))) {
+      var result = sendForwardedOctets(test, value);
 
-      assertEquals(
-          200,
-          test.send(
-                  request ->
-                      request
-                          .path("/quoted")
-                          .timeout(Duration.ofSeconds(3))
-                          .header("Forwarded", value),
-                  HttpResponse.BodyHandlers.ofString())
-              .statusCode());
+      assertEquals(200, result.getStatus());
+      assertEquals("accepted", result.getContent());
     }
+  }
+
+  private HttpTester.Response sendForwardedOctets(TestServer test, String value)
+      throws IOException {
+    try (var socket = new Socket(test.baseUri().getHost(), test.baseUri().getPort())) {
+      socket.setSoTimeout(3000);
+      var output = socket.getOutputStream();
+      output.write(forwardingRequest(value));
+      output.flush();
+
+      return HttpTester.parseResponse(HttpTester.from(socket.getInputStream()));
+    }
+  }
+
+  private byte[] forwardingRequest(String value) {
+    return ("GET /quoted HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nForwarded: "
+            + value
+            + "\r\n\r\n")
+        .getBytes(StandardCharsets.ISO_8859_1);
   }
 
   @Test

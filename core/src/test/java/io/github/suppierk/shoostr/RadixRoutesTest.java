@@ -26,10 +26,9 @@ class RadixRoutesTest {
 
   private static RadixRoutes compile(Map<String, Map<HttpMethods, Handler>> routes) {
     var endpoints = new ArrayList<RadixRoutes.Endpoint>();
-    routes.forEach(
-        (path, methods) ->
-            methods.forEach(
-                (method, handler) -> endpoints.add(RadixRoutes.endpoint(method, path, handler))));
+    routes.forEach((path, methods) ->
+        methods.forEach(
+            (method, handler) -> endpoints.add(RadixRoutes.endpoint(method, path, handler))));
 
     return RadixRoutes.from(endpoints);
   }
@@ -126,6 +125,35 @@ class RadixRoutesTest {
 
     assertNull(tree.match("/a/", HttpMethods.GET));
     assertEquals(Set.of(), tree.allowedMethods("/a/"));
+  }
+
+  @Test
+  void rejectsAnEmptyFirstCatchAllSegmentAndPreservesLaterRepeatedSeparators() {
+    var tree =
+        compile(Map.of("/files/{*tail}", Map.of(HttpMethods.GET, GET, HttpMethods.POST, POST)));
+
+    assertNull(tree.match("/files//a", HttpMethods.GET));
+    assertEquals(Set.of(), tree.allowedMethods("/files//a"));
+
+    var path = "/files/a//b";
+    var endpoint = Objects.requireNonNull(tree.match(path, HttpMethods.GET));
+    assertSame(GET, endpoint.handler());
+    assertEquals(Set.of(HttpMethods.GET, HttpMethods.POST), tree.allowedMethods(path));
+    assertEquals("a//b", endpoint.parameter(path, "tail"));
+  }
+
+  @Test
+  void rejectsAnEmptyParameterWithoutRewindingIntoItsSuffix() {
+    var tree = compile(Map.of("/a/{id}/a//b", Map.of(HttpMethods.GET, GET)));
+
+    assertNull(tree.match("/a//b", HttpMethods.GET));
+    assertEquals(Set.of(), tree.allowedMethods("/a//b"));
+
+    var path = "/a/value/a//b";
+    var endpoint = Objects.requireNonNull(tree.match(path, HttpMethods.GET));
+    assertSame(GET, endpoint.handler());
+    assertEquals(Set.of(HttpMethods.GET), tree.allowedMethods(path));
+    assertEquals("value", endpoint.parameter(path, "id"));
   }
 
   @ParameterizedTest

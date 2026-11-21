@@ -50,15 +50,14 @@ class McpSharedResourceTest {
 
     var app = new Shoostr();
     app.routes(routes -> routes.path("/mcp", mcp::routes));
-    app.beforeResponseFlush(
-        (request, ignoredResponse) -> {
-          if ("GET".equals(request.method()) && "/mcp".equals(request.path())) {
-            var session = request.header("Mcp-Session-Id").orElseThrow();
-            if (attached.add(session)) {
-              listening.add(session);
-            }
-          }
-        });
+    app.beforeResponseFlush((request, ignoredResponse) -> {
+      if ("GET".equals(request.method()) && "/mcp".equals(request.path())) {
+        var session = request.header("Mcp-Session-Id").orElseThrow();
+        if (attached.add(session)) {
+          listening.add(session);
+        }
+      }
+    });
     test = TestServer.start(app);
   }
 
@@ -181,25 +180,23 @@ class McpSharedResourceTest {
   private HttpResponse<byte[]>
       sendDeletedRequestForDeletingOneSubscriberLeavesOtherSubscribersOfTheSameUriUsable(
           String alphaSession) throws IOException, InterruptedException {
-    return test.send(
-        request ->
-            request
-                .path("/mcp")
-                .method("DELETE")
-                .header("Mcp-Session-Id", alphaSession)
-                .header("MCP-Protocol-Version", "2025-11-25"));
+    return test.send(request ->
+        request
+            .path("/mcp")
+            .method("DELETE")
+            .header("Mcp-Session-Id", alphaSession)
+            .header("MCP-Protocol-Version", "2025-11-25"));
   }
 
   private HttpResponse<byte[]>
       sendAbsentRequestForDeletingOneSubscriberLeavesOtherSubscribersOfTheSameUriUsable(
           String alphaSession) throws IOException, InterruptedException {
-    return test.send(
-        request ->
-            request
-                .path("/mcp")
-                .header("Accept", "text/event-stream")
-                .header("Mcp-Session-Id", alphaSession)
-                .header("MCP-Protocol-Version", "2025-11-25"));
+    return test.send(request ->
+        request
+            .path("/mcp")
+            .header("Accept", "text/event-stream")
+            .header("Mcp-Session-Id", alphaSession)
+            .header("MCP-Protocol-Version", "2025-11-25"));
   }
 
   private McpSyncClient client(BlockingQueue<List<McpSchema.ResourceContents>> updates) {

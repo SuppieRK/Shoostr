@@ -1,5 +1,7 @@
 package io.github.suppierk.shoostr;
 
+import static io.github.suppierk.shoostr.Locks.getUnderLock;
+import static io.github.suppierk.shoostr.Locks.runUnderLock;
 import static org.awaitility.Awaitility.await;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -25,6 +27,7 @@ import java.io.InputStreamReader;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.Socket;
+import java.net.SocketException;
 import java.net.URI;
 import java.net.UnknownHostException;
 import java.net.http.HttpClient;
@@ -57,6 +60,7 @@ import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.BiFunction;
 import java.util.function.Consumer;
 import javax.net.ssl.SSLContext;
@@ -80,6 +84,7 @@ import org.eclipse.jetty.websocket.api.Callback;
 import org.eclipse.jetty.websocket.api.Session;
 import org.eclipse.jetty.websocket.server.ServerUpgradeResponse;
 import org.eclipse.jetty.websocket.server.ServerWebSocketContainer;
+import org.jspecify.annotations.Nullable;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
@@ -646,11 +651,10 @@ class WebSocketRoutesTest {
           var client = new HTTP2Client()) {
 
         if (secure) {
-          app.tls(
-              tls -> {
-                tls.setKeyStore(keyStore);
-                tls.setKeyStorePassword("changeit");
-              });
+          app.tls(tls -> {
+            tls.setKeyStore(keyStore);
+            tls.setKeyStorePassword("changeit");
+          });
         }
 
         app.routes()
@@ -953,14 +957,12 @@ class WebSocketRoutesTest {
                   return new EchoListener();
                 },
                 extensions ->
-                    extensions.onRouteMatched(
-                        (request, ignoredResponse) -> {
-                          assertEquals("CONNECT", request.method());
-                          assertEquals("/rooms/{room}", request.routePattern().orElseThrow());
+                    extensions.onRouteMatched((request, ignoredResponse) -> {
+                      assertEquals("CONNECT", request.method());
+                      assertEquals("/rooms/{room}", request.routePattern().orElseThrow());
 
-                          request.attribute(
-                              "matched-room", request.pathParam("room").orElseThrow());
-                        }));
+                      request.attribute("matched-room", request.pathParam("room").orElseThrow());
+                    }));
         app.start();
         var connection = connectHttp2(client, app);
         var result =
@@ -1284,11 +1286,10 @@ class WebSocketRoutesTest {
 
       try (Closeable appCleanup11 = app::close;
           var client = HttpClient.newBuilder().sslContext(context).build()) {
-        app.tls(
-            tls -> {
-              tls.setKeyStorePath(keyStorePath.toString());
-              tls.setKeyStorePassword("changeit");
-            });
+        app.tls(tls -> {
+          tls.setKeyStorePath(keyStorePath.toString());
+          tls.setKeyStorePassword("changeit");
+        });
         app.routes()
             .websocket(
                 "/secure",
@@ -1719,12 +1720,11 @@ class WebSocketRoutesTest {
 
   private AdmissionExtension
       createAdmissionForRejectsAnOriginInRouteAdmissionBeforeCallingTheListenerFactory() {
-    return new AdmissionExtension(
-        (request, ignoredResponse) -> {
-          if (request.header("Origin").filter("https://allowed.example"::equals).isEmpty()) {
-            throw new ForbiddenException();
-          }
-        });
+    return new AdmissionExtension((request, ignoredResponse) -> {
+      if (request.header("Origin").filter("https://allowed.example"::equals).isEmpty()) {
+        throw new ForbiddenException();
+      }
+    });
   }
 
   private ExecutionException
@@ -1869,11 +1869,10 @@ class WebSocketRoutesTest {
             BadRequestException.class,
             (ignoredFailure, ignoredRequest, response) ->
                 response.status(422).setHeader("X-Error-Mapped", "yes").text("mapped"));
-        app.afterRequest(
-            result -> {
-              notifications.incrementAndGet();
-              outcome.complete(result);
-            });
+        app.afterRequest(result -> {
+          notifications.incrementAndGet();
+          outcome.complete(result);
+        });
         app.routes()
             .websocket(
                 "/reject",
@@ -1924,15 +1923,13 @@ class WebSocketRoutesTest {
 
       try (Closeable appCleanup22 = app::close;
           var client = HttpClient.newHttpClient()) {
-        app.afterRequest(
-            result -> {
-              notifications.incrementAndGet();
-              outcome.complete(result);
-            });
-        app.afterResponseFlush(
-            (ignoredRequest, ignoredResponse) -> {
-              throw postFlush;
-            });
+        app.afterRequest(result -> {
+          notifications.incrementAndGet();
+          outcome.complete(result);
+        });
+        app.afterResponseFlush((ignoredRequest, ignoredResponse) -> {
+          throw postFlush;
+        });
         app.exception(
             BadRequestException.class,
             (ignoredFailure, ignoredRequest, response) -> response.text("mapped"));
@@ -1958,6 +1955,92 @@ class WebSocketRoutesTest {
         assertEquals(1, notifications.get());
       }
     }
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  @Timeout(10)
+  void retainsFactoryAndRendererFailuresWhenTheHandshakeResponseAborts(boolean sameFailure)
+      throws Exception {
+    var original = new BadRequestException();
+    var renderer = new LinkageError("error renderer failed");
+    var completed = new CompletableFuture<RequestOutcome>();
+    var notifications = new AtomicInteger();
+    var factories = new AtomicInteger();
+    var app = new Shoostr();
+
+    try (Closeable appCleanup = app::close) {
+      app.modifyServer(server -> {
+        ((ServerConnector) server.getConnectors()[0]).setPort(0);
+        server.setStopTimeout(0);
+      });
+      app.afterRequest(outcome -> {
+        notifications.incrementAndGet();
+        completed.complete(outcome);
+      });
+      app.exception(
+          BadRequestException.class,
+          (failure, request, response) -> {
+            if (sameFailure) {
+              response.startStream("text/plain");
+              throw original;
+            }
+
+            throw renderer;
+          });
+      app.routes()
+          .websocket(
+              "/renderer-failure",
+              (request, upgrade) -> {
+                factories.incrementAndGet();
+                throw original;
+              });
+      app.start();
+
+      sendSingleRejectedRendererHandshake(app);
+      var outcome = completed.get(3, TimeUnit.SECONDS);
+      assertSame(original, outcome.applicationFailure());
+      if (sameFailure) {
+        assertEquals(0, original.getSuppressed().length);
+      } else {
+        assertTrue(List.of(original.getSuppressed()).contains(renderer));
+      }
+
+      var transport = outcome.transportFailure();
+      assertNotNull(transport);
+      assertSame(sameFailure ? original : renderer, rootCause(transport));
+      assertEquals(1, notifications.get());
+      assertEquals(1, factories.get());
+    }
+  }
+
+  private void sendSingleRejectedRendererHandshake(Shoostr app) throws Exception {
+    try (var peer = new Socket(InetAddress.getAllByName("127.0.0.1")[0], app.port())) {
+      peer.setSoTimeout(3000);
+      var handshake = createHandshakeForUpgradeUnreadPeer("/renderer-failure");
+      peer.getOutputStream().write(handshake.getBytes(StandardCharsets.US_ASCII));
+      peer.getOutputStream().flush();
+      var reader =
+          new BufferedReader(
+              new InputStreamReader(peer.getInputStream(), StandardCharsets.US_ASCII));
+
+      try {
+        var status = reader.readLine();
+        if (status != null) {
+          assertTrue(
+              status.startsWith("HTTP/1.1 400") || status.startsWith("HTTP/1.1 500"), status);
+        }
+      } catch (SocketException expectedAbort) {
+        // A renderer Error may abort transport before any HTTP response can be written.
+      }
+    }
+  }
+
+  private Throwable rootCause(Throwable failure) {
+    while (failure.getCause() != null) {
+      failure = failure.getCause();
+    }
+    return failure;
   }
 
   private ExecutionException
@@ -2215,9 +2298,8 @@ class WebSocketRoutesTest {
     {
       var app =
           new Shoostr()
-              .modifyServer(
-                  nativeServerConfiguration ->
-                      ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
+              .modifyServer(nativeServerConfiguration ->
+                  ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
 
       try (Closeable appCleanup27 = app::close;
           var peer = new Socket()) {
@@ -2336,15 +2418,14 @@ class WebSocketRoutesTest {
         for (int producer = 0; producer < 4; producer++) {
           final int id = producer;
           tasks.add(
-              producers.submit(
-                  () -> {
-                    begin.await();
-                    for (int message = 0; message < 5; message++) {
-                      listener.submit(id + ":" + message);
-                    }
+              producers.submit(() -> {
+                begin.await();
+                for (int message = 0; message < 5; message++) {
+                  listener.submit(id + ":" + message);
+                }
 
-                    return null;
-                  }));
+                return null;
+              }));
         }
 
         begin.countDown();
@@ -2562,6 +2643,7 @@ class WebSocketRoutesTest {
     private final ArrayDeque<String> pending;
     private final List<String> accepted;
     private final int maxPending;
+    private final ReentrantLock producerLock;
     private Optional<Session> session;
     private boolean sending;
     private boolean terminal;
@@ -2584,6 +2666,7 @@ class WebSocketRoutesTest {
       this.pending = new ArrayDeque<>();
       this.accepted = new ArrayList<>();
       this.maxPending = maxPending;
+      this.producerLock = new ReentrantLock();
       this.session = Optional.empty();
     }
 
@@ -2595,29 +2678,35 @@ class WebSocketRoutesTest {
     }
 
     public void submit(String message) {
-      boolean start;
-      synchronized (this) {
-        if (terminal || pending.size() >= maxPending) {
-          throw new IllegalStateException("WebSocket producer cannot accept more messages");
-        }
-
-        accepted.add(message);
-        pending.addLast(message);
-        start = !sending;
-        sending = true;
-      }
-
-      if (start) {
+      if (enqueue(message)) {
         sendNext();
       }
     }
 
-    public synchronized List<String> accepted() {
-      return List.copyOf(accepted);
+    private boolean enqueue(String message) {
+      return Boolean.TRUE.equals(
+          getUnderLock(
+              producerLock,
+              () -> {
+                if (terminal || pending.size() >= maxPending) {
+                  throw new IllegalStateException("WebSocket producer cannot accept more messages");
+                }
+
+                accepted.add(message);
+                pending.addLast(message);
+                final var start = !sending;
+                sending = true;
+
+                return start;
+              }));
     }
 
-    public synchronized int pendingCount() {
-      return pending.size();
+    public List<String> accepted() {
+      return Objects.requireNonNull(getUnderLock(producerLock, () -> List.copyOf(accepted)));
+    }
+
+    public int pendingCount() {
+      return Objects.requireNonNull(getUnderLock(producerLock, pending::size));
     }
 
     @Override
@@ -2631,20 +2720,20 @@ class WebSocketRoutesTest {
       stop();
     }
 
-    private synchronized void stop() {
-      terminal = true;
-      pending.clear();
-      sending = false;
+    private void stop() {
+      runUnderLock(
+          producerLock,
+          () -> {
+            terminal = true;
+            pending.clear();
+            sending = false;
+          });
     }
 
     private void sendNext() {
-      String next;
-      synchronized (this) {
-        next = pending.pollFirst();
-        if (next == null) {
-          sending = false;
-          return;
-        }
+      final var next = pollNext();
+      if (next == null) {
+        return;
       }
 
       session
@@ -2662,6 +2751,19 @@ class WebSocketRoutesTest {
                     completed.countDown();
                     session.orElseThrow().disconnect();
                   }));
+    }
+
+    private @Nullable String pollNext() {
+      return getUnderLock(
+          producerLock,
+          () -> {
+            final var next = pending.pollFirst();
+            if (next == null) {
+              sending = false;
+            }
+
+            return next;
+          });
     }
   }
 }

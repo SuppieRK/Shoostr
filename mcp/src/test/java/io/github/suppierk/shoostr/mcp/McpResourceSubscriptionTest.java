@@ -45,14 +45,13 @@ class McpResourceSubscriptionTest {
     var mcp = createMcpForDeliversResourceUpdatesOnlyToSubscribersOfThatUri(security, alpha, beta);
     var app = new Shoostr();
     app.routes(routes -> routes.path("/mcp", mcp::routes));
-    app.beforeResponseFlush(
-        (request, ignoredResponse) -> {
-          if ("GET".equals(request.method())
-              && "/mcp".equals(request.path())
-              && attached.add(request.header("Mcp-Session-Id").orElseThrow())) {
-            listening.countDown();
-          }
-        });
+    app.beforeResponseFlush((request, ignoredResponse) -> {
+      if ("GET".equals(request.method())
+          && "/mcp".equals(request.path())
+          && attached.add(request.header("Mcp-Session-Id").orElseThrow())) {
+        listening.countDown();
+      }
+    });
 
     try (var test = TestServer.start(app);
         var alphaClient =

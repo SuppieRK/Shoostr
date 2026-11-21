@@ -69,9 +69,8 @@ class McpNativeErrorTest {
                 .tools(
                     McpServerFeatures.AsyncToolSpecification.builder()
                         .tool(McpSchema.Tool.builder("refuse", Map.of("type", "object")).build())
-                        .callHandler(
-                            (ignoredMcpAsyncServerExchange, ignoredCallToolRequest) ->
-                                Mono.error(new ForbiddenException("Business refusal")))
+                        .callHandler((ignoredMcpAsyncServerExchange, ignoredCallToolRequest) ->
+                            Mono.error(new ForbiddenException("Business refusal")))
                         .build())
                 .build());
   }
@@ -79,20 +78,19 @@ class McpNativeErrorTest {
   private HttpResponse<byte[]>
       sendInitializedRequestForPreservesNativeToolFailureAsProtocolErrorWithoutOauthChallenge(
           TestServer test) throws IOException, InterruptedException {
-    return test.send(
-        request ->
-            request
-                .path("/mcp")
-                .method("POST")
-                .header("Content-Type", "application/json")
-                .header("Accept", "application/json, text/event-stream")
-                .body(
-                    """
-                    {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
-                      "protocolVersion":"2025-11-25","capabilities":{},
-                      "clientInfo":{"name":"native-error-fixture","version":"1.0"}}}
-                    """
-                        .getBytes(StandardCharsets.UTF_8)));
+    return test.send(request ->
+        request
+            .path("/mcp")
+            .method("POST")
+            .header("Content-Type", "application/json")
+            .header("Accept", "application/json, text/event-stream")
+            .body(
+                """
+                {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+                  "protocolVersion":"2025-11-25","capabilities":{},
+                  "clientInfo":{"name":"native-error-fixture","version":"1.0"}}}
+                """
+                    .getBytes(StandardCharsets.UTF_8)));
   }
 
   private HttpResponse<String>

@@ -29,6 +29,7 @@ public final class Lifecycle {
   final List<Consumer<RequestOutcome>> observers;
   final List<Function<Request, RequestObservation>> instrumentation;
   final Map<Integer, Handler> statuses;
+
   private final Set<Extension> installed;
   private final IdentityHashMap<Extension, Selection<?>> selections;
   private final Consumer<Extension> initialize;
@@ -63,9 +64,10 @@ public final class Lifecycle {
     this.instrumentation = new ArrayList<>();
     this.statuses = new LinkedHashMap<>();
     this.routeConsumers = new ArrayList<>();
+
     if (inherited != null) {
       append(inherited);
-      for (var extension : inherited.order) {
+      for (final var extension : inherited.order) {
         inherit(extension, Objects.requireNonNull(inherited.selections.get(extension)));
       }
     }
@@ -132,7 +134,7 @@ public final class Lifecycle {
       throw new IllegalArgumentException("The extension is not owned by this application");
     }
 
-    var selected = selections.get(extension);
+    final var selected = selections.get(extension);
     if (selected != null && selected.included()) {
       selections.put(extension, selected.included(false));
     }
@@ -148,7 +150,7 @@ public final class Lifecycle {
    * @param <C> configuration type
    */
   private <C> void inherit(Extension extension, Selection<C> selection) {
-    var inherited = select(extension, selection.configure(), selection.configuration());
+    final var inherited = select(extension, selection.configure(), selection.configuration());
     if (!selection.included()) {
       selections.put(extension, inherited.included(false));
     }
@@ -163,18 +165,18 @@ public final class Lifecycle {
    * @param <C> configuration type
    * @return independent settings and contribution
    */
-  @SuppressWarnings("java:S1181") // Freeze retained provider collectors after any setup failure.
+  @SuppressWarnings("java:S1181") // Freeze retained callbacks before propagating fatal failures.
   private <C> Selection<C> select(
       Extension extension, BiFunction<Lifecycle, @Nullable C, C> configure, @Nullable C inherited) {
-    var contribution = new Lifecycle(installed, initialize, null);
+    final var contribution = new Lifecycle(installed, initialize, null);
     contribution.provider = true;
 
     try {
       final var selection = createSelection(contribution, configure, inherited);
 
-      var owners = new Lifecycle(installed, initialize, null);
+      final var owners = new Lifecycle(installed, initialize, null);
       owners.reserve(this);
-      for (var previous : selections.values()) {
+      for (final var previous : selections.values()) {
         owners.reserve(previous.contribution());
       }
       owners.reserve(contribution);
@@ -182,7 +184,7 @@ public final class Lifecycle {
       order.add(extension);
 
       return selection;
-    } catch (RuntimeException | Error failure) {
+    } catch (Exception | Error failure) {
       contribution.freeze();
       throw failure;
     }
@@ -196,6 +198,7 @@ public final class Lifecycle {
    * @param <C> provider configuration
    * @throws IllegalArgumentException if this exact instance already supplies application defaults
    */
+  @SuppressWarnings("java:S1181") // Roll back failed defaults before propagating fatal failures.
   <C> void activate(ApplicationExtension<C> extension, Consumer<? super C> configure) {
     requireSelection();
     Objects.requireNonNull(extension);
@@ -206,11 +209,11 @@ public final class Lifecycle {
     }
 
     initialize.accept(extension);
-    var selected = select(extension, extension::configure, null);
+    final var selected = select(extension, extension::configure, null);
 
     try {
       configure.accept(selected.configuration());
-    } catch (RuntimeException | Error failure) {
+    } catch (Exception | Error failure) {
       selections.remove(extension);
       removeIdentity(extension);
       throw failure;
@@ -446,11 +449,11 @@ public final class Lifecycle {
       @Nullable HttpMethods method,
       String pathTemplate,
       List<Runnable> notifications) {
-    var combined = combined();
+    final var combined = combined();
     freeze();
     if (method != null && !combined.routeConsumers.isEmpty()) {
-      var info = new RouteInfo(method, pathTemplate, !conditions.isEmpty());
-      for (var consumer : combined.routeConsumers) {
+      final var info = new RouteInfo(method, pathTemplate, !conditions.isEmpty());
+      for (final var consumer : combined.routeConsumers) {
         notifications.add(() -> consumer.accept(info));
       }
     }
@@ -492,9 +495,9 @@ public final class Lifecycle {
    * @return independent combined collector
    */
   private Lifecycle combined() {
-    var combined = new Lifecycle(installed, initialize, null);
-    for (var extension : order) {
-      var selected = Objects.requireNonNull(selections.get(extension));
+    final var combined = new Lifecycle(installed, initialize, null);
+    for (final var extension : order) {
+      final var selected = Objects.requireNonNull(selections.get(extension));
       if (selected.included()) {
         combined.append(selected.contribution());
       }
@@ -507,7 +510,7 @@ public final class Lifecycle {
   /** Closes registration surfaces retained by a group callback. */
   void freeze() {
     closed = true;
-    for (var selection : selections.values()) {
+    for (final var selection : selections.values()) {
       selection.contribution().closed = true;
     }
   }

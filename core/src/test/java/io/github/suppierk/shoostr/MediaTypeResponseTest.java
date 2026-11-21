@@ -19,6 +19,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Stream;
 import org.eclipse.jetty.http.HttpFields;
@@ -28,6 +29,7 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.ValueSource;
 
 @Timeout(15)
 class MediaTypeResponseTest {
@@ -37,7 +39,7 @@ class MediaTypeResponseTest {
             MediaType.APPLICATION_JSON,
             MediaType.TEXT_PLAIN,
             MediaType.TEXT_PLAIN.withCharset(StandardCharsets.UTF_8));
-    response.body(type, type.value().getBytes(StandardCharsets.UTF_8));
+    assertSame(response, response.body(type, type.value().getBytes(StandardCharsets.UTF_8)));
   }
 
   private static void negotiateUtf8Text(Request request, Response response) {
@@ -65,7 +67,23 @@ class MediaTypeResponseTest {
         Arguments.of(
             "text/plain; charset=\"UTF-8\"",
             MediaType.TEXT_PLAIN.withCharset(StandardCharsets.UTF_8)),
-        Arguments.of("application/json;q=1., text/plain;q=0.", MediaType.APPLICATION_JSON));
+        Arguments.of("application/json;q=1., text/plain;q=0.", MediaType.APPLICATION_JSON),
+        Arguments.of("application/json;q=0.123, text/plain;q=0.122", MediaType.APPLICATION_JSON),
+        Arguments.of(
+            "application/json;note=\"two words\", application/json", MediaType.APPLICATION_JSON),
+        Arguments.of(
+            "application/json;note=\"a\\\";b,c\", application/json", MediaType.APPLICATION_JSON),
+        Arguments.of(
+            "text/plain;charset=\"UTF\\-8\"",
+            MediaType.TEXT_PLAIN.withCharset(StandardCharsets.UTF_8)),
+        Arguments.of("*/*;q=1, application/*;q=0", MediaType.TEXT_PLAIN),
+        Arguments.of("application/*;q=0, */*;q=1", MediaType.TEXT_PLAIN),
+        Arguments.of("application/json;q=1.000, text/plain;q=0.999", MediaType.APPLICATION_JSON),
+        Arguments.of("application/json, text/plain;note=\"a,b;c\"", MediaType.APPLICATION_JSON),
+        Arguments.of("application/json, text/plain;note=\"\"", MediaType.APPLICATION_JSON),
+        Arguments.of(
+            "text/plain;q=0, text/plain;charset=utf-8;q=1",
+            MediaType.TEXT_PLAIN.withCharset(StandardCharsets.UTF_8)));
   }
 
   private static Stream<Arguments> malformedAcceptFields() {
@@ -76,6 +94,18 @@ class MediaTypeResponseTest {
         Arguments.of("text/plain;q=1;q=0"),
         Arguments.of("text /plain"),
         Arguments.of("text/plain;charset =utf-8"),
+        Arguments.of("te xt/plain"),
+        Arguments.of("text/pl@in"),
+        Arguments.of("*/plain"),
+        Arguments.of("text/plain;charset"),
+        Arguments.of("text/plain;ch@rset=utf-8"),
+        Arguments.of("text/plain;charset="),
+        Arguments.of("text/plain;charset=utf-8;charset=utf-8"),
+        Arguments.of("text/plain;charset=ut@f"),
+        Arguments.of("text/plain;q=2.0"),
+        Arguments.of("text/plain;q=0.a"),
+        Arguments.of("text/plain;q=1.001"),
+        Arguments.of("text/plain;note=\"a\"\"b\""),
         Arguments.of(";text/plain"),
         Arguments.of(";;text/plain"));
   }
@@ -219,28 +249,26 @@ class MediaTypeResponseTest {
 
   private Future<HttpResponse<String>> submitJsonForKeepsConcurrentRequestNegotiationIndependent(
       ExecutorService testRequests, TestServer test) {
-    return testRequests.submit(
-        () ->
-            test.send(
-                request ->
-                    request
-                        .path("/concurrent")
-                        .header("Accept", "application/json")
-                        .timeout(Duration.ofSeconds(5)),
-                HttpResponse.BodyHandlers.ofString()));
+    return testRequests.submit(() ->
+        test.send(
+            request ->
+                request
+                    .path("/concurrent")
+                    .header("Accept", "application/json")
+                    .timeout(Duration.ofSeconds(5)),
+            HttpResponse.BodyHandlers.ofString()));
   }
 
   private Future<HttpResponse<String>> submitTextForKeepsConcurrentRequestNegotiationIndependent(
       ExecutorService testRequests, TestServer test) {
-    return testRequests.submit(
-        () ->
-            test.send(
-                request ->
-                    request
-                        .path("/concurrent")
-                        .header("Accept", "text/plain")
-                        .timeout(Duration.ofSeconds(5)),
-                HttpResponse.BodyHandlers.ofString()));
+    return testRequests.submit(() ->
+        test.send(
+            request ->
+                request
+                    .path("/concurrent")
+                    .header("Accept", "text/plain")
+                    .timeout(Duration.ofSeconds(5)),
+            HttpResponse.BodyHandlers.ofString()));
   }
 
   @Test
@@ -251,23 +279,20 @@ class MediaTypeResponseTest {
       var app = new Shoostr();
 
       try (Closeable appCleanup3 = app::close) {
-        app.modifyHttpConfiguration(
-            configuration ->
-                configuration.addCustomizer(
-                    (nativeRequest, ignoredMutable) -> {
-                      var fields = HttpFields.build(nativeRequest.getHeaders());
-                      transportHeaders.set(fields);
+        app.modifyHttpConfiguration(configuration ->
+            configuration.addCustomizer((nativeRequest, ignoredMutable) -> {
+              var fields = HttpFields.build(nativeRequest.getHeaders());
+              transportHeaders.set(fields);
 
-                      return new Wrapper(nativeRequest) {
-                        @Override
-                        public HttpFields getHeaders() {
-                          return fields;
-                        }
-                      };
-                    }));
-        app.onRequestHeaders(
-            (ignoredRequest, ignoredResponse) ->
-                transportHeaders.get().put("Accept", "text/plain"));
+              return new Wrapper(nativeRequest) {
+                @Override
+                public HttpFields getHeaders() {
+                  return fields;
+                }
+              };
+            }));
+        app.onRequestHeaders((ignoredRequest, ignoredResponse) ->
+            transportHeaders.get().put("Accept", "text/plain"));
         app.routes()
             .get(
                 "/bound",
@@ -322,9 +347,8 @@ class MediaTypeResponseTest {
         try (var test = TestServer.start(app)) {
 
           var result =
-              test.send(
-                  request ->
-                      request.path("/bytes").header("Accept", "text/plain; charset=iso-8859-1"));
+              test.send(request ->
+                  request.path("/bytes").header("Accept", "text/plain; charset=iso-8859-1"));
 
           assertEquals(200, result.statusCode());
           assertEquals(
@@ -655,6 +679,78 @@ class MediaTypeResponseTest {
         }
       }
     }
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "text/plain;charset=iso-8859-1",
+        "text/plain;charset=utf-8;q=0, text/plain;charset=utf-8;q=1",
+        "application/xml",
+        "image/json"
+      })
+  void rejectsAcceptPreferencesThatExcludeEveryOfferedRepresentation(String accept)
+      throws Exception {
+    var app = new Shoostr();
+
+    try (Closeable appCleanup = app::close) {
+      app.routes().get("/negotiated", MediaTypeResponseTest::negotiate);
+
+      try (var test = TestServer.start(app)) {
+        var result =
+            test.send(
+                request -> request.path("/negotiated").header("Accept", accept),
+                HttpResponse.BodyHandlers.ofString());
+
+        assertEquals(406, result.statusCode());
+        assertEquals("Not Acceptable", result.body());
+        assertEquals(List.of("Accept"), result.headers().allValues("Vary"));
+      }
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(ints = {1, 127})
+  void rejectsQuotedControlsSuppliedByNativeRequestCustomization(int control) throws Exception {
+    var app = new Shoostr();
+
+    try (Closeable appCleanup = app::close) {
+      var accept = "application/json, text/plain;note=\"a" + (char) control + "b\"";
+      app.modifyHttpConfiguration(configuration ->
+          configuration.addCustomizer(
+              (nativeRequest, ignoredHeaders) -> requestWithAccept(nativeRequest, accept)));
+
+      var entered = new AtomicBoolean();
+      app.routes()
+          .get(
+              "/negotiated",
+              (request, response) -> {
+                entered.set(true);
+                response.text(response.negotiate(MediaType.APPLICATION_JSON).value());
+              });
+
+      try (var test = TestServer.start(app)) {
+        var result =
+            test.send(request -> request.path("/negotiated"), HttpResponse.BodyHandlers.ofString());
+
+        assertTrue(entered.get());
+        assertEquals(400, result.statusCode());
+        assertEquals("Bad Request", result.body());
+        assertTrue(result.headers().allValues("Vary").isEmpty());
+      }
+    }
+  }
+
+  private Wrapper requestWithAccept(org.eclipse.jetty.server.Request nativeRequest, String accept) {
+    var fields = HttpFields.build(nativeRequest.getHeaders());
+    fields.put("Accept", accept);
+
+    return new Wrapper(nativeRequest) {
+      @Override
+      public HttpFields getHeaders() {
+        return fields;
+      }
+    };
   }
 
   @Test

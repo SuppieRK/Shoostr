@@ -67,24 +67,22 @@ class CsrfYamlTest {
         assertEquals(
             200,
             server
-                .send(
-                    request ->
-                        request
-                            .path("/write")
-                            .method("POST")
-                            .header("Origin", "https://client.example")
-                            .header("X-CSRF-Token", token))
+                .send(request ->
+                    request
+                        .path("/write")
+                        .method("POST")
+                        .header("Origin", "https://client.example")
+                        .header("X-CSRF-Token", token))
                 .statusCode());
         assertEquals(
             403,
             server
-                .send(
-                    request ->
-                        request
-                            .path("/write")
-                            .method("POST")
-                            .header("Origin", "https://other.example")
-                            .header("X-CSRF-Token", token))
+                .send(request ->
+                    request
+                        .path("/write")
+                        .method("POST")
+                        .header("Origin", "https://other.example")
+                        .header("X-CSRF-Token", token))
                 .statusCode());
       }
     }
@@ -151,24 +149,22 @@ class CsrfYamlTest {
           assertEquals(
               200,
               server
-                  .send(
-                      request ->
-                          request
-                              .path(entry.getKey())
-                              .method("POST")
-                              .header("Origin", entry.getValue())
-                              .header("X-CSRF-Token", token))
+                  .send(request ->
+                      request
+                          .path(entry.getKey())
+                          .method("POST")
+                          .header("Origin", entry.getValue())
+                          .header("X-CSRF-Token", token))
                   .statusCode());
           assertEquals(
               403,
               server
-                  .send(
-                      request ->
-                          request
-                              .path(entry.getKey())
-                              .method("POST")
-                              .header("Origin", "https://changed.example")
-                              .header("X-CSRF-Token", token))
+                  .send(request ->
+                      request
+                          .path(entry.getKey())
+                          .method("POST")
+                          .header("Origin", "https://changed.example")
+                          .header("X-CSRF-Token", token))
                   .statusCode());
         }
 

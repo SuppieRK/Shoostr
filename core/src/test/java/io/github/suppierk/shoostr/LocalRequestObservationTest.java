@@ -21,9 +21,8 @@ class LocalRequestObservationTest {
     options.setVirtualThreads(virtualApplication);
 
     return new Shoostr(options)
-        .onRequestHeaders(
-            (request, response) ->
-                assertEquals(virtualApplication, Thread.currentThread().isVirtual()));
+        .onRequestHeaders((request, response) ->
+            assertEquals(virtualApplication, Thread.currentThread().isVirtual()));
   }
 
   @ParameterizedTest
@@ -101,39 +100,36 @@ class LocalRequestObservationTest {
                 "/ok",
                 (ignoredRequest, response) -> response.text(current.get()),
                 lifecycle -> {
-                  lifecycle.observe(
-                      ignoredRequest -> {
-                        throw new IllegalStateException("factory");
+                  lifecycle.observe(ignoredRequest -> {
+                    throw new IllegalStateException("factory");
+                  });
+                  lifecycle.observe(ignoredRequest ->
+                      new RequestObservation() {
+                        @Override
+                        public void close() {
+                          throw new IllegalStateException("scope");
+                        }
+
+                        @Override
+                        public void complete(RequestOutcome outcome) {
+                          throw new IllegalStateException("completion");
+                        }
                       });
-                  lifecycle.observe(
-                      ignoredRequest ->
-                          new RequestObservation() {
-                            @Override
-                            public void close() {
-                              throw new IllegalStateException("scope");
-                            }
+                  lifecycle.observe(ignoredRequest -> {
+                    current.set("observed");
 
-                            @Override
-                            public void complete(RequestOutcome outcome) {
-                              throw new IllegalStateException("completion");
-                            }
-                          });
-                  lifecycle.observe(
-                      ignoredRequest -> {
-                        current.set("observed");
+                    return new RequestObservation() {
+                      @Override
+                      public void close() {
+                        current.remove();
+                      }
 
-                        return new RequestObservation() {
-                          @Override
-                          public void close() {
-                            current.remove();
-                          }
-
-                          @Override
-                          public void complete(RequestOutcome outcome) {
-                            completed.complete(outcome);
-                          }
-                        };
-                      });
+                      @Override
+                      public void complete(RequestOutcome outcome) {
+                        completed.complete(outcome);
+                      }
+                    };
+                  });
                 });
 
         try (var test = TestServer.start(app)) {

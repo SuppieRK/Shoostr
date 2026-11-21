@@ -33,17 +33,16 @@ class OpenApiLifecycleTest {
       var app = new Shoostr();
 
       try (Closeable appCleanup = app::close) {
-        app.routes(
-            routes -> {
-              routes.get(
-                  "/endpoint",
-                  (ignored, ignoredResponse) -> called.incrementAndGet(),
-                  lifecycle -> retained.set(lifecycle.withExtension(docs).summary("Endpoint")));
-              routes.get(
-                  "/openapi.json",
-                  docs.handler(),
-                  lifecycle -> lifecycle.withExtension(docs).summary("Own specification"));
-            });
+        app.routes(routes -> {
+          routes.get(
+              "/endpoint",
+              (ignored, ignoredResponse) -> called.incrementAndGet(),
+              lifecycle -> retained.set(lifecycle.withExtension(docs).summary("Endpoint")));
+          routes.get(
+              "/openapi.json",
+              docs.handler(),
+              lifecycle -> lifecycle.withExtension(docs).summary("Own specification"));
+        });
 
         try (var test = TestServer.start(app);
             var clients = Executors.newVirtualThreadPerTaskExecutor()) {
@@ -62,6 +61,15 @@ class OpenApiLifecycleTest {
           var operation = retained.get();
 
           assertThrows(IllegalStateException.class, () -> operation.summary("Late mutation"));
+          assertEquals(
+              "OpenAPI value must not be blank",
+              assertThrows(
+                      IllegalArgumentException.class,
+                      () -> operation.queryParameter(" ", "Query", new JsonSchema(), false))
+                  .getMessage());
+          assertEquals(
+              "OpenAPI configuration is frozen at startup",
+              assertThrows(IllegalStateException.class, () -> docs.description(" ")).getMessage());
         }
       }
     }
@@ -82,28 +90,26 @@ class OpenApiLifecycleTest {
 
       try (Closeable appCleanup1 = app::close) {
         app.withExtension(observer)
-            .modifyServer(
-                server ->
-                    server.addEventListener(
-                        new LifeCycle.Listener() {
-                          @Override
-                          public void lifeCycleStarting(LifeCycle event) {
-                            listening.incrementAndGet();
-                          }
-                        }))
-            .routes(
-                routes ->
-                    routes.get(
-                        "/broken",
-                        (ignoredRequest, ignoredResponse) -> {},
-                        lifecycle ->
-                            lifecycle
-                                .withExtension(docs)
-                                .response(
-                                    200,
-                                    "Broken",
-                                    MediaType.APPLICATION_JSON,
-                                    new JsonSchema().$ref("#/components/schemas/Missing"))));
+            .modifyServer(server ->
+                server.addEventListener(
+                    new LifeCycle.Listener() {
+                      @Override
+                      public void lifeCycleStarting(LifeCycle event) {
+                        listening.incrementAndGet();
+                      }
+                    }))
+            .routes(routes ->
+                routes.get(
+                    "/broken",
+                    (ignoredRequest, ignoredResponse) -> {},
+                    lifecycle ->
+                        lifecycle
+                            .withExtension(docs)
+                            .response(
+                                200,
+                                "Broken",
+                                MediaType.APPLICATION_JSON,
+                                new JsonSchema().$ref("#/components/schemas/Missing"))));
 
         assertThrows(IllegalArgumentException.class, app::start);
         assertEquals(0, listening.get());

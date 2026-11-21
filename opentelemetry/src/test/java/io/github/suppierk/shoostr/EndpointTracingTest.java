@@ -86,9 +86,8 @@ class EndpointTracingTest {
     options.setVirtualThreads(virtualApplication);
 
     return new Shoostr(options)
-        .onRequestHeaders(
-            (request, response) ->
-                assertEquals(virtualApplication, Thread.currentThread().isVirtual()));
+        .onRequestHeaders((request, response) ->
+            assertEquals(virtualApplication, Thread.currentThread().isVirtual()));
   }
 
   @ParameterizedTest(name = "{0}, appWide={1}, virtualApplication={2}")
@@ -247,14 +246,13 @@ class EndpointTracingTest {
                     ? "11111111111111111111111111111111"
                     : "22222222222222222222222222222222";
             sent.add(
-                drivers.submit(
-                    () ->
-                        test.send(
-                            request ->
-                                request
-                                    .path("/trace")
-                                    .header("traceparent", "00-" + trace + "-0123456789012345-01"),
-                            HttpResponse.BodyHandlers.ofString())));
+                drivers.submit(() ->
+                    test.send(
+                        request ->
+                            request
+                                .path("/trace")
+                                .header("traceparent", "00-" + trace + "-0123456789012345-01"),
+                        HttpResponse.BodyHandlers.ofString())));
           }
           for (int index = 0; index < sent.size(); index++) {
             assertEquals(
@@ -350,31 +348,27 @@ class EndpointTracingTest {
   private Future<HttpResponse<String>>
       submitOuterForRestoresOuterRequestTraceAfterHelpingAnotherMatchedRequest(
           ExecutorService drivers, TestServer test) {
-    return drivers.submit(
-        () ->
-            test.send(
-                request ->
-                    request
-                        .path("/outer")
-                        .header(
-                            "traceparent",
-                            "00-11111111111111111111111111111111-0123456789012345-01"),
-                HttpResponse.BodyHandlers.ofString()));
+    return drivers.submit(() ->
+        test.send(
+            request ->
+                request
+                    .path("/outer")
+                    .header(
+                        "traceparent", "00-11111111111111111111111111111111-0123456789012345-01"),
+            HttpResponse.BodyHandlers.ofString()));
   }
 
   private Future<HttpResponse<String>>
       submitInnerForRestoresOuterRequestTraceAfterHelpingAnotherMatchedRequest(
           ExecutorService drivers, TestServer test) {
-    return drivers.submit(
-        () ->
-            test.send(
-                request ->
-                    request
-                        .path("/inner")
-                        .header(
-                            "traceparent",
-                            "00-22222222222222222222222222222222-0123456789012345-01"),
-                HttpResponse.BodyHandlers.ofString()));
+    return drivers.submit(() ->
+        test.send(
+            request ->
+                request
+                    .path("/inner")
+                    .header(
+                        "traceparent", "00-22222222222222222222222222222222-0123456789012345-01"),
+            HttpResponse.BodyHandlers.ofString()));
   }
 
   @ParameterizedTest
@@ -543,11 +537,10 @@ class EndpointTracingTest {
           app.withExtension(tracing);
         }
 
-        app.afterRequest(
-            outcome -> {
-              completions.incrementAndGet();
-              completed.complete(outcome);
-            });
+        app.afterRequest(outcome -> {
+          completions.incrementAndGet();
+          completed.complete(outcome);
+        });
         app.routes()
             .get(
                 "/closing",
@@ -565,12 +558,11 @@ class EndpointTracingTest {
         Future<Boolean> blocker = null;
         if (queued) {
           blocker =
-              workers.submit(
-                  () -> {
-                    blocked.countDown();
+              workers.submit(() -> {
+                blocked.countDown();
 
-                    return release.await(10, TimeUnit.SECONDS);
-                  });
+                return release.await(10, TimeUnit.SECONDS);
+              });
 
           assertTrue(blocked.await(5, TimeUnit.SECONDS));
         }
@@ -640,15 +632,11 @@ class EndpointTracingTest {
   private Future<HttpResponse<byte[]>>
       submitSentForCompletesForkJoinTraceExactlyOnceWhenClosingWithQueuedOrRunningRequest(
           ExecutorService drivers, TestServer test) {
-    return drivers.submit(
-        () ->
-            test.send(
-                request ->
-                    request
-                        .path("/closing")
-                        .header(
-                            "traceparent",
-                            "00-11111111111111111111111111111111-0123456789012345-01")));
+    return drivers.submit(() ->
+        test.send(request ->
+            request
+                .path("/closing")
+                .header("traceparent", "00-11111111111111111111111111111111-0123456789012345-01")));
   }
 
   private SdkTracerProvider openTracerProvider(InMemorySpanExporter exporter) {

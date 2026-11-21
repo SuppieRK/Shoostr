@@ -347,7 +347,7 @@ class RequestBodyCharsetTest {
     configuredOptions.setMaxResponseBytes(1024);
     configuredOptions.setStreamBufferBytes(8);
     configuredOptions.setMaxParameters(1000);
-    configuredOptions.setMultipart(MultipartOptions.defaults());
+    configuredOptions.setMultipart(new MultipartOptions());
 
     {
       var app = createAppForEnforcesByteLimitsForFixedAndUnknownLengthUtf16(configuredOptions);
@@ -377,13 +377,12 @@ class RequestBodyCharsetTest {
   private Shoostr createAppForEnforcesByteLimitsForFixedAndUnknownLengthUtf16(
       Options configuredOptions) {
     return new Shoostr(configuredOptions)
-        .modifyServer(
-            nativeServer -> {
-              var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
-              nativeConnector.setHost("127.0.0.1");
-              nativeConnector.setPort(0);
-              nativeConnector.setIdleTimeout(5000);
-            });
+        .modifyServer(nativeServer -> {
+          var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
+          nativeConnector.setHost("127.0.0.1");
+          nativeConnector.setPort(0);
+          nativeConnector.setIdleTimeout(5000);
+        });
   }
 
   private HttpResponse<String> sendResponseForEnforcesByteLimitsForFixedAndUnknownLengthUtf16(
@@ -555,11 +554,10 @@ class RequestBodyCharsetTest {
                   assertEquals("a", request.bodyText(StandardCharsets.ISO_8859_1));
 
                   children
-                      .submit(
-                          () ->
-                              assertThrows(
-                                  IllegalStateException.class,
-                                  () -> request.bodyText(StandardCharsets.ISO_8859_1)))
+                      .submit(() ->
+                          assertThrows(
+                              IllegalStateException.class,
+                              () -> request.bodyText(StandardCharsets.ISO_8859_1)))
                       .get(3, TimeUnit.SECONDS);
                   response.text("checked");
                 });
@@ -574,16 +572,15 @@ class RequestBodyCharsetTest {
           assertEquals("checked", response.body());
 
           executor
-              .submit(
-                  () -> {
-                    assertSame(thread.get(), Thread.currentThread());
+              .submit(() -> {
+                assertSame(thread.get(), Thread.currentThread());
 
-                    var request = saved.get();
+                var request = saved.get();
 
-                    assertThrows(
-                        IllegalStateException.class,
-                        () -> request.bodyText(StandardCharsets.ISO_8859_1));
-                  })
+                assertThrows(
+                    IllegalStateException.class,
+                    () -> request.bodyText(StandardCharsets.ISO_8859_1));
+              })
               .get(3, TimeUnit.SECONDS);
         }
       }

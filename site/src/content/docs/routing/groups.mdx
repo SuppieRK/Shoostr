@@ -35,6 +35,13 @@ The nested account route also reads parameters captured by both parent and child
 Group configuration runs before its registration callback, and the registration callbacks run before the application starts rather than for each request.
 The response-header hooks below demonstrate inherited configuration without changing the endpoint definitions.
 
+Registration and configuration callbacks run synchronously on the calling thread under the application's shared registration lock.
+Registration calls from other threads wait until the complete callback returns, including its nested groups.
+Complete registration work on that thread; a callback must not wait for another thread to register routes or close the same application.
+
+Starting the application from a registration callback is rejected.
+Closing from another thread waits for the callback to finish before ending registration and starting cleanup.
+
 Route scopes share application-owned registration state and have no separate cleanup operation.
 
 <Code code={application} lang="java" title="RouteGroupsExample.java" />

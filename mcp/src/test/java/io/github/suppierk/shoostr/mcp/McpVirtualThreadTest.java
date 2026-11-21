@@ -152,11 +152,10 @@ class McpVirtualThreadTest {
               .pollDelay(Duration.ZERO)
               .pollInterval(Duration.ofMillis(10))
               .atMost(Duration.ofSeconds(3))
-              .until(
-                  () ->
-                      owners.size() == 4
-                          && owners.stream()
-                              .allMatch(owner -> owner.getState() == Thread.State.TIMED_WAITING));
+              .until(() ->
+                  owners.size() == 4
+                      && owners.stream()
+                          .allMatch(owner -> owner.getState() == Thread.State.TIMED_WAITING));
 
           assertTrue(
               Duration.ofNanos(System.nanoTime() - started).compareTo(Duration.ofSeconds(8)) < 0,
@@ -181,12 +180,11 @@ class McpVirtualThreadTest {
             try (var closer = Executors.newSingleThreadExecutor()) {
               try {
                 closer
-                    .submit(
-                        () -> {
-                          app.close();
+                    .submit(() -> {
+                      app.close();
 
-                          return null;
-                        })
+                      return null;
+                    })
                     .get(3, TimeUnit.SECONDS);
               } finally {
                 closer.shutdownNow();
@@ -240,14 +238,13 @@ class McpVirtualThreadTest {
 
     private static HttpResponse<byte[]> sendDeletedRequestForMain(TestServer test, String session)
         throws IOException, InterruptedException {
-      return test.send(
-          request ->
-              request
-                  .path("/mcp")
-                  .method("DELETE")
-                  .timeout(Duration.ofSeconds(2))
-                  .header("Mcp-Session-Id", session)
-                  .header("MCP-Protocol-Version", "2025-11-25"));
+      return test.send(request ->
+          request
+              .path("/mcp")
+              .method("DELETE")
+              .timeout(Duration.ofSeconds(2))
+              .header("Mcp-Session-Id", session)
+              .header("MCP-Protocol-Version", "2025-11-25"));
     }
 
     private static List<Instant> awaitClosed(
@@ -259,16 +256,15 @@ class McpVirtualThreadTest {
         try {
           for (var body : bodies) {
             endings.add(
-                readers.submit(
-                    () -> {
-                      try {
-                        body.readAllBytes();
-                      } catch (IOException ignoredFailure) {
-                        // A terminated committed stream may report EOF or a transport failure.
-                      }
+                readers.submit(() -> {
+                  try {
+                    body.readAllBytes();
+                  } catch (IOException ignoredFailure) {
+                    // A terminated committed stream may report EOF or a transport failure.
+                  }
 
-                      return Instant.now();
-                    }));
+                  return Instant.now();
+                }));
           }
           BooleanSupplier terminated =
               () ->
@@ -337,20 +333,19 @@ class McpVirtualThreadTest {
 
     private static HttpResponse<byte[]> sendInitializedRequestForInitialize(TestServer test)
         throws IOException, InterruptedException {
-      return test.send(
-          request ->
-              request
-                  .path("/mcp")
-                  .method("POST")
-                  .header("Content-Type", "application/json")
-                  .header("Accept", "application/json, text/event-stream")
-                  .body(
-                      """
-                      {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
-                        "protocolVersion":"2025-11-25","capabilities":{},
-                        "clientInfo":{"name":"carrier-fixture","version":"1.0"}}}
-                      """
-                          .getBytes(StandardCharsets.UTF_8)));
+      return test.send(request ->
+          request
+              .path("/mcp")
+              .method("POST")
+              .header("Content-Type", "application/json")
+              .header("Accept", "application/json, text/event-stream")
+              .body(
+                  """
+                  {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+                    "protocolVersion":"2025-11-25","capabilities":{},
+                    "clientInfo":{"name":"carrier-fixture","version":"1.0"}}}
+                  """
+                      .getBytes(StandardCharsets.UTF_8)));
     }
   }
 }

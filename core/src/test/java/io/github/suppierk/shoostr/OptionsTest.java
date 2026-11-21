@@ -2,6 +2,10 @@ package io.github.suppierk.shoostr;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.beans.Introspector;
@@ -9,6 +13,8 @@ import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.function.Consumer;
 import java.util.stream.Stream;
+import nl.jqno.equalsverifier.EqualsVerifier;
+import nl.jqno.equalsverifier.Warning;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -17,6 +23,30 @@ import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 class OptionsTest {
+  @Test
+  void satisfiesEqualsAndHashCodeContract() {
+    EqualsVerifier.forClass(Options.class).suppress(Warning.NONFINAL_FIELDS).verify();
+  }
+
+  @Test
+  void comparesNestedMultipartSettingsByTheirCurrentValues() {
+    var first = new Options();
+    var second = new Options();
+
+    assertNotSame(first.getMultipart(), second.getMultipart());
+    assertEquals(first, second);
+    assertEquals(first.hashCode(), second.hashCode());
+
+    second.getMultipart().setMaxParts(7);
+
+    assertNotEquals(first, second);
+
+    second.getMultipart().setMaxParts(null);
+
+    assertEquals(first, second);
+    assertEquals(first.hashCode(), second.hashCode());
+  }
+
   private static Stream<Arguments> nullResets() {
     return Stream.of(
         Arguments.of("host", (Consumer<Options>) o -> o.setHost(null), "0.0.0.0"),
@@ -38,10 +68,7 @@ class OptionsTest {
         Arguments.of("http2", (Consumer<Options>) o -> o.setHttp2(null), false),
         Arguments.of("compression", (Consumer<Options>) o -> o.setCompression(null), false),
         Arguments.of("maxParameters", (Consumer<Options>) o -> o.setMaxParameters(null), 1000),
-        Arguments.of(
-            "multipart",
-            (Consumer<Options>) o -> o.setMultipart(null),
-            MultipartOptions.defaults()),
+        Arguments.of("multipart", (Consumer<Options>) o -> o.setMultipart(null), null),
         Arguments.of(
             "streamBufferBytes", (Consumer<Options>) o -> o.setStreamBufferBytes(null), 8192),
         Arguments.of("virtualThreads", (Consumer<Options>) o -> o.setVirtualThreads(null), false));
@@ -94,14 +121,19 @@ class OptionsTest {
     assertFalse(options.getHttp2());
     assertFalse(options.getCompression());
     assertEquals(1000, options.getMaxParameters());
-    assertEquals(MultipartOptions.defaults(), options.getMultipart());
+    assertDefaultMultipart(options.getMultipart());
     assertEquals(8192, options.getStreamBufferBytes());
     assertFalse(options.getVirtualThreads());
   }
 
   @Test
   void configuresExplicitLimitsWithoutChangingTheServingDefaults() {
-    var multipart = new MultipartOptions(1000, 500, 7, 256, 64, null);
+    var multipart = new MultipartOptions();
+    multipart.setMaxFileBytes(500L);
+    multipart.setMaxBytes(1000L);
+    multipart.setMaxParts(7);
+    multipart.setMaxPartHeadersBytes(256);
+    multipart.setMaxMemoryPartBytes(64L);
     var options = new Options();
     options.setMaxRequestBytes(64);
     options.setMaxResponseBytes(128);
@@ -124,6 +156,22 @@ class OptionsTest {
     assertFalse(options.getVirtualThreads());
   }
 
+  @Test
+  void acceptsTheSmallestPositiveResourceLimits() {
+    var options = new Options();
+    options.setMaxRequestBytes(1);
+    options.setMaxResponseBytes(1);
+    options.setMaxRequestHeaderBytes(1);
+    options.setMaxParameters(1);
+    options.setStreamBufferBytes(1);
+
+    assertEquals(1, options.getMaxRequestBytes());
+    assertEquals(1, options.getMaxResponseBytes());
+    assertEquals(1, options.getMaxRequestHeaderBytes());
+    assertEquals(1, options.getMaxParameters());
+    assertEquals(1, options.getStreamBufferBytes());
+  }
+
   @ParameterizedTest
   @MethodSource("invalidMutations")
   void rejectedMutationsPreserveThePreviousValidSettings(Consumer<Options> mutation) {
@@ -132,7 +180,7 @@ class OptionsTest {
     options.setMaxResponseBytes(128);
     options.setStreamBufferBytes(32);
     options.setMaxParameters(4);
-    options.setMultipart(MultipartOptions.defaults());
+    options.setMultipart(new MultipartOptions());
     options.setHost("127.0.0.1");
     options.setPort(9090);
     options.setMaxRequestHeaderBytes(1024);
@@ -148,7 +196,7 @@ class OptionsTest {
     assertEquals(Duration.ofSeconds(11), options.getIdleTimeout());
     assertEquals(Duration.ofSeconds(2), options.getShutdownTimeout());
     assertEquals(4, options.getMaxParameters());
-    assertEquals(MultipartOptions.defaults(), options.getMultipart());
+    assertDefaultMultipart(options.getMultipart());
     assertEquals(32, options.getStreamBufferBytes());
   }
 
@@ -216,7 +264,13 @@ class OptionsTest {
     options.setHttp2(true);
     options.setCompression(true);
     options.setMaxParameters(4);
-    options.setMultipart(new MultipartOptions(2000, 1000, 8, 256, 64, null));
+    var multipart = new MultipartOptions();
+    multipart.setMaxFileBytes(1000L);
+    multipart.setMaxBytes(2000L);
+    multipart.setMaxParts(8);
+    multipart.setMaxPartHeadersBytes(256);
+    multipart.setMaxMemoryPartBytes(64L);
+    options.setMultipart(multipart);
     options.setStreamBufferBytes(32);
     options.setVirtualThreads(true);
     var properties = Introspector.getBeanInfo(Options.class, Object.class).getPropertyDescriptors();
@@ -226,10 +280,56 @@ class OptionsTest {
     }
     reset.accept(options);
     for (var descriptor : properties) {
+      if ("multipart".equals(property) && descriptor.getName().equals(property)) {
+        assertDefaultMultipart(options.getMultipart());
+        assertNotSame(previous.get(property), options.getMultipart());
+        continue;
+      }
+
       assertEquals(
           descriptor.getName().equals(property) ? expected : previous.get(descriptor.getName()),
           descriptor.getReadMethod().invoke(options),
           descriptor.getName());
     }
+  }
+
+  @Test
+  void createsIndependentMultipartDefaultsAndFreshDefaultsAfterReset() {
+    var first = new Options();
+    var second = new Options();
+    var previous = first.getMultipart();
+    previous.setMaxParts(7);
+
+    assertNotSame(previous, second.getMultipart());
+    assertDefaultMultipart(second.getMultipart());
+
+    first.setMultipart(null);
+
+    assertNotSame(previous, first.getMultipart());
+    assertNotSame(second.getMultipart(), first.getMultipart());
+    assertDefaultMultipart(first.getMultipart());
+    assertEquals(7, previous.getMaxParts());
+  }
+
+  @Test
+  void retainsCallerMultipartSettingsForSubsequentConfiguration() {
+    var multipart = new MultipartOptions();
+    var options = new Options();
+    options.setMultipart(multipart);
+
+    assertSame(multipart, options.getMultipart());
+
+    options.getMultipart().setMaxParts(7);
+
+    assertEquals(7, multipart.getMaxParts());
+  }
+
+  private static void assertDefaultMultipart(MultipartOptions options) {
+    assertEquals(10_485_760L, options.getMaxBytes());
+    assertEquals(5_242_880L, options.getMaxFileBytes());
+    assertEquals(100, options.getMaxParts());
+    assertEquals(8192, options.getMaxPartHeadersBytes());
+    assertEquals(16_384L, options.getMaxMemoryPartBytes());
+    assertNull(options.getTemporaryDirectory());
   }
 }

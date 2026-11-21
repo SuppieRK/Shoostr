@@ -69,7 +69,7 @@ public class StreamBufferBenchmark {
     configuredOptions.setMaxResponseBytes(defaults.getMaxResponseBytes());
     configuredOptions.setStreamBufferBytes(GROWTH_BYTES);
     configuredOptions.setMaxParameters(1000);
-    configuredOptions.setMultipart(MultipartOptions.defaults());
+    configuredOptions.setMultipart(new MultipartOptions());
 
     options = defaults;
     growthOptions = configuredOptions;
@@ -304,7 +304,7 @@ public class StreamBufferBenchmark {
       options.setMaxResponseBytes(defaults.getMaxResponseBytes());
       options.setStreamBufferBytes(bufferBytes);
       options.setMaxParameters(1000);
-      options.setMultipart(MultipartOptions.defaults());
+      options.setMultipart(new MultipartOptions());
     }
 
     /**

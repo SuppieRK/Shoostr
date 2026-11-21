@@ -76,7 +76,14 @@ public final class MultipartExample {
    * @return detached serving options
    */
   private static Options options(Path storage) {
-    var multipart = new MultipartOptions(8192, 1024, 8, 1024, 128, storage);
+    var multipart = new MultipartOptions();
+    // Lower the per-file limit first so the smaller aggregate limit remains valid.
+    multipart.setMaxFileBytes(1024L);
+    multipart.setMaxBytes(8192L);
+    multipart.setMaxParts(8);
+    multipart.setMaxPartHeadersBytes(1024);
+    multipart.setMaxMemoryPartBytes(128L);
+    multipart.setTemporaryDirectory(storage);
     var configuredOptions = new Options();
     configuredOptions.setMultipart(multipart);
 

@@ -8,6 +8,7 @@ import io.github.suppierk.shoostr.RequestObservation;
 import io.github.suppierk.shoostr.RequestOutcome;
 import io.github.suppierk.shoostr.RouteExtension;
 import io.github.suppierk.shoostr.http.HttpMethods;
+import io.github.suppierk.shoostr.http.HttpStatusCodes;
 import io.opentelemetry.api.OpenTelemetry;
 import io.opentelemetry.api.trace.Span;
 import io.opentelemetry.api.trace.SpanKind;
@@ -17,6 +18,7 @@ import io.opentelemetry.context.Context;
 import io.opentelemetry.context.Scope;
 import io.opentelemetry.context.propagation.TextMapGetter;
 import java.util.Objects;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Function;
 import org.jspecify.annotations.Nullable;
 
@@ -33,6 +35,7 @@ public final class OpenTelemetryTracing
 
   private final OpenTelemetry telemetry;
   private final Tracer tracer;
+  private final ReentrantLock registrationLock;
 
   /**
    * Uses an explicit provider without installing globals or owning its lifetime.
@@ -42,6 +45,7 @@ public final class OpenTelemetryTracing
   public OpenTelemetryTracing(OpenTelemetry telemetry) {
     this.telemetry = Objects.requireNonNull(telemetry);
     this.tracer = telemetry.getTracer("io.github.suppierk.shoostr");
+    this.registrationLock = new ReentrantLock();
   }
 
   /**
@@ -80,7 +84,7 @@ public final class OpenTelemetryTracing
    * @return observation restoring the worker's exact previous context after attachment
    */
   private static RequestObservation admissionContext() {
-    var captured = Context.current();
+    final var captured = Context.current();
 
     return new RequestObservation() {
       /**
@@ -140,11 +144,17 @@ public final class OpenTelemetryTracing
    * @return this installed provider, which has no mutable scope-local settings
    */
   @Override
-  public synchronized OpenTelemetryTracing configure(
+  public OpenTelemetryTracing configure(
       Lifecycle endpoint, @Nullable OpenTelemetryTracing inherited) {
-    endpoint.observe(this);
+    registrationLock.lock();
 
-    return this;
+    try {
+      endpoint.observe(this);
+
+      return this;
+    } finally {
+      registrationLock.unlock();
+    }
   }
 
   /**
@@ -157,11 +167,12 @@ public final class OpenTelemetryTracing
   @SuppressWarnings(
       "MustBeClosedChecker") // Shoostr closes the returned observation on this thread.
   public RequestObservation apply(Request request) {
-    var parent =
+    final var parent =
         telemetry.getPropagators().getTextMapPropagator().extract(Context.root(), request, HEADERS);
-    var method = HttpMethods.httpMethod(request.method()).map(HttpMethods::value).orElse("_OTHER");
-    var span = startSpan(method, parent);
-    var spanContext = parent.with(span);
+    final var method =
+        HttpMethods.httpMethod(request.method()).map(HttpMethods::value).orElse("_OTHER");
+    final var span = startSpan(method, parent);
+    final var spanContext = parent.with(span);
     Scope scope;
 
     try {
@@ -196,36 +207,57 @@ public final class OpenTelemetryTracing
       @Override
       public void complete(RequestOutcome outcome) {
         try {
-          if (outcome.routePattern() != null) {
-            span.updateName(method + " " + outcome.routePattern());
-            span.setAttribute("http.route", outcome.routePattern());
-          }
-
-          if (outcome.statusCode() != 0) {
-            span.setAttribute("http.response.status_code", outcome.statusCode());
-          }
-
-          if (outcome.transportFailure() != null
-              || outcome.statusCode() >= 500
-              || (outcome.statusCode() == 0 && outcome.applicationFailure() != null)) {
-            span.setStatus(StatusCode.ERROR);
-
-            String errorType;
-            if (outcome.transportFailure() != null) {
-              errorType = "transport";
-            } else if (outcome.statusCode() >= 500) {
-              errorType = Integer.toString(outcome.statusCode());
-            } else {
-              errorType = "application";
-            }
-
-            span.setAttribute("error.type", errorType);
-          }
+          recordTerminalAttributes(span, method, outcome);
         } finally {
           span.end();
         }
       }
     };
+  }
+
+  /**
+   * Records route, response status and any error on the server span at completion.
+   *
+   * @param span server span for the exchange
+   * @param method HTTP method token used in the span name
+   * @param outcome detached terminal request outcome
+   */
+  private static void recordTerminalAttributes(Span span, String method, RequestOutcome outcome) {
+    final var route = outcome.routePattern();
+    if (route != null) {
+      span.updateName(method + " " + route);
+      span.setAttribute("http.route", route);
+    }
+
+    final var status = outcome.statusCode();
+    if (status != 0) {
+      span.setAttribute("http.response.status_code", status);
+    }
+
+    final var errorType = errorType(outcome);
+    if (errorType != null) {
+      span.setStatus(StatusCode.ERROR);
+      span.setAttribute("error.type", errorType);
+    }
+  }
+
+  /**
+   * Classifies terminal errors in transport, server status and application order.
+   *
+   * @param outcome detached terminal request outcome
+   * @return error type, or null when the span status and error tag should be left untouched
+   */
+  private static @Nullable String errorType(RequestOutcome outcome) {
+    if (outcome.transportFailure() != null) {
+      return "transport";
+    }
+
+    final var status = outcome.statusCode();
+    if (status >= HttpStatusCodes.INTERNAL_SERVER_ERROR.value()) {
+      return Integer.toString(status);
+    }
+
+    return status == 0 && outcome.applicationFailure() != null ? "application" : null;
   }
 
   /**
@@ -252,7 +284,13 @@ public final class OpenTelemetryTracing
    * @param callbacks registration-only application callbacks
    */
   @Override
-  public synchronized void install(ApplicationCallbacks callbacks) {
-    callbacks.observe(ignored -> admissionContext());
+  public void install(ApplicationCallbacks callbacks) {
+    registrationLock.lock();
+
+    try {
+      callbacks.observe(ignored -> admissionContext());
+    } finally {
+      registrationLock.unlock();
+    }
   }
 }

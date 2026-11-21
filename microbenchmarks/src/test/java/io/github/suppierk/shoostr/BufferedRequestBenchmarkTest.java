@@ -12,42 +12,35 @@ import org.junit.jupiter.params.provider.MethodSource;
 class BufferedRequestBenchmarkTest {
   private static Stream<Arguments> textCases() {
     return Stream.of("UTF-8", "ISO-8859-1", "UTF-16BE")
-        .flatMap(
-            charset ->
-                Stream.of("ascii", "unicode")
-                    .flatMap(
-                        content -> {
-                          int unitBytes =
-                              "ISO-8859-1".equals(charset)
-                                      || ("UTF-8".equals(charset) && "ascii".equals(content))
-                                  ? 1
-                                  : 2;
-                          String unit = "ascii".equals(content) ? "Z" : "é";
+        .flatMap(charset ->
+            Stream.of("ascii", "unicode")
+                .flatMap(content -> {
+                  int unitBytes =
+                      "ISO-8859-1".equals(charset)
+                              || ("UTF-8".equals(charset) && "ascii".equals(content))
+                          ? 1
+                          : 2;
+                  String unit = "ascii".equals(content) ? "Z" : "é";
 
-                          return Stream.of(0, 1024, 16384, 1048576)
-                              .flatMap(
-                                  size ->
-                                      Stream.of("known", "unknown")
-                                          .map(
-                                              length ->
-                                                  Arguments.of(
-                                                      size,
-                                                      length,
-                                                      charset,
-                                                      content,
-                                                      unit.repeat(size / unitBytes))));
-                        }));
+                  return Stream.of(0, 1024, 16384, 1048576)
+                      .flatMap(size ->
+                          Stream.of("known", "unknown")
+                              .map(length ->
+                                  Arguments.of(
+                                      size,
+                                      length,
+                                      charset,
+                                      content,
+                                      unit.repeat(size / unitBytes))));
+                }));
   }
 
   private static Stream<Arguments> cases() {
     return Stream.of(0, 1024, 16384, 1048576)
-        .flatMap(
-            bytes ->
-                Stream.of("known", "unknown")
-                    .flatMap(
-                        length ->
-                            Stream.of(0, 4, 12)
-                                .map(headers -> Arguments.of(bytes, length, headers))));
+        .flatMap(bytes ->
+            Stream.of("known", "unknown")
+                .flatMap(length ->
+                    Stream.of(0, 4, 12).map(headers -> Arguments.of(bytes, length, headers))));
   }
 
   @ParameterizedTest

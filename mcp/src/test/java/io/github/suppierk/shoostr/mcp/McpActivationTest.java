@@ -15,6 +15,8 @@ import java.nio.charset.StandardCharsets;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 class McpActivationTest {
   private static Mcp<?> transport() {
@@ -113,13 +115,19 @@ class McpActivationTest {
     assertEquals(1, closed.get());
   }
 
-  @Test
-  void nonliteralMountsCloseTheApplicationBeforeItCanListen() throws Exception {
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void nonliteralMountsCloseTheApplicationBeforeItCanListen(boolean withExistingMount)
+      throws Exception {
     var mcp = transport();
     var closed = new AtomicInteger();
     var app = new Shoostr().afterClose(closed::incrementAndGet);
 
     try (Closeable cleanup = app::close) {
+      if (withExistingMount) {
+        app.routes().path("/first", mcp::routes);
+      }
+
       app.routes().path("/{tenant}/mcp", mcp::routes);
 
       assertEquals(

@@ -120,11 +120,10 @@ public class ExtensionRequestBenchmark {
       resources.add(executor);
     }
 
-    app.modifyServer(
-        server -> {
-          connector = new LocalConnector(server);
-          server.addConnector(connector);
-        });
+    app.modifyServer(server -> {
+      connector = new LocalConnector(server);
+      server.addConnector(connector);
+    });
 
     if ("plain".equals(configuration)) {
       registerPlain();

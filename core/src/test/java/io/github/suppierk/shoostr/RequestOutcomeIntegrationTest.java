@@ -102,10 +102,9 @@ class RequestOutcomeIntegrationTest {
       try (Closeable appCleanup1 = app::close;
           var client = HttpClient.newHttpClient()) {
         app.afterRequest(outcomes::add);
-        app.beforeRouteHandler(
-            (ignoredRequest, ignoredResponse) -> {
-              throw new ForbiddenException("private failure details");
-            });
+        app.beforeRouteHandler((ignoredRequest, ignoredResponse) -> {
+          throw new ForbiddenException("private failure details");
+        });
         app.routes()
             .websocket(
                 "/socket/{id}",

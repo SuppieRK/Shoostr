@@ -1,5 +1,9 @@
 package io.github.suppierk.shoostr;
 
+import static io.github.suppierk.shoostr.Locks.getUnderLock;
+import static io.github.suppierk.shoostr.Locks.runUnderLock;
+
+import io.github.suppierk.shoostr.http.HttpCharacters;
 import io.github.suppierk.shoostr.http.HttpHeaders;
 import io.github.suppierk.shoostr.http.HttpMethods;
 import io.github.suppierk.shoostr.http.MediaType;
@@ -33,6 +37,7 @@ import java.util.TreeMap;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.locks.ReentrantLock;
 import org.eclipse.jetty.http.HttpField;
 import org.eclipse.jetty.http.HttpFields;
 import org.eclipse.jetty.http.HttpURI;
@@ -53,10 +58,10 @@ import org.jspecify.annotations.Nullable;
  * after framework finalization. Potentially absent values are returned as non-null JDK Optionals; a
  * present empty string is distinct from absence.
  */
-public sealed class Request permits TypedRequest {
+public sealed class Request {
   // Read small known bodies into their final storage instead of a temporary readNBytes buffer.
   private static final int DIRECT_BODY_READ_LIMIT = 16_384;
-  private static final String CHARSET_PARAMETER = "charset";
+  static final String CHARSET_PARAMETER = "charset";
 
   private final org.eclipse.jetty.server.Request delegate;
   private final Response response;
@@ -66,6 +71,7 @@ public sealed class Request permits TypedRequest {
   private final List<Upload> uploads;
   private final HttpFields nativeHeaders;
   private final Map<String, List<String>> cookies;
+  private final ReentrantLock requestLock;
 
   @SuppressWarnings("java:S3077") // Identity token only; the referenced Thread state is never used.
   private volatile @Nullable Thread owner;
@@ -121,6 +127,7 @@ public sealed class Request permits TypedRequest {
     this.nativeHeaders = delegate.getHeaders().asImmutable();
     this.cookies =
         nativeHeaders.contains(HttpHeaders.COOKIE.value()) ? parseCookies(delegate) : Map.of();
+    this.requestLock = new ReentrantLock();
     boolean multipartRequest = isMultipart();
     this.uploads = multipartRequest ? new ArrayList<>() : List.of();
     this.response =
@@ -131,7 +138,7 @@ public sealed class Request permits TypedRequest {
                 completion,
                 HttpMethods.HEAD.value().equals(delegate.getMethod()),
                 this)
-            : new TypedResponse(
+            : new Response.Typed(
                 nativeResponse,
                 options,
                 completion,
@@ -183,7 +190,7 @@ public sealed class Request permits TypedRequest {
       @Nullable Codec codec) {
     return codec == null
         ? new Request(delegate, nativeResponse, options, completion, null)
-        : new TypedRequest(delegate, nativeResponse, options, completion, codec);
+        : new Typed(delegate, nativeResponse, options, completion, codec);
   }
 
   /**
@@ -197,8 +204,8 @@ public sealed class Request permits TypedRequest {
       return Map.of();
     }
 
-    Map<String, List<String>> fields = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
-    for (var field : nativeHeaders) {
+    final var fields = new TreeMap<String, List<String>>(String.CASE_INSENSITIVE_ORDER);
+    for (final var field : nativeHeaders) {
       fields.computeIfAbsent(field.getName(), ignored -> new ArrayList<>()).add(field.getValue());
     }
     fields.replaceAll((ignoredString, values) -> List.copyOf(values));
@@ -215,13 +222,13 @@ public sealed class Request permits TypedRequest {
    *     malformed input
    */
   private static Map<String, List<String>> parseCookies(org.eclipse.jetty.server.Request delegate) {
-    var nativeCookies = org.eclipse.jetty.server.Request.getCookies(delegate);
+    final var nativeCookies = org.eclipse.jetty.server.Request.getCookies(delegate);
     if (nativeCookies.isEmpty()) {
       return Map.of();
     }
 
-    var parsed = new LinkedHashMap<String, List<String>>();
-    for (var cookie : nativeCookies) {
+    final var parsed = new LinkedHashMap<String, List<String>>();
+    for (final var cookie : nativeCookies) {
       parsed.computeIfAbsent(cookie.getName(), ignored -> new ArrayList<>()).add(cookie.getValue());
     }
     parsed.replaceAll((ignoredString, values) -> List.copyOf(values));
@@ -315,7 +322,7 @@ public sealed class Request permits TypedRequest {
 
   /** Releases access before publishing the exchange to a worker. */
   void releaseOwnership() {
-    check();
+    checkThreadOwner();
     owner = null;
   }
 
@@ -356,7 +363,7 @@ public sealed class Request permits TypedRequest {
    * @return the HTTP method while this handler is active
    */
   public String method() {
-    check();
+    checkThreadOwner();
 
     return delegate.getMethod();
   }
@@ -367,28 +374,29 @@ public sealed class Request permits TypedRequest {
    * @return the session, or empty when absent or session support is disabled
    */
   public Optional<Session> getSession() {
-    check();
+    checkThreadOwner();
 
     return Optional.ofNullable(delegate.getSession(false));
   }
 
   /**
-   * Returns the current Jetty session or creates one before the response commits. An existing
+   * Returns the current Jetty session. If the session is absent or was invalidated, creates a new
+   * session with a fresh identifier and no attributes before the response commits. An existing
    * session remains accessible after commitment.
    *
    * @return the current or newly created session
-   * @throws IllegalStateException if session creation is unavailable, or an absent session is
-   *     requested after response commitment
+   * @throws IllegalStateException if session creation is unavailable or required after response
+   *     commitment
    */
   public Session getOrCreateSession() {
-    check();
-    var existing = delegate.getSession(false);
+    checkThreadOwner();
+    final var existing = delegate.getSession(false);
     if (existing != null) {
       return existing;
     }
 
     response.checkCookieMutation();
-    var created = delegate.getSession(true);
+    final var created = delegate.getSession(true);
     if (created == null) {
       throw new IllegalStateException("Session creation is unavailable for this request");
     }
@@ -404,8 +412,8 @@ public sealed class Request permits TypedRequest {
    * @throws IllegalStateException if no session exists
    */
   public String renewSessionId() {
-    check();
-    var session = delegate.getSession(false);
+    checkThreadOwner();
+    final var session = delegate.getSession(false);
     if (session == null) {
       throw new IllegalStateException("No session exists to renew");
     }
@@ -422,7 +430,7 @@ public sealed class Request permits TypedRequest {
    *     the raw URL path
    */
   public String path() {
-    check();
+    checkThreadOwner();
 
     return org.eclipse.jetty.server.Request.getPathInContext(delegate);
   }
@@ -434,7 +442,7 @@ public sealed class Request permits TypedRequest {
    * @return URL assembled by the HTTP transport
    */
   public String url() {
-    check();
+    checkThreadOwner();
 
     return HttpURI.build(delegate.getHttpURI()).query(null).fragment(null).asString();
   }
@@ -445,7 +453,7 @@ public sealed class Request permits TypedRequest {
    * @return request URL including the raw query when present
    */
   public String fullUrl() {
-    check();
+    checkThreadOwner();
 
     return delegate.getHttpURI().asString();
   }
@@ -457,7 +465,7 @@ public sealed class Request permits TypedRequest {
    * @return scheme supplied by the transport, or empty when unavailable
    */
   public Optional<String> scheme() {
-    check();
+    checkThreadOwner();
 
     return Optional.ofNullable(delegate.getHttpURI().getScheme());
   }
@@ -469,7 +477,7 @@ public sealed class Request permits TypedRequest {
    * @return authority represented by the transport URI, or empty when unavailable
    */
   public Optional<String> authority() {
-    check();
+    checkThreadOwner();
 
     return Optional.ofNullable(delegate.getHttpURI().getAuthority());
   }
@@ -480,7 +488,7 @@ public sealed class Request permits TypedRequest {
    * @return logical host, or empty when unavailable; IPv6 literals retain brackets
    */
   public Optional<String> serverName() {
-    check();
+    checkThreadOwner();
 
     return Optional.ofNullable(org.eclipse.jetty.server.Request.getServerName(delegate));
   }
@@ -492,7 +500,7 @@ public sealed class Request permits TypedRequest {
    * @return logical port, or -1 when unavailable
    */
   public int serverPort() {
-    check();
+    checkThreadOwner();
 
     return org.eclipse.jetty.server.Request.getServerPort(delegate);
   }
@@ -503,7 +511,7 @@ public sealed class Request permits TypedRequest {
    * @return protocol spelling, for example HTTP/1.1
    */
   public String protocol() {
-    check();
+    checkThreadOwner();
 
     return delegate.getConnectionMetaData().getHttpVersion().asString();
   }
@@ -515,7 +523,7 @@ public sealed class Request permits TypedRequest {
    * @return whether the direct transport endpoint is secure
    */
   public boolean isSecure() {
-    check();
+    checkThreadOwner();
 
     return delegate.getConnectionMetaData().getConnection().getEndPoint().isSecure();
   }
@@ -529,7 +537,7 @@ public sealed class Request permits TypedRequest {
    * @throws IllegalStateException if accessed outside the request thread or lifetime
    */
   public boolean isEffectivelySecure() {
-    check();
+    checkThreadOwner();
 
     return forwardedProtocol == null ? isSecure() : "https".equals(forwardedProtocol);
   }
@@ -541,7 +549,7 @@ public sealed class Request permits TypedRequest {
    * @return direct remote socket address, or empty if the transport does not expose one
    */
   public Optional<SocketAddress> remoteAddress() {
-    check();
+    checkThreadOwner();
 
     return Optional.ofNullable(
         delegate.getConnectionMetaData().getConnection().getEndPoint().getRemoteSocketAddress());
@@ -553,7 +561,7 @@ public sealed class Request permits TypedRequest {
    * @return direct local socket address, or empty if the transport does not expose one
    */
   public Optional<SocketAddress> localAddress() {
-    check();
+    checkThreadOwner();
 
     return Optional.ofNullable(
         delegate.getConnectionMetaData().getConnection().getEndPoint().getLocalSocketAddress());
@@ -565,7 +573,7 @@ public sealed class Request permits TypedRequest {
    * @return false when forwarding is disabled or unavailable
    */
   public boolean isForwarded() {
-    check();
+    checkThreadOwner();
 
     return effectiveUrl != null;
   }
@@ -577,7 +585,7 @@ public sealed class Request permits TypedRequest {
    * @return full URL suitable for raw metadata inspection
    */
   public String effectiveUrl() {
-    check();
+    checkThreadOwner();
 
     return effectiveUrl == null ? fullUrl() : effectiveUrl;
   }
@@ -601,7 +609,7 @@ public sealed class Request permits TypedRequest {
    * @return IP socket address, or empty when unavailable
    */
   public Optional<InetSocketAddress> clientAddress() {
-    check();
+    checkThreadOwner();
     if (effectiveUrl != null) {
       return Optional.ofNullable(clientAddress);
     }
@@ -618,7 +626,7 @@ public sealed class Request permits TypedRequest {
    * @throws IllegalStateException if accessed outside the handler thread or lifetime
    */
   public Optional<String> routePattern() {
-    check();
+    checkThreadOwner();
 
     return endpoint == null ? Optional.empty() : Optional.of(endpoint.routePattern());
   }
@@ -633,7 +641,7 @@ public sealed class Request permits TypedRequest {
    * @throws IllegalStateException if accessed outside the handler's thread or lifetime
    */
   public Optional<String> pathParam(String name) {
-    check();
+    checkThreadOwner();
     Objects.requireNonNull(name);
     if (endpoint == null || !endpoint.parameters().containsKey(name)) {
       return Optional.empty();
@@ -649,14 +657,14 @@ public sealed class Request permits TypedRequest {
    * @return decoded names and values, empty for a literal route or before route selection
    */
   public Map<String, String> pathParamMap() {
-    check();
+    checkThreadOwner();
     if (endpoint == null || endpoint.parameters().isEmpty()) {
       return Map.of();
     }
 
-    var parameters = new LinkedHashMap<String, String>();
-    var rawPath = path();
-    for (var name : endpoint.parameters().keySet()) {
+    final var parameters = new LinkedHashMap<String, String>();
+    final var rawPath = path();
+    for (final var name : endpoint.parameters().keySet()) {
       parameters.put(name, endpoint.parameter(rawPath, name));
     }
     return Collections.unmodifiableMap(parameters);
@@ -686,7 +694,7 @@ public sealed class Request permits TypedRequest {
    * @return raw query without the question mark, or empty when absent
    */
   public Optional<String> queryString() {
-    check();
+    checkThreadOwner();
 
     return Optional.ofNullable(delegate.getHttpURI().getQuery());
   }
@@ -721,9 +729,9 @@ public sealed class Request permits TypedRequest {
    * @throws BadRequestException if encoding is malformed or the pair limit is exceeded
    */
   public Map<String, List<String>> queryParamMap() {
-    check();
+    checkThreadOwner();
     if (query == null) {
-      var raw = delegate.getHttpURI().getQuery();
+      final var raw = delegate.getHttpURI().getQuery();
       query = parameters(raw);
     }
 
@@ -738,7 +746,7 @@ public sealed class Request permits TypedRequest {
    * @throws IOException if input fails
    */
   public Optional<String> formParam(String name) throws IOException {
-    var values = formParams(name);
+    final var values = formParams(name);
 
     return values.isEmpty() ? Optional.empty() : Optional.of(values.getFirst());
   }
@@ -767,7 +775,7 @@ public sealed class Request permits TypedRequest {
    * @throws UnsupportedMediaTypeException if the media type or charset is unsupported
    */
   public Map<String, List<String>> formParamMap() throws IOException {
-    check();
+    checkThreadOwner();
     if (form == null) {
       if (isMultipart()) {
         form = multipartFields();
@@ -797,7 +805,7 @@ public sealed class Request permits TypedRequest {
    * @return the field value, or empty when absent
    */
   public Optional<String> header(String name) {
-    check();
+    checkThreadOwner();
 
     return Optional.ofNullable(nativeHeaders.get(Objects.requireNonNull(name)));
   }
@@ -809,9 +817,9 @@ public sealed class Request permits TypedRequest {
    * @return immutable raw field values in arrival order, or an empty list
    */
   public List<String> headers(String name) {
-    check();
+    checkThreadOwner();
     Objects.requireNonNull(name);
-    var snapshot = headers;
+    final var snapshot = headers;
 
     return snapshot == null
         ? List.copyOf(nativeHeaders.getValuesList(name))
@@ -825,7 +833,7 @@ public sealed class Request permits TypedRequest {
    * @return immutable offered protocol names in client order
    */
   public List<String> webSocketProtocols() {
-    check();
+    checkThreadOwner();
 
     return webSocketProtocols;
   }
@@ -836,7 +844,7 @@ public sealed class Request permits TypedRequest {
    * @param protocols client-offered subprotocols
    */
   void webSocketProtocols(List<String> protocols) {
-    check();
+    checkThreadOwner();
     webSocketProtocols = List.copyOf(protocols);
   }
 
@@ -848,8 +856,8 @@ public sealed class Request permits TypedRequest {
    * @return immutable names and raw value lists
    */
   public Map<String, List<String>> headerMap() {
-    check();
-    var snapshot = headers;
+    checkThreadOwner();
+    final var snapshot = headers;
 
     return snapshot == null ? captureHeaderMap() : snapshot;
   }
@@ -859,14 +867,19 @@ public sealed class Request permits TypedRequest {
    *
    * @return the single cached header map
    */
-  private synchronized Map<String, List<String>> captureHeaderMap() {
-    var snapshot = headers;
-    if (snapshot == null) {
-      snapshot = parseHeaders(nativeHeaders);
-      headers = snapshot;
-    }
+  private Map<String, List<String>> captureHeaderMap() {
+    return Objects.requireNonNull(
+        getUnderLock(
+            requestLock,
+            () -> {
+              var snapshot = headers;
+              if (snapshot == null) {
+                snapshot = parseHeaders(nativeHeaders);
+                headers = snapshot;
+              }
 
-    return snapshot;
+              return snapshot;
+            }));
   }
 
   /**
@@ -876,7 +889,7 @@ public sealed class Request permits TypedRequest {
    * @return first value, or empty when absent
    */
   public Optional<String> cookie(String name) {
-    var values = cookies(name);
+    final var values = cookies(name);
 
     return values.isEmpty() ? Optional.empty() : Optional.of(values.getFirst());
   }
@@ -889,7 +902,7 @@ public sealed class Request permits TypedRequest {
    * @return immutable values, empty when absent
    */
   public List<String> cookies(String name) {
-    check();
+    checkThreadOwner();
 
     return cookies.getOrDefault(Objects.requireNonNull(name), List.of());
   }
@@ -901,7 +914,7 @@ public sealed class Request permits TypedRequest {
    * @return deeply immutable, case-sensitive map with values in arrival order
    */
   public Map<String, List<String>> cookieMap() {
-    check();
+    checkThreadOwner();
 
     return cookies;
   }
@@ -913,7 +926,7 @@ public sealed class Request permits TypedRequest {
    * @return application principal, or empty when none was assigned
    */
   public Optional<Principal> principal() {
-    check();
+    checkThreadOwner();
 
     return Optional.ofNullable(principal);
   }
@@ -926,7 +939,7 @@ public sealed class Request permits TypedRequest {
    * @return this request
    */
   public Request principal(@Nullable Principal value) {
-    check();
+    checkThreadOwner();
     principal = value;
     return this;
   }
@@ -938,7 +951,7 @@ public sealed class Request permits TypedRequest {
    * @return stored value, or empty when absent
    */
   public Optional<Object> attribute(String name) {
-    check();
+    checkThreadOwner();
     Objects.requireNonNull(name);
 
     return attributes == null ? Optional.empty() : Optional.ofNullable(attributes.get(name));
@@ -953,7 +966,7 @@ public sealed class Request permits TypedRequest {
    * @return this request
    */
   public Request attribute(String name, @Nullable Object value) {
-    check();
+    checkThreadOwner();
     Objects.requireNonNull(name);
     if (value == null) {
       if (attributes != null) {
@@ -977,7 +990,7 @@ public sealed class Request permits TypedRequest {
    * @return immutable key/value bindings
    */
   public Map<String, Object> attributeMap() {
-    check();
+    checkThreadOwner();
 
     return attributes == null ? Map.of() : Map.copyOf(attributes);
   }
@@ -1006,10 +1019,8 @@ public sealed class Request permits TypedRequest {
    */
   public String bodyText(Charset charset) throws IOException {
     Objects.requireNonNull(charset);
-    // Only these JDK instances can read the private cache; custom decoders receive a copy.
-    boolean standard = isStandardCharset(charset);
 
-    return new String(standard ? bufferedBody() : bodyBytes(), charset);
+    return new String(isStandardCharset(charset) ? bufferedBody() : bodyBytes(), charset);
   }
 
   /**
@@ -1020,7 +1031,7 @@ public sealed class Request permits TypedRequest {
    * @throws ContentTooLargeException if the body exceeds the configured limit
    */
   public byte[] bodyBytes() throws IOException {
-    var bytes = bufferedBody();
+    final var bytes = bufferedBody();
 
     return Arrays.copyOf(bytes, bytes.length);
   }
@@ -1033,7 +1044,7 @@ public sealed class Request permits TypedRequest {
    * @throws ContentTooLargeException if the cached or incoming body exceeds its byte limit
    */
   private byte[] bufferedBody() throws IOException {
-    check();
+    checkThreadOwner();
     claim(BodyRepresentation.BUFFERED);
     if (body == null) {
       body = readBody();
@@ -1057,14 +1068,14 @@ public sealed class Request permits TypedRequest {
    * @throws BadRequestException if the body exceeds its declared length
    */
   private byte[] readBody() throws IOException {
-    long declaredLength = delegate.getLength();
+    final var declaredLength = delegate.getLength();
     if (declaredLength > limit) {
       throw new ContentTooLargeException();
     }
 
-    try (var source = bufferedInput()) {
+    try (final var source = bufferedInput()) {
       if (declaredLength >= 0 && declaredLength <= Math.min(limit, DIRECT_BODY_READ_LIMIT)) {
-        var exact = new byte[(int) declaredLength];
+        final var exact = new byte[(int) declaredLength];
         if (source.readNBytes(exact, 0, exact.length) != exact.length) {
           throw new EOFException("Request body ended before its declared length");
         }
@@ -1076,7 +1087,7 @@ public sealed class Request permits TypedRequest {
         return exact;
       }
 
-      var result = source.readNBytes(limit + 1);
+      final var result = source.readNBytes(limit + 1);
       if (result.length > limit) {
         // Retain rejection before closing so cleanup cannot replace it or permit a repeated read.
         body = result;
@@ -1120,7 +1131,7 @@ public sealed class Request permits TypedRequest {
    * @throws ContentTooLargeException if consumed input exceeds the configured limit
    */
   public InputStream input() {
-    check();
+    checkThreadOwner();
     claim(BodyRepresentation.STREAMING);
     if (input == null) {
       input = boundedInput();
@@ -1141,8 +1152,8 @@ public sealed class Request permits TypedRequest {
       /** Reads one byte while enforcing the configured consumed-byte limit. */
       @Override
       public int read() throws IOException {
-        check();
-        var value = super.read();
+        checkThreadOwner();
+        final var value = super.read();
         if (value >= 0) {
           count(1);
         }
@@ -1155,13 +1166,13 @@ public sealed class Request permits TypedRequest {
        */
       @Override
       public int read(byte[] value, int offset, int length) throws IOException {
-        check();
+        checkThreadOwner();
         Objects.checkFromIndexSize(offset, length, value.length);
         if (length == 0) {
           return 0;
         }
 
-        var read = super.read(value, offset, length);
+        final var read = super.read(value, offset, length);
         if (read > 0) {
           count(read);
         }
@@ -1177,9 +1188,9 @@ public sealed class Request permits TypedRequest {
         }
 
         var skipped = 0L;
-        var buffer = new byte[(int) Math.min(amount, 8192)];
+        final var buffer = new byte[(int) Math.min(amount, 8192)];
         while (skipped < amount) {
-          var read = read(buffer, 0, (int) Math.min(buffer.length, amount - skipped));
+          final var read = read(buffer, 0, (int) Math.min(buffer.length, amount - skipped));
           if (read < 0) {
             break;
           }
@@ -1220,7 +1231,7 @@ public sealed class Request permits TypedRequest {
    * @throws IOException if multipart input cannot be parsed
    */
   public Optional<Upload> file(String name) throws IOException {
-    var selected = files(name);
+    final var selected = files(name);
 
     return selected.isEmpty() ? Optional.empty() : Optional.of(selected.getFirst());
   }
@@ -1245,7 +1256,7 @@ public sealed class Request permits TypedRequest {
    * @throws IOException if multipart input cannot be parsed
    */
   public Map<String, List<Upload>> files() throws IOException {
-    check();
+    checkThreadOwner();
     if (files == null) {
       if (!isMultipart()) {
         files = Map.of();
@@ -1253,10 +1264,10 @@ public sealed class Request permits TypedRequest {
         return files;
       }
 
-      var grouped = new LinkedHashMap<String, List<Upload>>();
-      for (var part : parts()) {
+      final var grouped = new LinkedHashMap<String, List<Upload>>();
+      for (final var part : parts()) {
         if (part.getFileName() != null) {
-          var upload = new Upload(part, this::check);
+          final var upload = new Upload(part, this::checkThreadOwner);
           uploads.add(upload);
           grouped.computeIfAbsent(part.getName(), ignored -> new ArrayList<>()).add(upload);
         }
@@ -1274,10 +1285,10 @@ public sealed class Request permits TypedRequest {
    * @return whether the Content-Type is multipart/form-data
    */
   private boolean isMultipart() {
-    var contentType = header(HttpHeaders.CONTENT_TYPE.value()).orElse("");
-    var separator = contentType.indexOf(';');
+    final var contentType = header(HttpHeaders.CONTENT_TYPE.value()).orElse("");
+    final var separator = contentType.indexOf(HttpCharacters.SEMICOLON_SIGN);
     // Classification must not hide invalid parameters from the multipart parser.
-    var type = separator < 0 ? contentType : contentType.substring(0, separator);
+    final var type = separator < 0 ? contentType : contentType.substring(0, separator);
 
     return "multipart/form-data".equalsIgnoreCase(type.trim());
   }
@@ -1289,8 +1300,8 @@ public sealed class Request permits TypedRequest {
    * @throws IOException if multipart input cannot be parsed
    */
   private Map<String, List<String>> multipartFields() throws IOException {
-    var fields = new LinkedHashMap<String, List<String>>();
-    for (var part : parts()) {
+    final var fields = new LinkedHashMap<String, List<String>>();
+    for (final var part : parts()) {
       if (part.getFileName() == null) {
         checkMultipartFieldType(part);
         fields
@@ -1314,7 +1325,7 @@ public sealed class Request permits TypedRequest {
   private Iterable<MultiPart.Part> parts() throws IOException {
     claim(BodyRepresentation.MULTIPART);
     if (multipartPublished == null) {
-      var parsed = new CompletableFuture<MultiPartFormData.Parts>();
+      final var parsed = new CompletableFuture<MultiPartFormData.Parts>();
       multipartPublished = parsed.thenApply(this::publishMultipart);
 
       try {
@@ -1335,13 +1346,15 @@ public sealed class Request permits TypedRequest {
     }
 
     try {
-      var parts = multipartPublished.get();
-      synchronized (this) {
-        if (multipartClosed) {
-          parts.close();
-          throw new IOException("Multipart request completed before parsing finished");
-        }
-      }
+      final var parts = multipartPublished.get();
+      runUnderLock(
+          requestLock,
+          () -> {
+            if (multipartClosed) {
+              parts.close();
+              throw new IOException("Multipart request completed before parsing finished");
+            }
+          });
 
       return parts;
     } catch (InterruptedException failure) {
@@ -1359,21 +1372,25 @@ public sealed class Request permits TypedRequest {
    * @return the validated parser output
    * @throws CompletionException if multipart metadata is invalid
    */
-  private synchronized MultiPartFormData.Parts publishMultipart(MultiPartFormData.Parts parts) {
-    if (multipartClosed) {
-      parts.close();
+  private MultiPartFormData.Parts publishMultipart(MultiPartFormData.Parts parts) {
+    runUnderLock(
+        requestLock,
+        () -> {
+          if (multipartClosed) {
+            parts.close();
 
-      return parts;
-    }
+            return;
+          }
 
-    try {
-      checkMultipartParts(parts);
-    } catch (RuntimeException failure) {
-      parts.close();
-      throw new CompletionException(failure);
-    }
+          try {
+            checkMultipartParts(parts);
+          } catch (RuntimeException failure) {
+            parts.close();
+            throw new CompletionException(failure);
+          }
 
-    multipart = parts;
+          multipart = parts;
+        });
 
     return parts;
   }
@@ -1386,8 +1403,8 @@ public sealed class Request permits TypedRequest {
    */
   private void checkMultipartParts(Iterable<MultiPart.Part> parts) {
     for (var part : parts) {
-      var parameters = new TreeMap<String, String>(String.CASE_INSENSITIVE_ORDER);
-      var disposition =
+      final var parameters = new TreeMap<String, String>(String.CASE_INSENSITIVE_ORDER);
+      final var disposition =
           HttpField.getValueParameters(
               part.getHeaders().get(HttpHeaders.CONTENT_DISPOSITION.value()), parameters);
       if (!"form-data".equalsIgnoreCase(disposition)
@@ -1405,8 +1422,8 @@ public sealed class Request permits TypedRequest {
    * @throws UnsupportedMediaTypeException if the media type or charset is unsupported
    */
   private void checkMultipartFieldType(MultiPart.Part part) {
-    var parameters = new TreeMap<String, String>(String.CASE_INSENSITIVE_ORDER);
-    var type =
+    final var parameters = new TreeMap<String, String>(String.CASE_INSENSITIVE_ORDER);
+    final var type =
         HttpField.getValueParameters(
             part.getHeaders().get(HttpHeaders.CONTENT_TYPE.value()), parameters);
     if (type != null && !MediaType.TEXT_PLAIN.value().equalsIgnoreCase(type)) {
@@ -1430,11 +1447,11 @@ public sealed class Request permits TypedRequest {
    * @return bounded Jetty parser configuration
    */
   private MultiPartConfig multipartConfig() {
-    var builder = multipartConfigBuilder();
+    final var builder = multipartConfigBuilder();
     builder.location(
-        multipartOptions.temporaryDirectory() == null
+        multipartOptions.getTemporaryDirectory() == null
             ? Path.of(System.getProperty("java.io.tmpdir"))
-            : multipartOptions.temporaryDirectory());
+            : multipartOptions.getTemporaryDirectory());
 
     return builder.build();
   }
@@ -1446,25 +1463,27 @@ public sealed class Request permits TypedRequest {
    */
   private MultiPartConfig.Builder multipartConfigBuilder() {
     return new MultiPartConfig.Builder()
-        .maxSize(multipartOptions.maxBytes())
-        .maxPartSize(multipartOptions.maxFileBytes())
-        .maxParts(multipartOptions.maxParts())
-        .maxHeadersSize(multipartOptions.maxPartHeadersBytes())
-        .maxMemoryPartSize(multipartOptions.maxMemoryPartBytes());
+        .maxSize(multipartOptions.getMaxBytes())
+        .maxPartSize(multipartOptions.getMaxFileBytes())
+        .maxParts(multipartOptions.getMaxParts())
+        .maxHeadersSize(multipartOptions.getMaxPartHeadersBytes())
+        .maxMemoryPartSize(multipartOptions.getMaxMemoryPartBytes());
   }
 
   /** Closes multipart temporary resources after Jetty completes the request exchange. */
   private void closeMultipart() {
-    synchronized (this) {
-      multipartClosed = true;
-      for (var upload : uploads) {
-        upload.close();
-      }
+    runUnderLock(
+        requestLock,
+        () -> {
+          multipartClosed = true;
+          for (final var upload : uploads) {
+            upload.close();
+          }
 
-      if (multipart != null) {
-        multipart.close();
-      }
-    }
+          if (multipart != null) {
+            multipart.close();
+          }
+        });
   }
 
   /**
@@ -1473,7 +1492,7 @@ public sealed class Request permits TypedRequest {
    * @return whether routing selected a managed or native WebSocket handshake
    */
   boolean webSocket() {
-    check();
+    checkThreadOwner();
 
     return endpoint != null && endpoint.websocketFactory() != null;
   }
@@ -1484,7 +1503,7 @@ public sealed class Request permits TypedRequest {
    * @return buffered-body or multipart aggregate limit
    */
   long maxBodyBytes() {
-    return isMultipart() ? multipartOptions.maxBytes() : limit;
+    return isMultipart() ? multipartOptions.getMaxBytes() : limit;
   }
 
   /** Revokes access and releases local application state without closing transport-owned input. */
@@ -1515,10 +1534,10 @@ public sealed class Request permits TypedRequest {
    * @throws UnsupportedMediaTypeException if the representation cannot be decoded as a form
    */
   private void checkFormType() {
-    var parameters = new TreeMap<String, String>(String.CASE_INSENSITIVE_ORDER);
+    final var parameters = new TreeMap<String, String>(String.CASE_INSENSITIVE_ORDER);
 
     try {
-      var type =
+      final var type =
           HttpField.getValueParameters(
               header(HttpHeaders.CONTENT_TYPE.value()).orElse(null), parameters);
       if (!MediaType.APPLICATION_FORM_URLENCODED.value().equalsIgnoreCase(type)) {
@@ -1526,7 +1545,7 @@ public sealed class Request permits TypedRequest {
       }
 
       if (parameters.containsKey(CHARSET_PARAMETER)) {
-        var charset = parameters.get(CHARSET_PARAMETER);
+        final var charset = parameters.get(CHARSET_PARAMETER);
         if (charset == null || !StandardCharsets.UTF_8.equals(Charset.forName(charset))) {
           throw new UnsupportedMediaTypeException();
         }
@@ -1544,7 +1563,7 @@ public sealed class Request permits TypedRequest {
    * @throws BadRequestException if decoding fails or the pair limit is exceeded
    */
   private Map<String, List<String>> parameters(@Nullable String encoded) {
-    var parsed = new LinkedHashMap<String, List<String>>();
+    final var parsed = new LinkedHashMap<String, List<String>>();
     if (encoded != null) {
       try {
         UrlEncoded.decodeTo(
@@ -1567,8 +1586,8 @@ public sealed class Request permits TypedRequest {
    *
    * @throws IllegalStateException if accessed from another thread or after handler completion
    */
-  final void check() {
-    if (Thread.currentThread() != owner || finished) {
+  final void checkThreadOwner() {
+    if (!ownedByCurrentThread() || finished) {
       throw new IllegalStateException("Request is only available inside its handler");
     }
   }
@@ -1579,5 +1598,62 @@ public sealed class Request permits TypedRequest {
     BUFFERED,
     STREAMING,
     MULTIPART
+  }
+
+  /**
+   * Codec-enabled request inheriting ordinary bytes, text, parameters and handler-scoped ownership.
+   */
+  public static final class Typed extends Request {
+    private final Codec codec;
+
+    /**
+     * Creates the actual exchange and its typed response; no independent request state is copied.
+     *
+     * @param delegate native input
+     * @param response native output
+     * @param options exchange limits
+     * @param completion transport completion
+     * @param codec shared application conversion
+     */
+    Typed(
+        org.eclipse.jetty.server.Request delegate,
+        org.eclipse.jetty.server.Response response,
+        Options options,
+        Callback completion,
+        Codec codec) {
+      super(delegate, response, options, completion, Objects.requireNonNull(codec));
+      this.codec = codec;
+    }
+
+    /**
+     * Decodes the bounded body using the configured codec. Buffered, streaming and multipart access
+     * retain their existing mutual exclusion. Each call decodes a fresh defensive copy.
+     *
+     * @param type concrete target class
+     * @param <T> decoded type
+     * @return nonnull decoded value
+     * @throws Exception if bounded reading or conversion fails, without changing the failure type
+     */
+    @SuppressWarnings("java:S112") // User codecs share Handler's checked exception contract.
+    public <T> T body(Class<T> type) throws Exception {
+      checkThreadOwner();
+      Objects.requireNonNull(type);
+
+      return Objects.requireNonNull(codec.read(bodyBytes(), type), "Codec returned a null value");
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public Typed principal(@Nullable Principal value) {
+      super.principal(value);
+      return this;
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public Typed attribute(String name, @Nullable Object value) {
+      super.attribute(name, value);
+      return this;
+    }
   }
 }

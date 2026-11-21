@@ -153,10 +153,9 @@ class ExtensionActivationTest {
               "/private",
               (request, response) -> response.text(request.principal().orElseThrow().getName()),
               lifecycle ->
-                  lifecycle.beforeRouteHandler(
-                      (request, response) ->
-                          response.setHeader(
-                              "X-Admitted", request.principal().orElseThrow().getName())))
+                  lifecycle.beforeRouteHandler((request, response) ->
+                      response.setHeader(
+                          "X-Admitted", request.principal().orElseThrow().getName())))
           .get(
               "/public",
               (request, response) -> response.text(Boolean.toString(request.principal().isEmpty())),

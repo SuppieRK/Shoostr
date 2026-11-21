@@ -62,7 +62,7 @@ class BufferedRequestBodyTest {
     options.setMaxResponseBytes(defaults.getMaxResponseBytes());
     options.setStreamBufferBytes(defaults.getStreamBufferBytes());
     options.setMaxParameters(1000);
-    options.setMultipart(MultipartOptions.defaults());
+    options.setMultipart(new MultipartOptions());
 
     return Request.create(delegate, sink, options, Callback.NOOP);
   }

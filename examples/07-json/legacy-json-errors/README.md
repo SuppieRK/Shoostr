@@ -65,7 +65,7 @@ No application-model scanning, serialization annotations or schema inference occ
 The optional codec makes typed methods available while retaining ordinary byte/text
 methods. It does not infer Content-Type or perform HTTP negotiation. Only malformed
 JSON/input becomes400; unexpected encoding/I/O failures remain server errors.
-`Routes.exception`/`TypedRoutes.exception` are core request handling, not extension
+`Routes.exception`/`Routes.Typed.exception` are core request handling, not extension
 configuration. Unmatched router404s are separate from matched application exceptions.
 
 Verify through live HTTP with `./gradlew :json-errors-example:test`.

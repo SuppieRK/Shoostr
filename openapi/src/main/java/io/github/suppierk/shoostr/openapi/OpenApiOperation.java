@@ -43,13 +43,7 @@ public final class OpenApiOperation {
    * @return this configuration
    */
   public OpenApiOperation summary(String value) {
-    synchronized (owner) {
-      owner.requireMutable();
-
-      operation.setSummary(OpenApi.text(value));
-
-      return this;
-    }
+    return mutate(() -> operation.setSummary(OpenApi.text(value)));
   }
 
   /**
@@ -59,13 +53,7 @@ public final class OpenApiOperation {
    * @return this configuration
    */
   public OpenApiOperation description(String value) {
-    synchronized (owner) {
-      owner.requireMutable();
-
-      operation.setDescription(OpenApi.text(value));
-
-      return this;
-    }
+    return mutate(() -> operation.setDescription(OpenApi.text(value)));
   }
 
   /**
@@ -75,13 +63,7 @@ public final class OpenApiOperation {
    * @return this configuration
    */
   public OpenApiOperation operationId(String value) {
-    synchronized (owner) {
-      owner.requireMutable();
-
-      operation.setOperationId(OpenApi.text(value));
-
-      return this;
-    }
+    return mutate(() -> operation.setOperationId(OpenApi.text(value)));
   }
 
   /**
@@ -91,20 +73,13 @@ public final class OpenApiOperation {
    * @return this configuration
    */
   public OpenApiOperation tag(String value) {
-    synchronized (owner) {
-      owner.requireMutable();
-
-      var tag = OpenApi.text(value);
-      if (operation.getTags() == null) {
-        operation.setTags(new ArrayList<>());
-      }
-
-      if (!operation.getTags().contains(tag)) {
+    return mutate(() -> {
+      final var tag = OpenApi.text(value);
+      final var tags = operation.getTags();
+      if (tags == null || !tags.contains(tag)) {
         operation.addTagsItem(tag);
       }
-
-      return this;
-    }
+    });
   }
 
   /**
@@ -136,13 +111,7 @@ public final class OpenApiOperation {
    */
   public OpenApiOperation queryParameter(
       String name, String description, Schema<?> schema, boolean required) {
-    return parameter(
-        new Parameter()
-            .name(OpenApi.text(name))
-            .in("query")
-            .description(OpenApi.text(description))
-            .schema(Objects.requireNonNull(schema))
-            .required(required));
+    return parameterAt("query", name, description, schema, required);
   }
 
   /**
@@ -156,10 +125,25 @@ public final class OpenApiOperation {
    */
   public OpenApiOperation headerParameter(
       String name, String description, Schema<?> schema, boolean required) {
+    return parameterAt("header", name, description, schema, required);
+  }
+
+  /**
+   * Builds a query or header parameter before registering the completed model.
+   *
+   * @param location parameter location
+   * @param name parameter name
+   * @param description nonblank description
+   * @param schema explicit schema
+   * @param required whether this parameter is required
+   * @return this configuration
+   */
+  private OpenApiOperation parameterAt(
+      String location, String name, String description, Schema<?> schema, boolean required) {
     return parameter(
         new Parameter()
             .name(OpenApi.text(name))
-            .in("header")
+            .in(location)
             .description(OpenApi.text(description))
             .schema(Objects.requireNonNull(schema))
             .required(required));
@@ -194,12 +178,7 @@ public final class OpenApiOperation {
         new RequestBody()
             .description(OpenApi.text(description))
             .required(required)
-            .content(
-                new Content()
-                    .addMediaType(
-                        MediaType.of(mediaType).value(),
-                        new io.swagger.v3.oas.models.media.MediaType()
-                            .schema(Objects.requireNonNull(schema)))));
+            .content(contentWithSchema(mediaType, schema)));
   }
 
   /**
@@ -211,18 +190,14 @@ public final class OpenApiOperation {
    * @throws IllegalArgumentException if a non-reference body has no media declarations
    */
   public OpenApiOperation requestBody(RequestBody body) {
-    synchronized (owner) {
-      owner.requireMutable();
-
+    return mutate(() -> {
       Objects.requireNonNull(body);
       if (body.get$ref() == null && (body.getContent() == null || body.getContent().isEmpty())) {
         throw new IllegalArgumentException("OpenAPI request bodies require content");
       }
 
       operation.setRequestBody(OpenApi.copy(body, RequestBody.class));
-
-      return this;
-    }
+    });
   }
 
   /**
@@ -233,10 +208,8 @@ public final class OpenApiOperation {
    * @throws IllegalArgumentException if name/location is absent or unsupported
    */
   public OpenApiOperation parameter(Parameter value) {
-    synchronized (owner) {
-      owner.requireMutable();
-
-      var parameter = OpenApi.copy(value, Parameter.class);
+    return mutate(() -> {
+      final var parameter = OpenApi.copy(value, Parameter.class);
       if (parameter.getName() == null
           || parameter.getName().isBlank()
           || !Set.of("path", "query", "header").contains(parameter.getIn())) {
@@ -250,20 +223,15 @@ public final class OpenApiOperation {
             "OpenAPI parameters require either a schema or one content entry");
       }
 
-      if (operation.getParameters() == null) {
-        operation.setParameters(new ArrayList<>());
+      final var parameters = operation.getParameters();
+      if (parameters != null) {
+        parameters.removeIf(existing ->
+            parameter.getName().equals(existing.getName())
+                && parameter.getIn().equals(existing.getIn()));
       }
 
-      operation
-          .getParameters()
-          .removeIf(
-              existing ->
-                  parameter.getName().equals(existing.getName())
-                      && parameter.getIn().equals(existing.getIn()));
       operation.addParametersItem(parameter);
-
-      return this;
-    }
+    });
   }
 
   /**
@@ -275,10 +243,10 @@ public final class OpenApiOperation {
    * @return this configuration
    */
   public OpenApiOperation security(String name, String @Nullable ... scopes) {
-    var requirement = new SecurityRequirement();
-    var values = new ArrayList<String>();
+    final var requirement = new SecurityRequirement();
+    final var values = new ArrayList<String>();
     if (scopes != null) {
-      for (var scope : scopes) {
+      for (final var scope : scopes) {
         values.add(OpenApi.text(scope));
       }
     }
@@ -296,14 +264,9 @@ public final class OpenApiOperation {
    * @return this configuration
    */
   public OpenApiOperation security(SecurityRequirement requirement) {
-    synchronized (owner) {
-      owner.requireMutable();
-
-      operation.setSecurity(
-          new ArrayList<>(List.of(OpenApi.copy(requirement, SecurityRequirement.class))));
-
-      return this;
-    }
+    return mutate(() ->
+        operation.setSecurity(
+            new ArrayList<>(List.of(OpenApi.copy(requirement, SecurityRequirement.class)))));
   }
 
   /**
@@ -312,13 +275,7 @@ public final class OpenApiOperation {
    * @return this configuration
    */
   public OpenApiOperation anonymous() {
-    synchronized (owner) {
-      owner.requireMutable();
-
-      operation.setSecurity(new ArrayList<>());
-
-      return this;
-    }
+    return mutate(() -> operation.setSecurity(new ArrayList<>()));
   }
 
   /**
@@ -394,12 +351,7 @@ public final class OpenApiOperation {
         status,
         new ApiResponse()
             .description(OpenApi.text(description))
-            .content(
-                new Content()
-                    .addMediaType(
-                        MediaType.of(mediaType).value(),
-                        new io.swagger.v3.oas.models.media.MediaType()
-                            .schema(Objects.requireNonNull(schema)))));
+            .content(contentWithSchema(mediaType, schema)));
   }
 
   /**
@@ -411,14 +363,12 @@ public final class OpenApiOperation {
    * @throws IllegalArgumentException if the status is invalid
    */
   public OpenApiOperation response(int status, ApiResponse value) {
-    synchronized (owner) {
-      owner.requireMutable();
-
+    return mutate(() -> {
       if (status < 100 || status > 599) {
         throw new IllegalArgumentException("Invalid documented HTTP status");
       }
 
-      var response = OpenApi.copy(value, ApiResponse.class);
+      final var response = OpenApi.copy(value, ApiResponse.class);
       if (response.get$ref() == null && response.getDescription() == null) {
         throw new IllegalArgumentException("OpenAPI responses require a description");
       }
@@ -428,9 +378,21 @@ public final class OpenApiOperation {
       }
 
       operation.getResponses().addApiResponse(Integer.toString(status), response);
+    });
+  }
 
-      return this;
-    }
+  /**
+   * Builds one content entry with an explicit schema for a request body or response.
+   *
+   * @param mediaType representation media type
+   * @param schema explicit schema or reusable reference
+   * @return content containing the declared representation
+   */
+  private static Content contentWithSchema(String mediaType, Schema<?> schema) {
+    return new Content()
+        .addMediaType(
+            MediaType.of(mediaType).value(),
+            new io.swagger.v3.oas.models.media.MediaType().schema(Objects.requireNonNull(schema)));
   }
 
   /**
@@ -439,13 +401,7 @@ public final class OpenApiOperation {
    * @return this configuration
    */
   public OpenApiOperation hidden() {
-    synchronized (owner) {
-      owner.requireMutable();
-
-      hidden = true;
-
-      return this;
-    }
+    return mutate(() -> hidden = true);
   }
 
   /**
@@ -464,5 +420,24 @@ public final class OpenApiOperation {
    */
   Operation snapshot() {
     return OpenApi.copy(operation, Operation.class);
+  }
+
+  /**
+   * Checks the owner's freeze state and applies a change under its configuration lock.
+   *
+   * @param action guarded validation and change
+   * @return this configuration
+   */
+  private OpenApiOperation mutate(Runnable action) {
+    final var lock = owner.configurationLock();
+    lock.lock();
+
+    try {
+      owner.requireMutable();
+      action.run();
+      return this;
+    } finally {
+      lock.unlock();
+    }
   }
 }

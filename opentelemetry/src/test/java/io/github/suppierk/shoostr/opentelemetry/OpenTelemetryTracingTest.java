@@ -34,6 +34,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 class OpenTelemetryTracingTest {
@@ -41,9 +42,8 @@ class OpenTelemetryTracingTest {
     options.setVirtualThreads(virtualApplication);
 
     return new Shoostr(options)
-        .onRequestHeaders(
-            (request, response) ->
-                assertEquals(virtualApplication, Thread.currentThread().isVirtual()));
+        .onRequestHeaders((request, response) ->
+            assertEquals(virtualApplication, Thread.currentThread().isVirtual()));
   }
 
   @ParameterizedTest
@@ -133,6 +133,65 @@ class OpenTelemetryTracingTest {
   }
 
   @ParameterizedTest
+  @CsvSource(
+      value = {
+        "500, true, transport",
+        "500, false, 500",
+        "0, false, application",
+        "400, false, none"
+      },
+      nullValues = "none")
+  void classifiesTerminalApplicationFailuresInPriorityOrder(
+      int status, boolean transportFailure, String expectedError) throws Exception {
+    var exporter = InMemorySpanExporter.create();
+    var outcome = terminalApplicationFailure(status, transportFailure);
+
+    try (var provider =
+        SdkTracerProvider.builder()
+            .addSpanProcessor(SimpleSpanProcessor.create(exporter))
+            .build()) {
+      var tracing =
+          new OpenTelemetryTracing(OpenTelemetrySdk.builder().setTracerProvider(provider).build());
+      var app = new Shoostr();
+
+      try (Closeable appCleanup = app::close) {
+        app.routes()
+            .get(
+                "/terminal",
+                (request, response) -> {
+                  var observation = tracing.apply(request);
+                  observation.close();
+                  observation.complete(outcome);
+                  response.text("done");
+                });
+
+        try (var test = TestServer.start(app)) {
+          assertEquals(200, test.send(request -> request.path("/terminal")).statusCode());
+
+          var spans = exporter.getFinishedSpanItems();
+          assertEquals(1, spans.size());
+          var span = spans.getFirst();
+          assertEquals(
+              expectedError == null ? StatusCode.UNSET : StatusCode.ERROR,
+              span.getStatus().getStatusCode());
+          assertEquals(
+              expectedError, span.getAttributes().get(AttributeKey.stringKey("error.type")));
+        }
+      }
+    }
+  }
+
+  private static RequestOutcome terminalApplicationFailure(int status, boolean transportFailure) {
+    return new RequestOutcome(
+        "GET",
+        "/terminal",
+        status,
+        1,
+        new IllegalStateException("application failure"),
+        transportFailure ? new IOException("transport failure") : null);
+  }
+
+  @ParameterizedTest
   @ValueSource(booleans = {false, true})
   void noOpTracingDoesNotChangeRequestHandlingOrInstallCurrentSpans(boolean virtualApplication)
       throws Exception {
@@ -174,12 +233,11 @@ class OpenTelemetryTracingTest {
       try (Closeable appCleanup3 = app::close) {
         var telemetry = OpenTelemetrySdk.builder().setTracerProvider(provider).build();
         app.withExtension(new OpenTelemetryTracing(telemetry));
-        app.afterRequest(
-            outcome -> {
-              assertFalse(Span.current().getSpanContext().isValid());
+        app.afterRequest(outcome -> {
+          assertFalse(Span.current().getSpanContext().isValid());
 
-              outcomes.add(outcome);
-            });
+          outcomes.add(outcome);
+        });
         app.routes()
             .get(
                 "/failure",
@@ -187,12 +245,11 @@ class OpenTelemetryTracingTest {
                   throw new IllegalStateException("private");
                 });
         app.routes().get("/transport", (ignoredRequest, response) -> response.text("ok"));
-        app.afterResponseFlush(
-            (request, ignoredResponse) -> {
-              if (request.routePattern().filter("/transport"::equals).isPresent()) {
-                throw new IOException("private");
-              }
-            });
+        app.afterResponseFlush((request, ignoredResponse) -> {
+          if (request.routePattern().filter("/transport"::equals).isPresent()) {
+            throw new IOException("private");
+          }
+        });
 
         try (var test = TestServer.start(app)) {
           for (String path : new String[] {"/missing?secret=value", "/failure", "/transport"}) {
@@ -277,15 +334,13 @@ class OpenTelemetryTracingTest {
           for (int index = 1; index <= 20; index++) {
             String traceId = "%032x".formatted(index);
             requests.add(
-                testRequests.submit(
-                    () ->
-                        test.send(
-                            request ->
-                                request
-                                    .path("/context")
-                                    .header(
-                                        "traceparent", "00-" + traceId + "-0123456789abcdef-01"),
-                            HttpResponse.BodyHandlers.ofString())));
+                testRequests.submit(() ->
+                    test.send(
+                        request ->
+                            request
+                                .path("/context")
+                                .header("traceparent", "00-" + traceId + "-0123456789abcdef-01"),
+                        HttpResponse.BodyHandlers.ofString())));
           }
           for (int index = 1; index <= 20; index++) {
             assertTrue(

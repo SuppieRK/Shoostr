@@ -16,67 +16,39 @@ import org.jspecify.annotations.Nullable;
  * {@code *}.
  */
 public final class CorsPolicy {
-  private Set<String> origins = Set.of();
-  private Set<HttpMethods> methods = Set.of(HttpMethods.GET, HttpMethods.HEAD);
-  private boolean allMethods = false;
-  private Set<HttpHeaders> allowedHeaders = Set.of();
-  private boolean credentials = false;
-  private Set<HttpHeaders> exposedHeaders = Set.of();
-  private long maxAgeSeconds = 5;
+  private Set<String> origins;
+  private Set<HttpMethods> methods;
+  private boolean allMethods;
+  private Set<HttpHeaders> allowedHeaders;
+  private boolean credentials;
+  private Set<HttpHeaders> exposedHeaders;
+  private long maxAgeSeconds;
 
   /** Creates standalone default permissions for JavaBean configuration loading. */
-  public CorsPolicy() {}
+  public CorsPolicy() {
+    this.origins = Set.of();
+    this.methods = Set.of(HttpMethods.GET, HttpMethods.HEAD);
+    this.allMethods = false;
+    this.allowedHeaders = Set.of();
+    this.credentials = false;
+    this.exposedHeaders = Set.of();
+    this.maxAgeSeconds = 5;
+  }
 
   /**
-   * Captures and validates complete permissions before provider ownership.
+   * Copy constructor that captures and validates complete permissions before provider ownership.
    *
    * @param source mutable caller configuration
    */
   CorsPolicy(CorsPolicy source) {
-    setOrigins(source.origins);
-    setMethods(source.methods);
-    setAllMethods(source.allMethods);
-    setAllowedHeaders(source.allowedHeaders);
-    setCredentials(source.credentials);
-    setExposedHeaders(source.exposedHeaders);
-    setMaxAgeSeconds(source.maxAgeSeconds);
+    this.origins = Objects.requireNonNull(source, "source").origins;
+    this.methods = source.methods;
+    this.allMethods = source.allMethods;
+    this.allowedHeaders = source.allowedHeaders;
+    this.credentials = source.credentials;
+    this.exposedHeaders = source.exposedHeaders;
+    this.maxAgeSeconds = source.maxAgeSeconds;
     validate();
-  }
-
-  /**
-   * Creates a policy with every value explicitly configured.
-   *
-   * @param origins exact allowed serialized origins
-   * @param methods allowed methods, or an empty set to deny all
-   * @param allowedHeaders permitted preflight headers
-   * @param credentials whether credentialed sharing is allowed
-   * @param exposedHeaders additional response headers visible to scripts
-   * @param maxAgeSeconds nonnegative browser preflight cache lifetime
-   */
-  public CorsPolicy(
-      Set<String> origins,
-      Set<HttpMethods> methods,
-      Set<HttpHeaders> allowedHeaders,
-      boolean credentials,
-      Set<HttpHeaders> exposedHeaders,
-      long maxAgeSeconds) {
-    this(
-        builder()
-            .origins(origins)
-            .methods(methods)
-            .allowedHeaders(allowedHeaders)
-            .credentials(credentials)
-            .exposedHeaders(exposedHeaders)
-            .maxAgeSeconds(maxAgeSeconds));
-  }
-
-  /**
-   * Configures origins with standalone defaults for the other permissions.
-   *
-   * @param origins exact allowed serialized origins
-   */
-  public CorsPolicy(Set<String> origins) {
-    this(builder().origins(origins));
   }
 
   /**
@@ -192,7 +164,7 @@ public final class CorsPolicy {
    * Sets whether every valid HTTP method is allowed.
    *
    * @param value replacement setting. Null restores false. A wildcard policy requires an empty
-   *     methods collection.
+   *     {@code methods} collection.
    */
   public void setAllMethods(@Nullable Boolean value) {
     allMethods = value != null && value;

@@ -17,7 +17,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiFunction;
-import java.util.function.Consumer;
+import java.util.function.UnaryOperator;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
@@ -30,7 +30,7 @@ class TypedRoutesTest {
   private static Stream<RegistrationCase> registrations() {
     return Stream.of(
         new RegistrationCase(
-            "get(String path, ExecutorService executor, TypedHandler handler)",
+            "get(String path, ExecutorService executor, Typed handler)",
             "GET",
             true,
             false,
@@ -38,7 +38,7 @@ class TypedRoutesTest {
             (executor, handler) -> routes -> routes.get("/selected", executor, handler)),
         new RegistrationCase(
             "get(String path, ExecutorService executor, "
-                + "TypedHandler handler, Consumer<Extensions> "
+                + "Typed handler, Consumer<Extensions> "
                 + "configuration)",
             "GET",
             true,
@@ -51,19 +51,17 @@ class TypedRoutesTest {
                         executor,
                         handler,
                         extensions ->
-                            extensions.beforeRouteHandler(
-                                (ignored, response) ->
-                                    response.setHeader("X-Local", "configured")))),
+                            extensions.beforeRouteHandler((ignored, response) ->
+                                response.setHeader("X-Local", "configured")))),
         new RegistrationCase(
-            "get(ExecutorService executor, TypedHandler handler)",
+            "get(ExecutorService executor, Typed handler)",
             "GET",
             true,
             false,
             true,
             (executor, handler) -> routes -> routes.get(executor, handler)),
         new RegistrationCase(
-            "get(ExecutorService executor, TypedHandler "
-                + "handler, Consumer<Extensions> configuration)",
+            "get(ExecutorService executor, Typed " + "handler, Consumer<Extensions> configuration)",
             "GET",
             true,
             true,
@@ -74,11 +72,10 @@ class TypedRoutesTest {
                         executor,
                         handler,
                         extensions ->
-                            extensions.beforeRouteHandler(
-                                (ignoredRequest, response) ->
-                                    response.setHeader("X-Local", "configured")))),
+                            extensions.beforeRouteHandler((ignoredRequest, response) ->
+                                response.setHeader("X-Local", "configured")))),
         new RegistrationCase(
-            "post(String path, ExecutorService executor, TypedHandler handler)",
+            "post(String path, ExecutorService executor, Typed handler)",
             "POST",
             true,
             false,
@@ -86,7 +83,7 @@ class TypedRoutesTest {
             (executor, handler) -> routes -> routes.post("/selected", executor, handler)),
         new RegistrationCase(
             "post(String path, ExecutorService executor, "
-                + "TypedHandler handler, Consumer<Extensions> "
+                + "Typed handler, Consumer<Extensions> "
                 + "configuration)",
             "POST",
             true,
@@ -99,18 +96,17 @@ class TypedRoutesTest {
                         executor,
                         handler,
                         extensions ->
-                            extensions.beforeRouteHandler(
-                                (ignoredRequest, response) ->
-                                    response.setHeader("X-Local", "configured")))),
+                            extensions.beforeRouteHandler((ignoredRequest, response) ->
+                                response.setHeader("X-Local", "configured")))),
         new RegistrationCase(
-            "post(ExecutorService executor, TypedHandler handler)",
+            "post(ExecutorService executor, Typed handler)",
             "POST",
             true,
             false,
             true,
             (executor, handler) -> routes -> routes.post(executor, handler)),
         new RegistrationCase(
-            "post(ExecutorService executor, TypedHandler "
+            "post(ExecutorService executor, Typed "
                 + "handler, Consumer<Extensions> configuration)",
             "POST",
             true,
@@ -122,11 +118,10 @@ class TypedRoutesTest {
                         executor,
                         handler,
                         extensions ->
-                            extensions.beforeRouteHandler(
-                                (ignoredRequest, response) ->
-                                    response.setHeader("X-Local", "configured")))),
+                            extensions.beforeRouteHandler((ignoredRequest, response) ->
+                                response.setHeader("X-Local", "configured")))),
         new RegistrationCase(
-            "put(String path, ExecutorService executor, TypedHandler handler)",
+            "put(String path, ExecutorService executor, Typed handler)",
             "PUT",
             true,
             false,
@@ -134,7 +129,7 @@ class TypedRoutesTest {
             (executor, handler) -> routes -> routes.put("/selected", executor, handler)),
         new RegistrationCase(
             "put(String path, ExecutorService executor, "
-                + "TypedHandler handler, Consumer<Extensions> "
+                + "Typed handler, Consumer<Extensions> "
                 + "configuration)",
             "PUT",
             true,
@@ -147,19 +142,17 @@ class TypedRoutesTest {
                         executor,
                         handler,
                         extensions ->
-                            extensions.beforeRouteHandler(
-                                (ignoredRequest, response) ->
-                                    response.setHeader("X-Local", "configured")))),
+                            extensions.beforeRouteHandler((ignoredRequest, response) ->
+                                response.setHeader("X-Local", "configured")))),
         new RegistrationCase(
-            "put(ExecutorService executor, TypedHandler handler)",
+            "put(ExecutorService executor, Typed handler)",
             "PUT",
             true,
             false,
             true,
             (executor, handler) -> routes -> routes.put(executor, handler)),
         new RegistrationCase(
-            "put(ExecutorService executor, TypedHandler "
-                + "handler, Consumer<Extensions> configuration)",
+            "put(ExecutorService executor, Typed " + "handler, Consumer<Extensions> configuration)",
             "PUT",
             true,
             true,
@@ -170,11 +163,10 @@ class TypedRoutesTest {
                         executor,
                         handler,
                         extensions ->
-                            extensions.beforeRouteHandler(
-                                (ignoredRequest, response) ->
-                                    response.setHeader("X-Local", "configured")))),
+                            extensions.beforeRouteHandler((ignoredRequest, response) ->
+                                response.setHeader("X-Local", "configured")))),
         new RegistrationCase(
-            "patch(String path, ExecutorService executor, TypedHandler handler)",
+            "patch(String path, ExecutorService executor, Typed handler)",
             "PATCH",
             true,
             false,
@@ -182,7 +174,7 @@ class TypedRoutesTest {
             (executor, handler) -> routes -> routes.patch("/selected", executor, handler)),
         new RegistrationCase(
             "patch(String path, ExecutorService executor, "
-                + "TypedHandler handler, Consumer<Extensions> "
+                + "Typed handler, Consumer<Extensions> "
                 + "configuration)",
             "PATCH",
             true,
@@ -195,18 +187,17 @@ class TypedRoutesTest {
                         executor,
                         handler,
                         extensions ->
-                            extensions.beforeRouteHandler(
-                                (ignoredRequest, response) ->
-                                    response.setHeader("X-Local", "configured")))),
+                            extensions.beforeRouteHandler((ignoredRequest, response) ->
+                                response.setHeader("X-Local", "configured")))),
         new RegistrationCase(
-            "patch(ExecutorService executor, TypedHandler handler)",
+            "patch(ExecutorService executor, Typed handler)",
             "PATCH",
             true,
             false,
             true,
             (executor, handler) -> routes -> routes.patch(executor, handler)),
         new RegistrationCase(
-            "patch(ExecutorService executor, TypedHandler "
+            "patch(ExecutorService executor, Typed "
                 + "handler, Consumer<Extensions> configuration)",
             "PATCH",
             true,
@@ -218,11 +209,10 @@ class TypedRoutesTest {
                         executor,
                         handler,
                         extensions ->
-                            extensions.beforeRouteHandler(
-                                (ignoredRequest, response) ->
-                                    response.setHeader("X-Local", "configured")))),
+                            extensions.beforeRouteHandler((ignoredRequest, response) ->
+                                response.setHeader("X-Local", "configured")))),
         new RegistrationCase(
-            "delete(String path, ExecutorService executor, TypedHandler handler)",
+            "delete(String path, ExecutorService executor, Typed handler)",
             "DELETE",
             true,
             false,
@@ -230,7 +220,7 @@ class TypedRoutesTest {
             (executor, handler) -> routes -> routes.delete("/selected", executor, handler)),
         new RegistrationCase(
             "delete(String path, ExecutorService executor, "
-                + "TypedHandler handler, Consumer<Extensions> "
+                + "Typed handler, Consumer<Extensions> "
                 + "configuration)",
             "DELETE",
             true,
@@ -243,18 +233,17 @@ class TypedRoutesTest {
                         executor,
                         handler,
                         extensions ->
-                            extensions.beforeRouteHandler(
-                                (ignoredRequest, response) ->
-                                    response.setHeader("X-Local", "configured")))),
+                            extensions.beforeRouteHandler((ignoredRequest, response) ->
+                                response.setHeader("X-Local", "configured")))),
         new RegistrationCase(
-            "delete(ExecutorService executor, TypedHandler handler)",
+            "delete(ExecutorService executor, Typed handler)",
             "DELETE",
             true,
             false,
             true,
             (executor, handler) -> routes -> routes.delete(executor, handler)),
         new RegistrationCase(
-            "delete(ExecutorService executor, TypedHandler "
+            "delete(ExecutorService executor, Typed "
                 + "handler, Consumer<Extensions> configuration)",
             "DELETE",
             true,
@@ -266,11 +255,10 @@ class TypedRoutesTest {
                         executor,
                         handler,
                         extensions ->
-                            extensions.beforeRouteHandler(
-                                (ignoredRequest, response) ->
-                                    response.setHeader("X-Local", "configured")))),
+                            extensions.beforeRouteHandler((ignoredRequest, response) ->
+                                response.setHeader("X-Local", "configured")))),
         new RegistrationCase(
-            "head(String path, ExecutorService executor, TypedHandler handler)",
+            "head(String path, ExecutorService executor, Typed handler)",
             "HEAD",
             true,
             false,
@@ -278,7 +266,7 @@ class TypedRoutesTest {
             (executor, handler) -> routes -> routes.head("/selected", executor, handler)),
         new RegistrationCase(
             "head(String path, ExecutorService executor, "
-                + "TypedHandler handler, Consumer<Extensions> "
+                + "Typed handler, Consumer<Extensions> "
                 + "configuration)",
             "HEAD",
             true,
@@ -291,18 +279,17 @@ class TypedRoutesTest {
                         executor,
                         handler,
                         extensions ->
-                            extensions.beforeRouteHandler(
-                                (ignoredRequest, response) ->
-                                    response.setHeader("X-Local", "configured")))),
+                            extensions.beforeRouteHandler((ignoredRequest, response) ->
+                                response.setHeader("X-Local", "configured")))),
         new RegistrationCase(
-            "head(ExecutorService executor, TypedHandler handler)",
+            "head(ExecutorService executor, Typed handler)",
             "HEAD",
             true,
             false,
             true,
             (executor, handler) -> routes -> routes.head(executor, handler)),
         new RegistrationCase(
-            "head(ExecutorService executor, TypedHandler "
+            "head(ExecutorService executor, Typed "
                 + "handler, Consumer<Extensions> configuration)",
             "HEAD",
             true,
@@ -314,11 +301,10 @@ class TypedRoutesTest {
                         executor,
                         handler,
                         extensions ->
-                            extensions.beforeRouteHandler(
-                                (ignoredRequest, response) ->
-                                    response.setHeader("X-Local", "configured")))),
+                            extensions.beforeRouteHandler((ignoredRequest, response) ->
+                                response.setHeader("X-Local", "configured")))),
         new RegistrationCase(
-            "options(String path, ExecutorService executor, TypedHandler handler)",
+            "options(String path, ExecutorService executor, Typed handler)",
             "OPTIONS",
             true,
             false,
@@ -326,7 +312,7 @@ class TypedRoutesTest {
             (executor, handler) -> routes -> routes.options("/selected", executor, handler)),
         new RegistrationCase(
             "options(String path, ExecutorService executor, "
-                + "TypedHandler handler, Consumer<Extensions> "
+                + "Typed handler, Consumer<Extensions> "
                 + "configuration)",
             "OPTIONS",
             true,
@@ -339,18 +325,17 @@ class TypedRoutesTest {
                         executor,
                         handler,
                         extensions ->
-                            extensions.beforeRouteHandler(
-                                (ignoredRequest, response) ->
-                                    response.setHeader("X-Local", "configured")))),
+                            extensions.beforeRouteHandler((ignoredRequest, response) ->
+                                response.setHeader("X-Local", "configured")))),
         new RegistrationCase(
-            "options(ExecutorService executor, TypedHandler handler)",
+            "options(ExecutorService executor, Typed handler)",
             "OPTIONS",
             true,
             false,
             true,
             (executor, handler) -> routes -> routes.options(executor, handler)),
         new RegistrationCase(
-            "options(ExecutorService executor, TypedHandler "
+            "options(ExecutorService executor, Typed "
                 + "handler, Consumer<Extensions> configuration)",
             "OPTIONS",
             true,
@@ -362,12 +347,10 @@ class TypedRoutesTest {
                         executor,
                         handler,
                         extensions ->
-                            extensions.beforeRouteHandler(
-                                (ignoredRequest, response) ->
-                                    response.setHeader("X-Local", "configured")))),
+                            extensions.beforeRouteHandler((ignoredRequest, response) ->
+                                response.setHeader("X-Local", "configured")))),
         new RegistrationCase(
-            "route(HttpMethods method, String path, "
-                + "ExecutorService executor, TypedHandler handler)",
+            "route(HttpMethods method, String path, " + "ExecutorService executor, Typed handler)",
             "PATCH",
             true,
             false,
@@ -376,7 +359,7 @@ class TypedRoutesTest {
                 routes -> routes.route(HttpMethods.PATCH, "/selected", executor, handler)),
         new RegistrationCase(
             "route(HttpMethods method, String path, "
-                + "ExecutorService executor, TypedHandler handler, "
+                + "ExecutorService executor, Typed handler, "
                 + "Consumer<Extensions> configuration)",
             "PATCH",
             true,
@@ -390,11 +373,10 @@ class TypedRoutesTest {
                         executor,
                         handler,
                         extensions ->
-                            extensions.beforeRouteHandler(
-                                (ignoredRequest, response) ->
-                                    response.setHeader("X-Local", "configured")))),
+                            extensions.beforeRouteHandler((ignoredRequest, response) ->
+                                response.setHeader("X-Local", "configured")))),
         new RegistrationCase(
-            "route(HttpMethods method, ExecutorService executor, TypedHandler handler)",
+            "route(HttpMethods method, ExecutorService executor, Typed handler)",
             "PATCH",
             true,
             false,
@@ -402,7 +384,7 @@ class TypedRoutesTest {
             (executor, handler) -> routes -> routes.route(HttpMethods.PATCH, executor, handler)),
         new RegistrationCase(
             "route(HttpMethods method, ExecutorService "
-                + "executor, TypedHandler handler, "
+                + "executor, Typed handler, "
                 + "Consumer<Extensions> configuration)",
             "PATCH",
             true,
@@ -415,11 +397,10 @@ class TypedRoutesTest {
                         executor,
                         handler,
                         extensions ->
-                            extensions.beforeRouteHandler(
-                                (ignoredRequest, response) ->
-                                    response.setHeader("X-Local", "configured")))),
+                            extensions.beforeRouteHandler((ignoredRequest, response) ->
+                                response.setHeader("X-Local", "configured")))),
         new RegistrationCase(
-            "route(String method, String path, ExecutorService executor, TypedHandler handler)",
+            "route(String method, String path, ExecutorService executor, Typed handler)",
             "PATCH",
             true,
             false,
@@ -427,7 +408,7 @@ class TypedRoutesTest {
             (executor, handler) -> routes -> routes.route("PATCH", "/selected", executor, handler)),
         new RegistrationCase(
             "route(String method, String path, ExecutorService "
-                + "executor, TypedHandler handler, "
+                + "executor, Typed handler, "
                 + "Consumer<Extensions> configuration)",
             "PATCH",
             true,
@@ -441,11 +422,10 @@ class TypedRoutesTest {
                         executor,
                         handler,
                         extensions ->
-                            extensions.beforeRouteHandler(
-                                (ignoredRequest, response) ->
-                                    response.setHeader("X-Local", "configured")))),
+                            extensions.beforeRouteHandler((ignoredRequest, response) ->
+                                response.setHeader("X-Local", "configured")))),
         new RegistrationCase(
-            "route(String method, ExecutorService executor, TypedHandler handler)",
+            "route(String method, ExecutorService executor, Typed handler)",
             "PATCH",
             true,
             false,
@@ -453,7 +433,7 @@ class TypedRoutesTest {
             (executor, handler) -> routes -> routes.route("PATCH", executor, handler)),
         new RegistrationCase(
             "route(String method, ExecutorService executor, "
-                + "TypedHandler handler, Consumer<Extensions> "
+                + "Typed handler, Consumer<Extensions> "
                 + "configuration)",
             "PATCH",
             true,
@@ -466,11 +446,10 @@ class TypedRoutesTest {
                         executor,
                         handler,
                         extensions ->
-                            extensions.beforeRouteHandler(
-                                (ignoredRequest, response) ->
-                                    response.setHeader("X-Local", "configured")))),
+                            extensions.beforeRouteHandler((ignoredRequest, response) ->
+                                response.setHeader("X-Local", "configured")))),
         new RegistrationCase(
-            "get(TypedHandler handler, Consumer<Extensions> configuration)",
+            "get(Typed handler, Consumer<Extensions> configuration)",
             "GET",
             false,
             true,
@@ -480,11 +459,10 @@ class TypedRoutesTest {
                     routes.get(
                         handler,
                         extensions ->
-                            extensions.beforeRouteHandler(
-                                (ignoredRequest, response) ->
-                                    response.setHeader("X-Local", "configured")))),
+                            extensions.beforeRouteHandler((ignoredRequest, response) ->
+                                response.setHeader("X-Local", "configured")))),
         new RegistrationCase(
-            "get(String path, TypedHandler handler, Consumer<Extensions> configuration)",
+            "get(String path, Typed handler, Consumer<Extensions> configuration)",
             "GET",
             false,
             true,
@@ -495,11 +473,10 @@ class TypedRoutesTest {
                         "/selected",
                         handler,
                         extensions ->
-                            extensions.beforeRouteHandler(
-                                (ignoredRequest, response) ->
-                                    response.setHeader("X-Local", "configured")))),
+                            extensions.beforeRouteHandler((ignoredRequest, response) ->
+                                response.setHeader("X-Local", "configured")))),
         new RegistrationCase(
-            "post(TypedHandler handler, Consumer<Extensions> configuration)",
+            "post(Typed handler, Consumer<Extensions> configuration)",
             "POST",
             false,
             true,
@@ -509,11 +486,10 @@ class TypedRoutesTest {
                     routes.post(
                         handler,
                         extensions ->
-                            extensions.beforeRouteHandler(
-                                (ignoredRequest, response) ->
-                                    response.setHeader("X-Local", "configured")))),
+                            extensions.beforeRouteHandler((ignoredRequest, response) ->
+                                response.setHeader("X-Local", "configured")))),
         new RegistrationCase(
-            "post(String path, TypedHandler handler, Consumer<Extensions> configuration)",
+            "post(String path, Typed handler, Consumer<Extensions> configuration)",
             "POST",
             false,
             true,
@@ -524,11 +500,10 @@ class TypedRoutesTest {
                         "/selected",
                         handler,
                         extensions ->
-                            extensions.beforeRouteHandler(
-                                (ignoredRequest, response) ->
-                                    response.setHeader("X-Local", "configured")))),
+                            extensions.beforeRouteHandler((ignoredRequest, response) ->
+                                response.setHeader("X-Local", "configured")))),
         new RegistrationCase(
-            "put(TypedHandler handler, Consumer<Extensions> configuration)",
+            "put(Typed handler, Consumer<Extensions> configuration)",
             "PUT",
             false,
             true,
@@ -538,11 +513,10 @@ class TypedRoutesTest {
                     routes.put(
                         handler,
                         extensions ->
-                            extensions.beforeRouteHandler(
-                                (ignoredRequest, response) ->
-                                    response.setHeader("X-Local", "configured")))),
+                            extensions.beforeRouteHandler((ignoredRequest, response) ->
+                                response.setHeader("X-Local", "configured")))),
         new RegistrationCase(
-            "put(String path, TypedHandler handler, Consumer<Extensions> configuration)",
+            "put(String path, Typed handler, Consumer<Extensions> configuration)",
             "PUT",
             false,
             true,
@@ -553,11 +527,10 @@ class TypedRoutesTest {
                         "/selected",
                         handler,
                         extensions ->
-                            extensions.beforeRouteHandler(
-                                (ignoredRequest, response) ->
-                                    response.setHeader("X-Local", "configured")))),
+                            extensions.beforeRouteHandler((ignoredRequest, response) ->
+                                response.setHeader("X-Local", "configured")))),
         new RegistrationCase(
-            "patch(TypedHandler handler, Consumer<Extensions> configuration)",
+            "patch(Typed handler, Consumer<Extensions> configuration)",
             "PATCH",
             false,
             true,
@@ -567,11 +540,10 @@ class TypedRoutesTest {
                     routes.patch(
                         handler,
                         extensions ->
-                            extensions.beforeRouteHandler(
-                                (ignoredRequest, response) ->
-                                    response.setHeader("X-Local", "configured")))),
+                            extensions.beforeRouteHandler((ignoredRequest, response) ->
+                                response.setHeader("X-Local", "configured")))),
         new RegistrationCase(
-            "patch(String path, TypedHandler handler, Consumer<Extensions> configuration)",
+            "patch(String path, Typed handler, Consumer<Extensions> configuration)",
             "PATCH",
             false,
             true,
@@ -582,11 +554,10 @@ class TypedRoutesTest {
                         "/selected",
                         handler,
                         extensions ->
-                            extensions.beforeRouteHandler(
-                                (ignoredRequest, response) ->
-                                    response.setHeader("X-Local", "configured")))),
+                            extensions.beforeRouteHandler((ignoredRequest, response) ->
+                                response.setHeader("X-Local", "configured")))),
         new RegistrationCase(
-            "delete(TypedHandler handler, Consumer<Extensions> configuration)",
+            "delete(Typed handler, Consumer<Extensions> configuration)",
             "DELETE",
             false,
             true,
@@ -596,11 +567,10 @@ class TypedRoutesTest {
                     routes.delete(
                         handler,
                         extensions ->
-                            extensions.beforeRouteHandler(
-                                (ignoredRequest, response) ->
-                                    response.setHeader("X-Local", "configured")))),
+                            extensions.beforeRouteHandler((ignoredRequest, response) ->
+                                response.setHeader("X-Local", "configured")))),
         new RegistrationCase(
-            "delete(String path, TypedHandler handler, Consumer<Extensions> configuration)",
+            "delete(String path, Typed handler, Consumer<Extensions> configuration)",
             "DELETE",
             false,
             true,
@@ -611,11 +581,10 @@ class TypedRoutesTest {
                         "/selected",
                         handler,
                         extensions ->
-                            extensions.beforeRouteHandler(
-                                (ignoredRequest, response) ->
-                                    response.setHeader("X-Local", "configured")))),
+                            extensions.beforeRouteHandler((ignoredRequest, response) ->
+                                response.setHeader("X-Local", "configured")))),
         new RegistrationCase(
-            "head(TypedHandler handler, Consumer<Extensions> configuration)",
+            "head(Typed handler, Consumer<Extensions> configuration)",
             "HEAD",
             false,
             true,
@@ -625,11 +594,10 @@ class TypedRoutesTest {
                     routes.head(
                         handler,
                         extensions ->
-                            extensions.beforeRouteHandler(
-                                (ignoredRequest, response) ->
-                                    response.setHeader("X-Local", "configured")))),
+                            extensions.beforeRouteHandler((ignoredRequest, response) ->
+                                response.setHeader("X-Local", "configured")))),
         new RegistrationCase(
-            "head(String path, TypedHandler handler, Consumer<Extensions> configuration)",
+            "head(String path, Typed handler, Consumer<Extensions> configuration)",
             "HEAD",
             false,
             true,
@@ -640,11 +608,10 @@ class TypedRoutesTest {
                         "/selected",
                         handler,
                         extensions ->
-                            extensions.beforeRouteHandler(
-                                (ignoredRequest, response) ->
-                                    response.setHeader("X-Local", "configured")))),
+                            extensions.beforeRouteHandler((ignoredRequest, response) ->
+                                response.setHeader("X-Local", "configured")))),
         new RegistrationCase(
-            "options(TypedHandler handler, Consumer<Extensions> configuration)",
+            "options(Typed handler, Consumer<Extensions> configuration)",
             "OPTIONS",
             false,
             true,
@@ -654,11 +621,10 @@ class TypedRoutesTest {
                     routes.options(
                         handler,
                         extensions ->
-                            extensions.beforeRouteHandler(
-                                (ignoredRequest, response) ->
-                                    response.setHeader("X-Local", "configured")))),
+                            extensions.beforeRouteHandler((ignoredRequest, response) ->
+                                response.setHeader("X-Local", "configured")))),
         new RegistrationCase(
-            "options(String path, TypedHandler handler, Consumer<Extensions> configuration)",
+            "options(String path, Typed handler, Consumer<Extensions> configuration)",
             "OPTIONS",
             false,
             true,
@@ -669,109 +635,108 @@ class TypedRoutesTest {
                         "/selected",
                         handler,
                         extensions ->
-                            extensions.beforeRouteHandler(
-                                (ignoredRequest, response) ->
-                                    response.setHeader("X-Local", "configured")))),
+                            extensions.beforeRouteHandler((ignoredRequest, response) ->
+                                response.setHeader("X-Local", "configured")))),
         new RegistrationCase(
-            "get(TypedHandler handler)",
+            "get(Typed handler)",
             "GET",
             false,
             false,
             true,
             (executor, handler) -> routes -> routes.get(handler)),
         new RegistrationCase(
-            "get(String path, TypedHandler handler)",
+            "get(String path, Typed handler)",
             "GET",
             false,
             false,
             false,
             (executor, handler) -> routes -> routes.get("/selected", handler)),
         new RegistrationCase(
-            "post(TypedHandler handler)",
+            "post(Typed handler)",
             "POST",
             false,
             false,
             true,
             (executor, handler) -> routes -> routes.post(handler)),
         new RegistrationCase(
-            "post(String path, TypedHandler handler)",
+            "post(String path, Typed handler)",
             "POST",
             false,
             false,
             false,
             (executor, handler) -> routes -> routes.post("/selected", handler)),
         new RegistrationCase(
-            "put(TypedHandler handler)",
+            "put(Typed handler)",
             "PUT",
             false,
             false,
             true,
             (executor, handler) -> routes -> routes.put(handler)),
         new RegistrationCase(
-            "put(String path, TypedHandler handler)",
+            "put(String path, Typed handler)",
             "PUT",
             false,
             false,
             false,
             (executor, handler) -> routes -> routes.put("/selected", handler)),
         new RegistrationCase(
-            "patch(TypedHandler handler)",
+            "patch(Typed handler)",
             "PATCH",
             false,
             false,
             true,
             (executor, handler) -> routes -> routes.patch(handler)),
         new RegistrationCase(
-            "patch(String path, TypedHandler handler)",
+            "patch(String path, Typed handler)",
             "PATCH",
             false,
             false,
             false,
             (executor, handler) -> routes -> routes.patch("/selected", handler)),
         new RegistrationCase(
-            "delete(TypedHandler handler)",
+            "delete(Typed handler)",
             "DELETE",
             false,
             false,
             true,
             (executor, handler) -> routes -> routes.delete(handler)),
         new RegistrationCase(
-            "delete(String path, TypedHandler handler)",
+            "delete(String path, Typed handler)",
             "DELETE",
             false,
             false,
             false,
             (executor, handler) -> routes -> routes.delete("/selected", handler)),
         new RegistrationCase(
-            "head(TypedHandler handler)",
+            "head(Typed handler)",
             "HEAD",
             false,
             false,
             true,
             (executor, handler) -> routes -> routes.head(handler)),
         new RegistrationCase(
-            "head(String path, TypedHandler handler)",
+            "head(String path, Typed handler)",
             "HEAD",
             false,
             false,
             false,
             (executor, handler) -> routes -> routes.head("/selected", handler)),
         new RegistrationCase(
-            "options(TypedHandler handler)",
+            "options(Typed handler)",
             "OPTIONS",
             false,
             false,
             true,
             (executor, handler) -> routes -> routes.options(handler)),
         new RegistrationCase(
-            "options(String path, TypedHandler handler)",
+            "options(String path, Typed handler)",
             "OPTIONS",
             false,
             false,
             false,
             (executor, handler) -> routes -> routes.options("/selected", handler)),
         new RegistrationCase(
-            "route(HttpMethods method, String path, TypedHandler handler)",
+            "route(HttpMethods method, String path, Typed handler)",
             "PATCH",
             false,
             false,
@@ -779,7 +744,7 @@ class TypedRoutesTest {
             (executor, handler) -> routes -> routes.route(HttpMethods.PATCH, "/selected", handler)),
         new RegistrationCase(
             "route(HttpMethods method, String path, "
-                + "TypedHandler handler, Consumer<Extensions> "
+                + "Typed handler, Consumer<Extensions> "
                 + "configuration)",
             "PATCH",
             false,
@@ -792,18 +757,17 @@ class TypedRoutesTest {
                         "/selected",
                         handler,
                         extensions ->
-                            extensions.beforeRouteHandler(
-                                (ignoredRequest, response) ->
-                                    response.setHeader("X-Local", "configured")))),
+                            extensions.beforeRouteHandler((ignoredRequest, response) ->
+                                response.setHeader("X-Local", "configured")))),
         new RegistrationCase(
-            "route(String method, String path, TypedHandler handler)",
+            "route(String method, String path, Typed handler)",
             "PATCH",
             false,
             false,
             false,
             (executor, handler) -> routes -> routes.route("PATCH", "/selected", handler)),
         new RegistrationCase(
-            "route(String method, String path, TypedHandler "
+            "route(String method, String path, Typed "
                 + "handler, Consumer<Extensions> configuration)",
             "PATCH",
             false,
@@ -816,11 +780,10 @@ class TypedRoutesTest {
                         "/selected",
                         handler,
                         extensions ->
-                            extensions.beforeRouteHandler(
-                                (ignoredRequest, response) ->
-                                    response.setHeader("X-Local", "configured")))),
+                            extensions.beforeRouteHandler((ignoredRequest, response) ->
+                                response.setHeader("X-Local", "configured")))),
         new RegistrationCase(
-            "route(HttpMethods method, TypedHandler handler, Consumer<Extensions> configuration)",
+            "route(HttpMethods method, Typed handler, Consumer<Extensions> configuration)",
             "PATCH",
             false,
             true,
@@ -831,11 +794,10 @@ class TypedRoutesTest {
                         HttpMethods.PATCH,
                         handler,
                         extensions ->
-                            extensions.beforeRouteHandler(
-                                (ignoredRequest, response) ->
-                                    response.setHeader("X-Local", "configured")))),
+                            extensions.beforeRouteHandler((ignoredRequest, response) ->
+                                response.setHeader("X-Local", "configured")))),
         new RegistrationCase(
-            "route(String method, TypedHandler handler, Consumer<Extensions> configuration)",
+            "route(String method, Typed handler, Consumer<Extensions> configuration)",
             "PATCH",
             false,
             true,
@@ -846,18 +808,17 @@ class TypedRoutesTest {
                         "PATCH",
                         handler,
                         extensions ->
-                            extensions.beforeRouteHandler(
-                                (ignoredRequest, response) ->
-                                    response.setHeader("X-Local", "configured")))),
+                            extensions.beforeRouteHandler((ignoredRequest, response) ->
+                                response.setHeader("X-Local", "configured")))),
         new RegistrationCase(
-            "route(HttpMethods method, TypedHandler handler)",
+            "route(HttpMethods method, Typed handler)",
             "PATCH",
             false,
             false,
             true,
             (executor, handler) -> routes -> routes.route(HttpMethods.PATCH, handler)),
         new RegistrationCase(
-            "route(String method, TypedHandler handler)",
+            "route(String method, Typed handler)",
             "PATCH",
             false,
             false,
@@ -865,19 +826,19 @@ class TypedRoutesTest {
             (executor, handler) -> routes -> routes.route("PATCH", handler)));
   }
 
-  private static void nestedPaths(TypedRoutes routes, int remaining) {
+  private static void nestedPaths(Routes.Typed routes, int remaining) {
     if (remaining > 0) {
       routes.path("/p", child -> nestedPaths(child, remaining - 1));
     }
   }
 
-  private static void nestedConditions(TypedRoutes routes, int remaining) {
+  private static void nestedConditions(Routes.Typed routes, int remaining) {
     if (remaining > 0) {
       routes.when(() -> true, child -> nestedConditions(child, remaining - 1));
     }
   }
 
-  private static void capturedRootPaths(TypedRoutes root, int remaining) {
+  private static void capturedRootPaths(Routes.Typed root, int remaining) {
     if (remaining > 0) {
       root.path("/p", ignoredRoutes -> capturedRootPaths(root, remaining - 1));
     }
@@ -892,14 +853,16 @@ class TypedRoutesTest {
       var app = new Shoostr();
 
       try (Closeable appCleanup = app::close) {
-        TypedHandler handler =
+        Handler.Typed handler =
             createHandlerForRegistersTypedHttpOverloadsOnExistingRouter(selected, workerThread);
         var routes = app.codec(new TestCodec()).routes();
         var registration = selected.registration().apply(executor, handler);
         if (selected.pathless()) {
-          routes.path("/selected", registration);
+          assertSame(
+              routes,
+              routes.path("/selected", child -> assertSame(child, registration.apply(child))));
         } else {
-          registration.accept(routes);
+          assertSame(routes, registration.apply(routes));
         }
 
         try (var test = TestServer.start(app)) {
@@ -923,16 +886,15 @@ class TypedRoutesTest {
 
   private ExecutorService openExecutorForRegistersTypedHttpOverloadsOnExistingRouter(
       AtomicReference<Thread> workerThread) {
-    return Executors.newSingleThreadExecutor(
-        task -> {
-          var thread = new Thread(task);
-          workerThread.set(thread);
+    return Executors.newSingleThreadExecutor(task -> {
+      var thread = new Thread(task);
+      workerThread.set(thread);
 
-          return thread;
-        });
+      return thread;
+    });
   }
 
-  private TypedHandler createHandlerForRegistersTypedHttpOverloadsOnExistingRouter(
+  private Handler.Typed createHandlerForRegistersTypedHttpOverloadsOnExistingRouter(
       RegistrationCase selected, AtomicReference<Thread> workerThread) throws Exception {
     return (request, response) -> {
       if (selected.worker()) {
@@ -952,21 +914,19 @@ class TypedRoutesTest {
 
       try (Closeable appCleanup1 = app::close) {
         app.codec(new TestCodec())
-            .routes(
-                routes ->
-                    routes.path(
-                        "/users",
-                        child ->
-                            child.get(
-                                "/{id}",
-                                (request, response) ->
-                                    response.body(
-                                        MediaType.APPLICATION_JSON,
-                                        request.pathParam("id").orElseThrow())),
-                        extensions ->
-                            extensions.beforeRouteHandler(
-                                (ignoredRequest, response) ->
-                                    response.setHeader("X-Group", "users"))));
+            .routes(routes ->
+                routes.path(
+                    "/users",
+                    child ->
+                        child.get(
+                            "/{id}",
+                            (request, response) ->
+                                response.body(
+                                    MediaType.APPLICATION_JSON,
+                                    request.pathParam("id").orElseThrow())),
+                    extensions ->
+                        extensions.beforeRouteHandler(
+                            (ignoredRequest, response) -> response.setHeader("X-Group", "users"))));
 
         try (var test = TestServer.start(app)) {
           var result =
@@ -1147,7 +1107,7 @@ class TypedRoutesTest {
       boolean worker,
       boolean local,
       boolean pathless,
-      BiFunction<ExecutorService, TypedHandler, Consumer<TypedRoutes>> registration) {
+      BiFunction<ExecutorService, Handler.Typed, UnaryOperator<Routes.Typed>> registration) {
     RegistrationCase {
       Objects.requireNonNull(name);
       Objects.requireNonNull(method);

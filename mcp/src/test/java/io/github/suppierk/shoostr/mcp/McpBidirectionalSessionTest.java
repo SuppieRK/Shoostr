@@ -41,12 +41,11 @@ class McpBidirectionalSessionTest {
       for (var index = 0; index < 6; index++) {
         var marker = "call-" + index;
         replies.add(
-            executor.submit(
-                () ->
-                    client.callTool(
-                        McpSchema.CallToolRequest.builder("ping")
-                            .arguments(Map.of("marker", marker))
-                            .build())));
+            executor.submit(() ->
+                client.callTool(
+                    McpSchema.CallToolRequest.builder("ping")
+                        .arguments(Map.of("marker", marker))
+                        .build())));
       }
       for (var index = 0; index < replies.size(); index++) {
         var result = replies.get(index).get(5, TimeUnit.SECONDS);
@@ -74,14 +73,13 @@ class McpBidirectionalSessionTest {
                 .tools(
                     McpServerFeatures.SyncToolSpecification.builder()
                         .tool(McpSchema.Tool.builder("ping", Map.of("type", "object")).build())
-                        .callHandler(
-                            (exchange, call) -> {
-                              exchange.ping();
+                        .callHandler((exchange, call) -> {
+                          exchange.ping();
 
-                              return McpSchema.CallToolResult.builder()
-                                  .addTextContent((String) call.arguments().get("marker"))
-                                  .build();
-                            })
+                          return McpSchema.CallToolResult.builder()
+                              .addTextContent((String) call.arguments().get("marker"))
+                              .build();
+                        })
                         .build())
                 .build());
   }

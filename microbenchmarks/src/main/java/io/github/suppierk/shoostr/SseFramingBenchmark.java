@@ -1,5 +1,6 @@
 package io.github.suppierk.shoostr;
 
+import io.github.suppierk.shoostr.http.HttpCharacters;
 import java.io.IOException;
 import java.lang.reflect.Proxy;
 import java.nio.ByteBuffer;
@@ -101,8 +102,12 @@ public class SseFramingBenchmark {
                         var content = (ByteBuffer) arguments[1];
                         bytesWritten += content.remaining();
                         if (content.hasRemaining()) {
-                          checksum += content.get(content.position()) & 0xff;
-                          checksum += content.get(content.limit() - 1) & 0xff;
+                          checksum +=
+                              content.get(content.position())
+                                  & HttpCharacters.MAX_UNSIGNED_BYTE_VALUE;
+                          checksum +=
+                              content.get(content.limit() - 1)
+                                  & HttpCharacters.MAX_UNSIGNED_BYTE_VALUE;
                         }
 
                         ((Callback) arguments[2]).succeeded();

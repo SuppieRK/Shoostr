@@ -59,20 +59,19 @@ class McpShutdownTest {
   private HttpResponse<byte[]>
       sendInitializedRequestForClosesAnIdleListeningStreamWhenTheApplicationStops(TestServer test)
           throws IOException, InterruptedException {
-    return test.send(
-        request ->
-            request
-                .path("/mcp")
-                .method("POST")
-                .header("Content-Type", "application/json")
-                .header("Accept", "application/json, text/event-stream")
-                .body(
-                    """
-                    {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
-                      "protocolVersion":"2025-11-25","capabilities":{},
-                      "clientInfo":{"name":"shutdown-fixture","version":"1.0"}}}
-                    """
-                        .getBytes(StandardCharsets.UTF_8)));
+    return test.send(request ->
+        request
+            .path("/mcp")
+            .method("POST")
+            .header("Content-Type", "application/json")
+            .header("Accept", "application/json, text/event-stream")
+            .body(
+                """
+                {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+                  "protocolVersion":"2025-11-25","capabilities":{},
+                  "clientInfo":{"name":"shutdown-fixture","version":"1.0"}}}
+                """
+                    .getBytes(StandardCharsets.UTF_8)));
   }
 
   private HttpResponse<InputStream>
@@ -135,20 +134,19 @@ class McpShutdownTest {
   private HttpResponse<byte[]>
       sendInitializedRequestForClosesPendingPostStreamWhenTheApplicationStops(TestServer test)
           throws IOException, InterruptedException {
-    return test.send(
-        request ->
-            request
-                .path("/mcp")
-                .method("POST")
-                .header("Content-Type", "application/json")
-                .header("Accept", "application/json, text/event-stream")
-                .body(
-                    """
-                    {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
-                      "protocolVersion":"2025-11-25","capabilities":{},
-                      "clientInfo":{"name":"shutdown-fixture","version":"1.0"}}}
-                    """
-                        .getBytes(StandardCharsets.UTF_8)));
+    return test.send(request ->
+        request
+            .path("/mcp")
+            .method("POST")
+            .header("Content-Type", "application/json")
+            .header("Accept", "application/json, text/event-stream")
+            .body(
+                """
+                {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+                  "protocolVersion":"2025-11-25","capabilities":{},
+                  "clientInfo":{"name":"shutdown-fixture","version":"1.0"}}}
+                """
+                    .getBytes(StandardCharsets.UTF_8)));
   }
 
   private HttpResponse<InputStream>
@@ -249,43 +247,39 @@ class McpShutdownTest {
   private HttpResponse<byte[]>
       sendInitializedRequestForRejectsStreamRegistrationThatLosesTheRaceWithShutdown(
           TestServer test) throws IOException, InterruptedException {
-    return test.send(
-        request ->
-            request
-                .path("/mcp")
-                .method("POST")
-                .header("Content-Type", "application/json")
-                .header("Accept", "application/json, text/event-stream")
-                .body(
-                    """
-                    {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
-                      "protocolVersion":"2025-11-25","capabilities":{},
-                      "clientInfo":{"name":"shutdown-fixture","version":"1.0"}}}
-                    """
-                        .getBytes(StandardCharsets.UTF_8)));
+    return test.send(request ->
+        request
+            .path("/mcp")
+            .method("POST")
+            .header("Content-Type", "application/json")
+            .header("Accept", "application/json, text/event-stream")
+            .body(
+                """
+                {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+                  "protocolVersion":"2025-11-25","capabilities":{},
+                  "clientInfo":{"name":"shutdown-fixture","version":"1.0"}}}
+                """
+                    .getBytes(StandardCharsets.UTF_8)));
   }
 
   private Future<HttpResponse<byte[]>>
       submitOpeningForRejectsStreamRegistrationThatLosesTheRaceWithShutdown(
           ExecutorService workers, TestServer test, String sessionId) {
-    return workers.submit(
-        () ->
-            test.send(
-                request ->
-                    request
-                        .path("/mcp")
-                        .header("Accept", "text/event-stream")
-                        .header("Mcp-Session-Id", sessionId)
-                        .header("MCP-Protocol-Version", "2025-11-25")));
+    return workers.submit(() ->
+        test.send(request ->
+            request
+                .path("/mcp")
+                .header("Accept", "text/event-stream")
+                .header("Mcp-Session-Id", sessionId)
+                .header("MCP-Protocol-Version", "2025-11-25")));
   }
 
   private Future<Object> submitClosingForRejectsStreamRegistrationThatLosesTheRaceWithShutdown(
       ExecutorService workers, Shoostr app) {
-    return workers.submit(
-        () -> {
-          app.close();
+    return workers.submit(() -> {
+      app.close();
 
-          return null;
-        });
+      return null;
+    });
   }
 }

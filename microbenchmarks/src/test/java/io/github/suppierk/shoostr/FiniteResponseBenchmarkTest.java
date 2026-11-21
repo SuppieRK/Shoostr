@@ -12,15 +12,11 @@ import org.junit.jupiter.params.provider.MethodSource;
 class FiniteResponseBenchmarkTest {
   private static Stream<Arguments> cases() {
     return Stream.of(0, 13, 1024, 16384)
-        .flatMap(
-            characters ->
-                Stream.of("ascii", "unicode")
-                    .flatMap(
-                        shape ->
-                            Stream.of("bytes", "text")
-                                .map(
-                                    representation ->
-                                        Arguments.of(characters, shape, representation))));
+        .flatMap(characters ->
+            Stream.of("ascii", "unicode")
+                .flatMap(shape ->
+                    Stream.of("bytes", "text")
+                        .map(representation -> Arguments.of(characters, shape, representation))));
   }
 
   @ParameterizedTest

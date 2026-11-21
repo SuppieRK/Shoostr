@@ -104,17 +104,16 @@ class BufferedRequestLifecycleTest {
     configuredOptions.setMaxResponseBytes(1024);
     configuredOptions.setStreamBufferBytes(64);
     configuredOptions.setMaxParameters(1000);
-    configuredOptions.setMultipart(MultipartOptions.defaults());
+    configuredOptions.setMultipart(new MultipartOptions());
     configuredOptions.setHttp2(http2);
 
     return new Shoostr(configuredOptions)
-        .modifyServer(
-            nativeServer -> {
-              var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
-              nativeConnector.setHost("127.0.0.1");
-              nativeConnector.setPort(0);
-              nativeConnector.setIdleTimeout(30_000);
-            });
+        .modifyServer(nativeServer -> {
+          var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
+          nativeConnector.setHost("127.0.0.1");
+          nativeConnector.setPort(0);
+          nativeConnector.setIdleTimeout(30_000);
+        });
   }
 
   private static void routes(
@@ -269,16 +268,15 @@ class BufferedRequestLifecycleTest {
       var app = new Shoostr();
 
       try (Closeable appCleanup2 = app::close) {
-        app.afterResponseFlush(
-            (request, response) -> {
-              if (streamed) {
-                try (var input = request.input()) {
-                  observed.complete(new String(input.readAllBytes(), StandardCharsets.US_ASCII));
-                }
-              } else {
-                observed.complete(request.bodyText());
-              }
-            });
+        app.afterResponseFlush((request, response) -> {
+          if (streamed) {
+            try (var input = request.input()) {
+              observed.complete(new String(input.readAllBytes(), StandardCharsets.US_ASCII));
+            }
+          } else {
+            observed.complete(request.bodyText());
+          }
+        });
         app.routes().post("/body", (request, response) -> response.text("ok"));
 
         try (var test = TestServer.start(app);
@@ -540,8 +538,9 @@ class BufferedRequestLifecycleTest {
   }
 
   @ParameterizedTest
-  @ValueSource(ints = {404, 405})
-  void advertisesConnectionClosureWhenRoutingRejectsAnUnavailableBody(int status) throws Exception {
+  @CsvSource({"404,false", "404,true", "405,false", "405,true"})
+  void advertisesConnectionClosureWhenRoutingRejectsAnUnavailableBody(int status, boolean streaming)
+      throws Exception {
     {
       var app =
           new Shoostr()
@@ -549,6 +548,11 @@ class BufferedRequestLifecycleTest {
                   nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
 
       try (Closeable appCleanup7 = app::close) {
+        if (streaming) {
+          app.status(
+              status, (request, response) -> response.startStream("text/plain").write("missing"));
+        }
+
         app.routes().get("/get-only", (ignored, response) -> response.text("unexpected"));
         app.start();
 
@@ -609,9 +613,8 @@ class BufferedRequestLifecycleTest {
 
   private HttpResponse<byte[]> sendResultForLeavesRejectedBodyReadableByBeforeFlushCallbacks(
       TestServer test) throws IOException, InterruptedException {
-    return test.send(
-        request ->
-            request.path("/body").method("POST").body(PAYLOAD.getBytes(StandardCharsets.US_ASCII)));
+    return test.send(request ->
+        request.path("/body").method("POST").body(PAYLOAD.getBytes(StandardCharsets.US_ASCII)));
   }
 
   @Test
@@ -1006,21 +1009,19 @@ class BufferedRequestLifecycleTest {
       var app = app();
 
       try (Closeable appCleanup17 = app::close) {
-        app.modifyHttpConfiguration(
-            configuration ->
-                configuration.addCustomizer(
-                    (nativeRequest, ignoredMutable) -> {
-                      if (!"/bad".equals(nativeRequest.getHttpURI().getPath())) {
-                        return nativeRequest;
-                      }
+        app.modifyHttpConfiguration(configuration ->
+            configuration.addCustomizer((nativeRequest, ignoredMutable) -> {
+              if (!"/bad".equals(nativeRequest.getHttpURI().getPath())) {
+                return nativeRequest;
+              }
 
-                      return new Wrapper(nativeRequest) {
-                        @Override
-                        public long getLength() {
-                          return 3;
-                        }
-                      };
-                    }));
+              return new Wrapper(nativeRequest) {
+                @Override
+                public long getLength() {
+                  return 3;
+                }
+              };
+            }));
         app.afterRequest(outcomes::add);
         app.exception(
             BadRequestException.class,

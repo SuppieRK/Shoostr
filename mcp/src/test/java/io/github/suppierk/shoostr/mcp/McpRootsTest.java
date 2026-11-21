@@ -65,20 +65,18 @@ class McpRootsTest {
                 .serverInfo("roots", "1.0")
                 .requestTimeout(Duration.ofSeconds(5))
                 .capabilities(McpSchema.ServerCapabilities.builder().tools(false).build())
-                .rootsChangeHandler(
-                    (ignoredMcpSyncServerExchange, roots) -> {
-                      if (roots.contains(second)) {
-                        changed.complete(roots);
-                      }
-                    })
+                .rootsChangeHandler((ignoredMcpSyncServerExchange, roots) -> {
+                  if (roots.contains(second)) {
+                    changed.complete(roots);
+                  }
+                })
                 .tools(
                     McpServerFeatures.SyncToolSpecification.builder()
                         .tool(McpSchema.Tool.builder("roots", Map.of("type", "object")).build())
-                        .callHandler(
-                            (exchange, ignoredCallToolRequest) ->
-                                McpSchema.CallToolResult.builder()
-                                    .addTextContent(exchange.listRoots().roots().toString())
-                                    .build())
+                        .callHandler((exchange, ignoredCallToolRequest) ->
+                            McpSchema.CallToolResult.builder()
+                                .addTextContent(exchange.listRoots().roots().toString())
+                                .build())
                         .build())
                 .build());
   }

@@ -119,71 +119,65 @@ class McpSubscriptionDeletionRaceTest {
                 .tools(
                     McpServerFeatures.AsyncToolSpecification.builder()
                         .tool(tool)
-                        .callHandler(
-                            (ignoredMcpAsyncServerExchange, ignoredCallToolRequest) ->
-                                Mono.create(
-                                    sink -> {
-                                      sink.onCancel(
-                                          () -> {
-                                            cancellations.incrementAndGet();
-                                            cancelled.countDown();
-                                          });
-                                      installed.countDown();
-                                      awaitProducerRelease(release);
-                                      returned.countDown();
-                                    }))
+                        .callHandler((ignoredMcpAsyncServerExchange, ignoredCallToolRequest) ->
+                            Mono.create(sink -> {
+                              sink.onCancel(() -> {
+                                cancellations.incrementAndGet();
+                                cancelled.countDown();
+                              });
+                              installed.countDown();
+                              awaitProducerRelease(release);
+                              returned.countDown();
+                            }))
                         .build())
                 .build());
   }
 
   private HttpResponse<byte[]> sendInitializedRequestForPendingNativeSubscription(TestServer test)
       throws IOException, InterruptedException {
-    return test.send(
-        request ->
-            request
-                .path("/mcp")
-                .method("POST")
-                .header("Content-Type", "application/json")
-                .header("Accept", "application/json, text/event-stream")
-                .body(
-                    """
-                    {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
-                      "protocolVersion":"2025-11-25","capabilities":{},
-                      "clientInfo":{"name":"subscription-race-fixture","version":"1.0"}}}
-                    """
-                        .getBytes(StandardCharsets.UTF_8)));
+    return test.send(request ->
+        request
+            .path("/mcp")
+            .method("POST")
+            .header("Content-Type", "application/json")
+            .header("Accept", "application/json, text/event-stream")
+            .body(
+                """
+                {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+                  "protocolVersion":"2025-11-25","capabilities":{},
+                  "clientInfo":{"name":"subscription-race-fixture","version":"1.0"}}}
+                """
+                    .getBytes(StandardCharsets.UTF_8)));
   }
 
   private Future<HttpResponse<InputStream>> submitOpeningForPendingNativeSubscription(
       ExecutorService workers, TestServer test, String sessionId) {
-    return workers.submit(
-        () ->
-            test.send(
-                request ->
-                    request
-                        .path("/mcp")
-                        .method("POST")
-                        .header("Content-Type", "application/json")
-                        .header("Accept", "application/json, text/event-stream")
-                        .header("Mcp-Session-Id", sessionId)
-                        .header("MCP-Protocol-Version", "2025-11-25")
-                        .body(
-                            """
-                            {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{
-                              "name":"wait","arguments":{}}}
-                            """
-                                .getBytes(StandardCharsets.UTF_8)),
-                HttpResponse.BodyHandlers.ofInputStream()));
+    return workers.submit(() ->
+        test.send(
+            request ->
+                request
+                    .path("/mcp")
+                    .method("POST")
+                    .header("Content-Type", "application/json")
+                    .header("Accept", "application/json, text/event-stream")
+                    .header("Mcp-Session-Id", sessionId)
+                    .header("MCP-Protocol-Version", "2025-11-25")
+                    .body(
+                        """
+                        {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{
+                          "name":"wait","arguments":{}}}
+                        """
+                            .getBytes(StandardCharsets.UTF_8)),
+            HttpResponse.BodyHandlers.ofInputStream()));
   }
 
   private HttpResponse<byte[]> sendDeletedRequestForPendingNativeSubscription(
       TestServer test, String sessionId) throws IOException, InterruptedException {
-    return test.send(
-        request ->
-            request
-                .path("/mcp")
-                .method("DELETE")
-                .header("Mcp-Session-Id", sessionId)
-                .header("MCP-Protocol-Version", "2025-11-25"));
+    return test.send(request ->
+        request
+            .path("/mcp")
+            .method("DELETE")
+            .header("Mcp-Session-Id", sessionId)
+            .header("MCP-Protocol-Version", "2025-11-25"));
   }
 }

@@ -26,7 +26,7 @@ class TypedCodecLimitsTest {
     configuredOptions.setMaxResponseBytes(256);
     configuredOptions.setStreamBufferBytes(8);
     configuredOptions.setMaxParameters(1000);
-    configuredOptions.setMultipart(MultipartOptions.defaults());
+    configuredOptions.setMultipart(new MultipartOptions());
 
     {
       var app = createAppForRejectsOversizedRequestBeforeDecoding(configuredOptions);
@@ -63,13 +63,12 @@ class TypedCodecLimitsTest {
 
   private Shoostr createAppForRejectsOversizedRequestBeforeDecoding(Options configuredOptions) {
     return new Shoostr(configuredOptions)
-        .modifyServer(
-            nativeServer -> {
-              var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
-              nativeConnector.setHost("127.0.0.1");
-              nativeConnector.setPort(0);
-              nativeConnector.setIdleTimeout(3000);
-            });
+        .modifyServer(nativeServer -> {
+          var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
+          nativeConnector.setHost("127.0.0.1");
+          nativeConnector.setPort(0);
+          nativeConnector.setIdleTimeout(3000);
+        });
   }
 
   @Test
@@ -79,7 +78,7 @@ class TypedCodecLimitsTest {
     configuredOptions.setMaxResponseBytes(256);
     configuredOptions.setStreamBufferBytes(8);
     configuredOptions.setMaxParameters(1000);
-    configuredOptions.setMultipart(MultipartOptions.defaults());
+    configuredOptions.setMultipart(new MultipartOptions());
 
     {
       var app = createAppForDecodesRequestAtExactByteLimit(configuredOptions);
@@ -104,13 +103,12 @@ class TypedCodecLimitsTest {
 
   private Shoostr createAppForDecodesRequestAtExactByteLimit(Options configuredOptions) {
     return new Shoostr(configuredOptions)
-        .modifyServer(
-            nativeServer -> {
-              var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
-              nativeConnector.setHost("127.0.0.1");
-              nativeConnector.setPort(0);
-              nativeConnector.setIdleTimeout(3000);
-            });
+        .modifyServer(nativeServer -> {
+          var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
+          nativeConnector.setHost("127.0.0.1");
+          nativeConnector.setPort(0);
+          nativeConnector.setIdleTimeout(3000);
+        });
   }
 
   private HttpResponse<String> sendResultForDecodesRequestAtExactByteLimit(TestServer test)
@@ -127,7 +125,7 @@ class TypedCodecLimitsTest {
     configuredOptions.setMaxResponseBytes(8);
     configuredOptions.setStreamBufferBytes(8);
     configuredOptions.setMaxParameters(1000);
-    configuredOptions.setMultipart(MultipartOptions.defaults());
+    configuredOptions.setMultipart(new MultipartOptions());
 
     {
       var app =
@@ -163,13 +161,12 @@ class TypedCodecLimitsTest {
   private Shoostr createAppForEnforcesFiniteLimitAfterEncodingWithoutReplacingStagedBody(
       Options configuredOptions) {
     return new Shoostr(configuredOptions)
-        .modifyServer(
-            nativeServer -> {
-              var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
-              nativeConnector.setHost("127.0.0.1");
-              nativeConnector.setPort(0);
-              nativeConnector.setIdleTimeout(3000);
-            });
+        .modifyServer(nativeServer -> {
+          var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
+          nativeConnector.setHost("127.0.0.1");
+          nativeConnector.setPort(0);
+          nativeConnector.setIdleTimeout(3000);
+        });
   }
 
   @Test

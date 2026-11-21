@@ -117,12 +117,11 @@ class McpScopeDenialTest {
     return new McpStreamableServerTransportProvider() {
       @Override
       public void setSessionFactory(McpStreamableServerSession.Factory factory) {
-        transport.setSessionFactory(
-            request -> {
-              starts.incrementAndGet();
+        transport.setSessionFactory(request -> {
+          starts.incrementAndGet();
 
-              return factory.startSession(request);
-            });
+          return factory.startSession(request);
+        });
       }
 
       @Override
@@ -144,27 +143,25 @@ class McpScopeDenialTest {
 
   private HttpResponse<byte[]> sendDeniedRequestForDeniedInitialization(TestServer test)
       throws IOException, InterruptedException {
-    return test.send(
-        request ->
-            request
-                .path("/mcp")
-                .method("POST")
-                .header("Content-Type", "application/json")
-                .header("Accept", "application/json, text/event-stream")
-                .body(INITIALIZATION.getBytes(StandardCharsets.UTF_8)));
+    return test.send(request ->
+        request
+            .path("/mcp")
+            .method("POST")
+            .header("Content-Type", "application/json")
+            .header("Accept", "application/json, text/event-stream")
+            .body(INITIALIZATION.getBytes(StandardCharsets.UTF_8)));
   }
 
   private HttpResponse<byte[]> sendGrantedRequestForDeniedInitialization(TestServer test)
       throws IOException, InterruptedException {
-    return test.send(
-        request ->
-            request
-                .path("/mcp")
-                .method("POST")
-                .header("Content-Type", "application/json")
-                .header("Accept", "application/json, text/event-stream")
-                .header("X-Verified-Grants", "tools:read tools:write")
-                .body(INITIALIZATION.getBytes(StandardCharsets.UTF_8)));
+    return test.send(request ->
+        request
+            .path("/mcp")
+            .method("POST")
+            .header("Content-Type", "application/json")
+            .header("Accept", "application/json, text/event-stream")
+            .header("X-Verified-Grants", "tools:read tools:write")
+            .body(INITIALIZATION.getBytes(StandardCharsets.UTF_8)));
   }
 
   @Test
@@ -232,48 +229,45 @@ class McpScopeDenialTest {
                 .tools(
                     McpServerFeatures.SyncToolSpecification.builder()
                         .tool(McpSchema.Tool.builder("write", Map.of("type", "object")).build())
-                        .callHandler(
-                            (ignoredMcpSyncServerExchange, ignoredCallToolRequest) -> {
-                              calls.incrementAndGet();
+                        .callHandler((ignoredMcpSyncServerExchange, ignoredCallToolRequest) -> {
+                          calls.incrementAndGet();
 
-                              return McpSchema.CallToolResult.builder()
-                                  .addTextContent("write completed")
-                                  .build();
-                            })
+                          return McpSchema.CallToolResult.builder()
+                              .addTextContent("write completed")
+                              .build();
+                        })
                         .build())
                 .build());
   }
 
   private HttpResponse<byte[]> sendInitializedRequestForGrantedRetry(TestServer test)
       throws IOException, InterruptedException {
-    return test.send(
-        request ->
-            request
-                .path("/mcp")
-                .method("POST")
-                .header("Content-Type", "application/json")
-                .header("Accept", "application/json, text/event-stream")
-                .body(
-                    """
-                    {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
-                      "protocolVersion":"2025-11-25","capabilities":{},
-                      "clientInfo":{"name":"permission-fixture","version":"1.0"}}}
-                    """
-                        .getBytes(StandardCharsets.UTF_8)));
+    return test.send(request ->
+        request
+            .path("/mcp")
+            .method("POST")
+            .header("Content-Type", "application/json")
+            .header("Accept", "application/json, text/event-stream")
+            .body(
+                """
+                {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+                  "protocolVersion":"2025-11-25","capabilities":{},
+                  "clientInfo":{"name":"permission-fixture","version":"1.0"}}}
+                """
+                    .getBytes(StandardCharsets.UTF_8)));
   }
 
   private HttpResponse<byte[]> sendDeniedRequestForGrantedRetry(
       TestServer test, String sessionId, byte[] call) throws IOException, InterruptedException {
-    return test.send(
-        request ->
-            request
-                .path("/mcp")
-                .method("POST")
-                .header("Content-Type", "application/json")
-                .header("Accept", "application/json, text/event-stream")
-                .header("Mcp-Session-Id", sessionId)
-                .header("MCP-Protocol-Version", "2025-11-25")
-                .body(call));
+    return test.send(request ->
+        request
+            .path("/mcp")
+            .method("POST")
+            .header("Content-Type", "application/json")
+            .header("Accept", "application/json, text/event-stream")
+            .header("Mcp-Session-Id", sessionId)
+            .header("MCP-Protocol-Version", "2025-11-25")
+            .body(call));
   }
 
   private HttpResponse<String> sendRetriedRequestForGrantedRetry(
@@ -346,13 +340,12 @@ class McpScopeDenialTest {
   private HttpResponse<byte[]>
       sendDeniedRequestForReportsScopeDenialAsTheTerminalApplicationFailure(TestServer test)
           throws IOException, InterruptedException {
-    return test.send(
-        request ->
-            request
-                .path("/mcp")
-                .method("POST")
-                .header("Content-Type", "application/json")
-                .header("Accept", "application/json, text/event-stream")
-                .body(INITIALIZATION.getBytes(StandardCharsets.UTF_8)));
+    return test.send(request ->
+        request
+            .path("/mcp")
+            .method("POST")
+            .header("Content-Type", "application/json")
+            .header("Accept", "application/json, text/event-stream")
+            .body(INITIALIZATION.getBytes(StandardCharsets.UTF_8)));
   }
 }

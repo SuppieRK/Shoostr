@@ -23,6 +23,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
@@ -52,10 +53,9 @@ class RouteExceptionTest {
                   group.path(
                       "/child",
                       child ->
-                          child.get(
-                              (ignoredRequest, ignoredResponse) -> {
-                                throw new IllegalArgumentException("private");
-                              }));
+                          child.get((ignoredRequest, ignoredResponse) -> {
+                            throw new IllegalArgumentException("private");
+                          }));
                   group.exception(
                       IllegalArgumentException.class,
                       (ignoredFailure, ignoredRequest, response) -> response.text("group"));
@@ -313,10 +313,9 @@ class RouteExceptionTest {
               group.path(
                   "/child",
                   child ->
-                      child.get(
-                          (ignoredTypedRequest, ignoredTypedResponse) -> {
-                            throw new IllegalArgumentException();
-                          }));
+                      child.get((ignoredTypedRequest, ignoredTypedResponse) -> {
+                        throw new IllegalArgumentException();
+                      }));
 
               assertSame(
                   group,
@@ -540,30 +539,28 @@ class RouteExceptionTest {
   void waitsForAnActiveGroupBeforePublishingConcurrentScopeMappings() throws Exception {
     var entered = new CountDownLatch(1);
     var release = new CountDownLatch(1);
+    var mappingAttempted = new CountDownLatch(1);
 
-    try (var workers = Executors.newSingleThreadExecutor()) {
+    try (var workers = Executors.newFixedThreadPool(2)) {
       var app = new Shoostr();
 
       try (Closeable appCleanup16 = app::close) {
-        var registration =
-            submitRegistrationForWaitsForAnActiveGroupBeforePublishingConcurrentScopeMappings(
-                workers, app, entered, release);
+        var registration = submitBlockedGroup(workers, app, entered, release);
+        Future<Routes> mapping;
 
         try {
           assertTrue(entered.await(3, TimeUnit.SECONDS));
+          mapping = submitConcurrentMapping(workers, app, mappingAttempted);
+          assertTrue(mappingAttempted.await(3, TimeUnit.SECONDS));
 
-          app.routes()
-              .exception(
-                  IllegalArgumentException.class,
-                  (ignoredFailure, ignoredRequest, response) ->
-                      response.text("concurrent mapping"));
-
+          assertThrows(TimeoutException.class, () -> mapping.get(150, TimeUnit.MILLISECONDS));
           assertThrows(IllegalStateException.class, app::start);
         } finally {
           release.countDown();
         }
 
         registration.get(3, TimeUnit.SECONDS);
+        mapping.get(3, TimeUnit.SECONDS);
 
         try (var test = TestServer.start(app)) {
           assertEquals(
@@ -576,27 +573,37 @@ class RouteExceptionTest {
     }
   }
 
-  private Future<Routes>
-      submitRegistrationForWaitsForAnActiveGroupBeforePublishingConcurrentScopeMappings(
-          ExecutorService workers, Shoostr app, CountDownLatch entered, CountDownLatch release) {
-    return workers.submit(
-        () ->
-            app.routes()
-                .path(
-                    "/concurrent",
-                    group -> {
-                      group.get(REJECT);
-                      entered.countDown();
+  private Future<Routes> submitBlockedGroup(
+      ExecutorService workers, Shoostr app, CountDownLatch entered, CountDownLatch release) {
+    return workers.submit(() ->
+        app.routes()
+            .path(
+                "/concurrent",
+                group -> {
+                  group.get(REJECT);
+                  entered.countDown();
 
-                      try {
-                        if (!release.await(3, TimeUnit.SECONDS)) {
-                          throw new IllegalStateException("Registration release timed out");
-                        }
-                      } catch (InterruptedException failure) {
-                        Thread.currentThread().interrupt();
-                        throw new IllegalStateException(failure);
-                      }
-                    }));
+                  try {
+                    if (!release.await(3, TimeUnit.SECONDS)) {
+                      throw new IllegalStateException("Registration release timed out");
+                    }
+                  } catch (InterruptedException failure) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException(failure);
+                  }
+                }));
+  }
+
+  private Future<Routes> submitConcurrentMapping(
+      ExecutorService workers, Shoostr app, CountDownLatch mappingAttempted) {
+    return workers.submit(() -> {
+      mappingAttempted.countDown();
+
+      return app.routes()
+          .exception(
+              IllegalArgumentException.class,
+              (ignoredFailure, ignoredRequest, response) -> response.text("concurrent mapping"));
+    });
   }
 
   private static final class RejectingAuthentication extends AuthenticationExtension {

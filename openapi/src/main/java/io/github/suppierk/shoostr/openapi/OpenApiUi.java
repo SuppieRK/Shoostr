@@ -3,6 +3,8 @@ package io.github.suppierk.shoostr.openapi;
 import io.github.suppierk.shoostr.Handler;
 import io.github.suppierk.shoostr.Request;
 import io.github.suppierk.shoostr.Response;
+import io.github.suppierk.shoostr.http.HttpCharacters;
+import io.github.suppierk.shoostr.http.HttpStatusCodes;
 import io.swagger.v3.core.util.Json31;
 import java.io.IOException;
 import java.net.URI;
@@ -11,7 +13,6 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
-import java.util.concurrent.atomic.AtomicReference;
 import org.jspecify.annotations.Nullable;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.node.ObjectNode;
@@ -22,10 +23,14 @@ import tools.jackson.databind.node.ObjectNode;
  * so startup preparation preserves equality and hashing.
  */
 final class OpenApiUi implements Handler {
+  static final String STYLESHEET_NAME = "swagger-ui.css";
+  static final String BUNDLE_NAME = "swagger-ui-bundle.js";
+
   private static final String HTML = htmlPage();
+
   private final String basePath;
   private final String specPath;
-  private final AtomicReference<@Nullable Map<String, Resource>> resources;
+  private volatile @Nullable Map<String, Resource> resources;
 
   /**
    * Validates literal local resource paths without preparing assets during registration.
@@ -37,11 +42,9 @@ final class OpenApiUi implements Handler {
   OpenApiUi(String basePath, String specPath) {
     this.basePath = path(basePath);
     this.specPath = path(specPath);
-    if (!basePath.endsWith("/")) {
+    if (!basePath.endsWith(HttpCharacters.PATH_SEPARATOR_STRING)) {
       throw new IllegalArgumentException("UI page path must end in a slash");
     }
-
-    this.resources = new AtomicReference<>();
   }
 
   /**
@@ -69,7 +72,7 @@ final class OpenApiUi implements Handler {
    * @throws IOException if packaging omitted the asset or reading fails
    */
   static byte[] asset(String name) throws IOException {
-    try (var source = OpenApiUi.class.getResourceAsStream("ui/" + name)) {
+    try (final var source = OpenApiUi.class.getResourceAsStream("ui/" + name)) {
       if (source == null) {
         throw new IOException("Missing packaged Swagger UI asset: " + name);
       }
@@ -86,17 +89,13 @@ final class OpenApiUi implements Handler {
    * @throws IllegalArgumentException if the value is not a literal absolute local path
    */
   private static String path(String value) {
-    var uri = URI.create(OpenApi.text(value));
-    if (!value.startsWith("/")
-        || value.startsWith("//")
-        || uri.isAbsolute()
-        || uri.getRawAuthority() != null
+    final var uri = URI.create(OpenApi.text(value));
+    if (!value.startsWith(HttpCharacters.PATH_SEPARATOR_STRING)
+        || value.contains("//")
         || uri.getRawQuery() != null
         || uri.getRawFragment() != null
         || !uri.normalize().equals(uri)
-        || value.contains("{")
-        || value.contains("%")
-        || value.contains("//")) {
+        || value.contains("" + HttpCharacters.PERCENT_SIGN)) {
       throw new IllegalArgumentException("UI resources require absolute literal same-origin paths");
     }
 
@@ -133,20 +132,19 @@ final class OpenApiUi implements Handler {
    * @param bundle packaged browser bundle
    */
   void prepare(byte[] css, byte[] bundle) {
-    var config = uiConfiguration();
-    var initializer = initializationScript(config);
-    var prepared = new HashMap<String, Resource>();
+    final var config = uiConfiguration();
+    final var initializer = initializationScript(config);
+    final var prepared = new HashMap<String, Resource>();
     prepared.put(
         basePath, new Resource("text/html; charset=utf-8", HTML.getBytes(StandardCharsets.UTF_8)));
-    prepared.put(basePath + "swagger-ui.css", new Resource("text/css; charset=utf-8", css));
-    prepared.put(
-        basePath + "swagger-ui-bundle.js", new Resource("text/javascript; charset=utf-8", bundle));
+    prepared.put(basePath + STYLESHEET_NAME, new Resource("text/css; charset=utf-8", css));
+    prepared.put(basePath + BUNDLE_NAME, new Resource("text/javascript; charset=utf-8", bundle));
     prepared.put(
         basePath + "swagger-initializer.js",
         new Resource(
             "text/javascript; charset=utf-8", initializer.getBytes(StandardCharsets.UTF_8)));
 
-    resources.set(Map.copyOf(prepared));
+    resources = Map.copyOf(prepared);
   }
 
   /**
@@ -195,14 +193,14 @@ final class OpenApiUi implements Handler {
    */
   @Override
   public void handle(Request request, Response response) throws IOException {
-    var prepared = resources.get();
+    final var prepared = resources;
     if (prepared == null) {
       throw new IllegalStateException("OpenAPI UI is not prepared");
     }
 
-    var resource = prepared.get(request.path());
+    final var resource = prepared.get(request.path());
     if (resource == null) {
-      response.status(404);
+      response.status(HttpStatusCodes.NOT_FOUND.value());
       return;
     }
 

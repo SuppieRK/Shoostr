@@ -140,11 +140,10 @@ class TypedCodecCompositionTest {
       @Override
       public void install(ApplicationCallbacks callbacks) {
         callbacks
-            .onRouteMatched(
-                (request, response) -> {
-                  requestSeen.set(request);
-                  responseSeen.set(response);
-                })
+            .onRouteMatched((request, response) -> {
+              requestSeen.set(request);
+              responseSeen.set(response);
+            })
             .afterRequest(outcomes::add);
       }
     }
@@ -206,11 +205,10 @@ class TypedCodecCompositionTest {
 
   private Shoostr createReturnedForMixesOrdinaryAndTypedHandlersInOneApp(Shoostr app) {
     return app.codec(new TestCodec())
-        .routes(
-            routes ->
-                routes.get(
-                    "/typed",
-                    (ignoredTypedRequest, response) -> response.body("application/json", "typed")));
+        .routes(routes ->
+            routes.get(
+                "/typed",
+                (ignoredTypedRequest, response) -> response.body("application/json", "typed")));
   }
 
   @ParameterizedTest
@@ -280,7 +278,7 @@ class TypedCodecCompositionTest {
           throw new AuthenticationRequiredException("Bearer");
         }
 
-        request.principal(() -> "Alice");
+        assertSame(request, request.principal(() -> "Alice"));
       }
     };
   }

@@ -76,9 +76,8 @@ class RequestMetadataTest {
   @ParameterizedTest
   @NullSource
   void rejectsNullPathNamesBeforeAndAfterRouteSelection(String name) throws Exception {
-    app.onRequestHeaders(
-        (request, ignored) ->
-            assertThrows(NullPointerException.class, () -> request.pathParam(name)));
+    app.onRequestHeaders((request, ignored) ->
+        assertThrows(NullPointerException.class, () -> request.pathParam(name)));
     app.routes()
         .get(
             "/null-name/{id}",
@@ -101,32 +100,29 @@ class RequestMetadataTest {
 
   @Test
   void representsMissingNativeUriMetadataWithEmptyOptionals() throws Exception {
-    app.modifyHttpConfiguration(
-        configuration ->
-            configuration.addCustomizer(
-                (nativeRequest, ignoredMutable) -> {
-                  var uri =
-                      HttpURI.build(nativeRequest.getHttpURI())
-                          .scheme((String) null)
-                          .authority(null, -1)
-                          .asImmutable();
-                  var nativeMetadata = nativeRequest.getConnectionMetaData();
-                  var metadata =
-                      createMetadataForRepresentsMissingNativeUriMetadataWithEmptyOptionals(
-                          nativeMetadata);
+    app.modifyHttpConfiguration(configuration ->
+        configuration.addCustomizer((nativeRequest, ignoredMutable) -> {
+          var uri =
+              HttpURI.build(nativeRequest.getHttpURI())
+                  .scheme((String) null)
+                  .authority(null, -1)
+                  .asImmutable();
+          var nativeMetadata = nativeRequest.getConnectionMetaData();
+          var metadata =
+              createMetadataForRepresentsMissingNativeUriMetadataWithEmptyOptionals(nativeMetadata);
 
-                  return new Wrapper(nativeRequest) {
-                    @Override
-                    public HttpURI getHttpURI() {
-                      return uri;
-                    }
+          return new Wrapper(nativeRequest) {
+            @Override
+            public HttpURI getHttpURI() {
+              return uri;
+            }
 
-                    @Override
-                    public ConnectionMetaData getConnectionMetaData() {
-                      return metadata;
-                    }
-                  };
-                }));
+            @Override
+            public ConnectionMetaData getConnectionMetaData() {
+              return metadata;
+            }
+          };
+        }));
     app.routes()
         .get(
             "/missing-native",
@@ -163,30 +159,28 @@ class RequestMetadataTest {
 
   @Test
   void representsMissingNativeSocketAddressesWithEmptyOptionals() throws Exception {
-    app.modifyHttpConfiguration(
-        configuration ->
-            configuration.addCustomizer(
-                (nativeRequest, ignoredMutable) -> {
-                  var nativeMetadata = nativeRequest.getConnectionMetaData();
-                  var nativeConnection = nativeMetadata.getConnection();
-                  var nativeEndpoint = nativeConnection.getEndPoint();
-                  var endpoint =
-                      createEndpointForRepresentsMissingNativeSocketAddressesWithEmptyOptionals(
-                          nativeEndpoint);
-                  var connection =
-                      createConnectionForRepresentsMissingNativeSocketAddressesWithEmptyOptionals(
-                          endpoint, nativeConnection);
-                  var metadata =
-                      createMetadataForRepresentsMissingNativeSocketAddressesWithEmptyOptionals(
-                          connection, nativeMetadata);
+    app.modifyHttpConfiguration(configuration ->
+        configuration.addCustomizer((nativeRequest, ignoredMutable) -> {
+          var nativeMetadata = nativeRequest.getConnectionMetaData();
+          var nativeConnection = nativeMetadata.getConnection();
+          var nativeEndpoint = nativeConnection.getEndPoint();
+          var endpoint =
+              createEndpointForRepresentsMissingNativeSocketAddressesWithEmptyOptionals(
+                  nativeEndpoint);
+          var connection =
+              createConnectionForRepresentsMissingNativeSocketAddressesWithEmptyOptionals(
+                  endpoint, nativeConnection);
+          var metadata =
+              createMetadataForRepresentsMissingNativeSocketAddressesWithEmptyOptionals(
+                  connection, nativeMetadata);
 
-                  return new Wrapper(nativeRequest) {
-                    @Override
-                    public ConnectionMetaData getConnectionMetaData() {
-                      return metadata;
-                    }
-                  };
-                }));
+          return new Wrapper(nativeRequest) {
+            @Override
+            public ConnectionMetaData getConnectionMetaData() {
+              return metadata;
+            }
+          };
+        }));
     app.trustedProxies(InetAddress::isLoopbackAddress);
     app.routes()
         .get(
@@ -261,22 +255,20 @@ class RequestMetadataTest {
   @Test
   void readsIndividualHeadersWithoutEnumeratingTheHeaderSnapshot() throws Exception {
     var enumerations = new AtomicInteger();
-    app.modifyHttpConfiguration(
-        configuration ->
-            configuration.addCustomizer(
-                (nativeRequest, ignoredMutable) -> {
-                  var original = nativeRequest.getHeaders().asImmutable();
-                  var fields =
-                      createFieldsForReadsIndividualHeadersWithoutEnumeratingTheHeaderSnapshot(
-                          enumerations, original);
+    app.modifyHttpConfiguration(configuration ->
+        configuration.addCustomizer((nativeRequest, ignoredMutable) -> {
+          var original = nativeRequest.getHeaders().asImmutable();
+          var fields =
+              createFieldsForReadsIndividualHeadersWithoutEnumeratingTheHeaderSnapshot(
+                  enumerations, original);
 
-                  return new Wrapper(nativeRequest) {
-                    @Override
-                    public HttpFields getHeaders() {
-                      return fields;
-                    }
-                  };
-                }));
+          return new Wrapper(nativeRequest) {
+            @Override
+            public HttpFields getHeaders() {
+              return fields;
+            }
+          };
+        }));
     app.routes()
         .get(
             "/individual",
@@ -394,25 +386,22 @@ class RequestMetadataTest {
   @Test
   void capturesHeadersAndCookiesBeforeAdmissionHooks() throws Exception {
     var transportHeaders = new AtomicReference<HttpFields.Mutable>();
-    app.modifyHttpConfiguration(
-        configuration ->
-            configuration.addCustomizer(
-                (nativeRequest, ignoredMutable) -> {
-                  var fields = HttpFields.build(nativeRequest.getHeaders());
-                  transportHeaders.set(fields);
+    app.modifyHttpConfiguration(configuration ->
+        configuration.addCustomizer((nativeRequest, ignoredMutable) -> {
+          var fields = HttpFields.build(nativeRequest.getHeaders());
+          transportHeaders.set(fields);
 
-                  return new Wrapper(nativeRequest) {
-                    @Override
-                    public HttpFields getHeaders() {
-                      return fields;
-                    }
-                  };
-                }));
-    app.onRequestHeaders(
-        (ignoredRequest, ignoredResponse) -> {
-          transportHeaders.get().put("X-Snapshot", "changed");
-          transportHeaders.get().put("Cookie", "token=changed");
-        });
+          return new Wrapper(nativeRequest) {
+            @Override
+            public HttpFields getHeaders() {
+              return fields;
+            }
+          };
+        }));
+    app.onRequestHeaders((ignoredRequest, ignoredResponse) -> {
+      transportHeaders.get().put("X-Snapshot", "changed");
+      transportHeaders.get().put("Cookie", "token=changed");
+    });
     app.routes()
         .get(
             "/snapshot",
@@ -630,12 +619,11 @@ class RequestMetadataTest {
   void managesRequestLocalAttributesWithExplicitNullRemoval() throws Exception {
     var retained = new AtomicReference<Map<String, Object>>();
     var value = new Object();
-    app.beforeRouteHandler(
-        (request, ignoredResponse) -> {
-          assertTrue(request.attribute("value").isEmpty());
-          assertEquals(Map.of(), request.attributeMap());
-          assertSame(request, request.attribute("value", value));
-        });
+    app.beforeRouteHandler((request, ignoredResponse) -> {
+      assertTrue(request.attribute("value").isEmpty());
+      assertEquals(Map.of(), request.attributeMap());
+      assertSame(request, request.attribute("value", value));
+    });
     app.routes()
         .get(
             "/attributes",
@@ -683,20 +671,19 @@ class RequestMetadataTest {
   @Test
   void propagatesPrincipalAndStateThroughErrorHandling() throws Exception {
     var retained = new AtomicReference<Principal>();
-    app.beforeRouteHandler(
-        (request, ignoredResponse) -> {
-          assertTrue(request.principal().isEmpty());
+    app.beforeRouteHandler((request, ignoredResponse) -> {
+      assertTrue(request.principal().isEmpty());
 
-          if (request.routePattern().filter("/users/{id}"::equals).isPresent()) {
-            var name = request.pathParam("id").orElseThrow();
-            Principal principal = () -> name;
+      if (request.routePattern().filter("/users/{id}"::equals).isPresent()) {
+        var name = request.pathParam("id").orElseThrow();
+        Principal principal = () -> name;
 
-            assertSame(request, request.principal(principal));
+        assertSame(request, request.principal(principal));
 
-            retained.set(principal);
-            request.attribute("trace", "trace-" + name);
-          }
-        });
+        retained.set(principal);
+        request.attribute("trace", "trace-" + name);
+      }
+    });
     app.exception(
         IllegalArgumentException.class,
         (ignoredFailure, request, response) -> {
@@ -753,14 +740,13 @@ class RequestMetadataTest {
     try (var testRequests = Executors.newVirtualThreadPerTaskExecutor()) {
       var entered = new CountDownLatch(8);
       var release = new CountDownLatch(1);
-      app.beforeRouteHandler(
-          (request, ignoredResponse) -> {
-            assertTrue(request.principal().isEmpty());
-            assertEquals(Map.of(), request.attributeMap());
+      app.beforeRouteHandler((request, ignoredResponse) -> {
+        assertTrue(request.principal().isEmpty());
+        assertEquals(Map.of(), request.attributeMap());
 
-            var id = request.pathParam("id").orElseThrow();
-            request.principal(() -> id).attribute("id", id);
-          });
+        var id = request.pathParam("id").orElseThrow();
+        request.principal(() -> id).attribute("id", id);
+      });
       app.routes()
           .get(
               "/concurrent/{id}",
@@ -780,15 +766,14 @@ class RequestMetadataTest {
         for (int index = 0; index < 8; index++) {
           var path = "/concurrent/" + index;
           results.add(
-              testRequests.submit(
-                  () ->
-                      test.send(
-                          request ->
-                              request
-                                  .path(path)
-                                  .timeout(Duration.ofSeconds(3))
-                                  .timeout(Duration.ofSeconds(8)),
-                          HttpResponse.BodyHandlers.ofString())));
+              testRequests.submit(() ->
+                  test.send(
+                      request ->
+                          request
+                              .path(path)
+                              .timeout(Duration.ofSeconds(3))
+                              .timeout(Duration.ofSeconds(8)),
+                      HttpResponse.BodyHandlers.ofString())));
         }
 
         try {
@@ -827,11 +812,10 @@ class RequestMetadataTest {
     trust.init(keyStore);
     var context = SSLContext.getInstance("TLS");
     context.init(null, trust.getTrustManagers(), null);
-    app.tls(
-        tls -> {
-          tls.setKeyStore(keyStore);
-          tls.setKeyStorePassword("changeit");
-        });
+    app.tls(tls -> {
+      tls.setKeyStore(keyStore);
+      tls.setKeyStorePassword("changeit");
+    });
     app.routes()
         .get(
             "/metadata",
@@ -991,32 +975,41 @@ class RequestMetadataTest {
     }
   }
 
-  @Test
-  void confinesMetadataAndStateToTheLiveHandlerThread() throws Exception {
+  @ParameterizedTest
+  @CsvSource({"false,false", "false,true", "true,false", "true,true"})
+  void confinesMetadataAndStateToTheLiveHandlerThread(boolean parameterizedPath, boolean forwarded)
+      throws Exception {
     var retained = new AtomicReference<Request>();
     var snapshot = new AtomicReference<Map<String, List<String>>>();
     List<Function<Request, Object>> readers =
         createReadersForConfinesMetadataAndStateToTheLiveHandlerThread();
+    app.sessions();
+    if (forwarded) {
+      app.trustedProxies(InetAddress::isLoopbackAddress);
+    }
+
     app.routes()
         .get(
-            "/lifetime/{id}",
+            parameterizedPath ? "/lifetime/{id}" : "/lifetime",
             (request, response) -> {
+              assertEquals(forwarded, request.isForwarded());
               retained.set(request);
               snapshot.set(request.headerMap());
               request.attribute("state", "value").principal(() -> "user");
+              request.getOrCreateSession();
+              request.input();
 
               try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
                 executor
-                    .submit(
-                        () -> {
-                          for (var reader : readers) {
-                            assertThrows(IllegalStateException.class, () -> reader.apply(request));
-                          }
+                    .submit(() -> {
+                      for (var reader : readers) {
+                        assertThrows(IllegalStateException.class, () -> reader.apply(request));
+                      }
 
-                          assertThrows(
-                              IllegalStateException.class, () -> request.attribute("state", "bad"));
-                          assertThrows(IllegalStateException.class, () -> request.principal(null));
-                        })
+                      assertThrows(
+                          IllegalStateException.class, () -> request.attribute("state", "bad"));
+                      assertThrows(IllegalStateException.class, () -> request.principal(null));
+                    })
                     .get(3, TimeUnit.SECONDS);
               }
 
@@ -1024,7 +1017,8 @@ class RequestMetadataTest {
 
               assertEquals("value", request.attribute("state").orElseThrow());
               assertEquals("user", request.principal().orElseThrow().getName());
-              assertEquals(Map.of("id", "one"), request.pathParamMap());
+              assertEquals(
+                  parameterizedPath ? Map.of("id", "one") : Map.of(), request.pathParamMap());
 
               stream.write("streamed");
             });
@@ -1036,8 +1030,11 @@ class RequestMetadataTest {
           test.send(
                   request ->
                       request
-                          .path("/lifetime/one")
+                          .path(parameterizedPath ? "/lifetime/one" : "/lifetime")
                           .timeout(Duration.ofSeconds(3))
+                          .header(
+                              "Forwarded",
+                              "for=\"203.0.113.7:4123\";host=public.example;proto=https")
                           .header("X-Value", "kept"),
                   HttpResponse.BodyHandlers.ofString())
               .body());
@@ -1066,7 +1063,9 @@ class RequestMetadataTest {
   private List<Function<Request, Object>>
       createReadersForConfinesMetadataAndStateToTheLiveHandlerThread() {
     return List.of(
+        Request::method,
         Request::queryString,
+        Request::input,
         Request::headerMap,
         Request::pathParamMap,
         Request::url,
@@ -1076,6 +1075,7 @@ class RequestMetadataTest {
         Request::serverName,
         Request::serverPort,
         Request::protocol,
+        Request::webSocketProtocols,
         Request::isSecure,
         Request::localAddress,
         Request::remoteAddress,
@@ -1089,6 +1089,7 @@ class RequestMetadataTest {
         request -> request.pathParam("missing"),
         request -> request.queryParam("missing"),
         request -> request.header("missing"),
+        request -> request.headers("missing"),
         request -> request.cookie("missing"),
         Request::getSession,
         Request::getOrCreateSession);

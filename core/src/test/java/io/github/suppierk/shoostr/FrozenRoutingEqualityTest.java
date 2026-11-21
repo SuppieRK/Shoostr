@@ -47,11 +47,6 @@ class FrozenRoutingEqualityTest {
   }
 
   @Test
-  void specialBranchSatisfiesEqualsAndHashCodeContract() throws Exception {
-    verifyNode(Class.forName(RadixRoutes.class.getName() + "$SpecialBranchRoutes"));
-  }
-
-  @Test
   void catchAllBranchSatisfiesEqualsAndHashCodeContract() throws Exception {
     verifyNode(Class.forName(RadixRoutes.class.getName() + "$CatchAllRoutes"));
   }
@@ -78,13 +73,22 @@ class FrozenRoutingEqualityTest {
             "/items/{id:[0-9]+}",
             "/files/{*tail}",
             "/other"));
+
+    var compact = tree(handler, "/items/{id:[0-9]}/details");
+    var expanded = tree(handler, "/items/{id:[0123456789]}/details");
+    assertNotEquals(compact, expanded);
+    assertEquals(compact, tree(handler, "/items/{id:[0-9]}/details"));
+    assertEquals(expanded, tree(handler, "/items/{id:[0123456789]}/details"));
   }
 
   @Test
   void concreteNodeKindsRemainUnequalEvenWithMatchingStoredFields()
       throws ReflectiveOperationException {
     Handler handler = (request, response) -> {};
-    var special = tree(handler, "/{id:[0-9]+}");
+    var root = tree(handler, "/{id:[0-9]+}");
+    var children = RadixRoutes.class.getDeclaredField("children");
+    children.setAccessible(true);
+    var special = ((RadixRoutes[]) children.get(root))[0];
     var fields = new Object[6];
     var names = List.of("edge", "label", "endpoints", "children", "parameter", "staticFiles");
     for (int index = 0; index < names.size(); index++) {
@@ -150,9 +154,11 @@ class FrozenRoutingEqualityTest {
                 .withRedefinedSuperclass()
                 .withPrefabValuesForField(
                     "constraint",
-                    constructRecord(constraint, "[0-9]+", 1L, 2L, 1, 10, Map.of(firstEndpoint, 1)),
-                    constructRecord(constraint, "[a-z]+", 4L, 8L, 2, 20, Map.of(secondEndpoint, 2)))
-                .withNonnullFields("endpoints", "children", "staticFiles", "constraint");
+                    constructRecord(constraint, 1L, 2L, 1, 10),
+                    constructRecord(constraint, 4L, 8L, 2, 20))
+                .withPrefabValuesForField(
+                    "ranks", Map.of(firstEndpoint, 1), Map.of(firstEndpoint, 2))
+                .withNonnullFields("endpoints", "children", "staticFiles", "constraint", "ranks");
       }
 
       verifier.verify();

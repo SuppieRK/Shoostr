@@ -23,19 +23,18 @@ final class McpExpiryAssertions {
         .pollDelay(Duration.ZERO)
         .pollInterval(Duration.ofMillis(10))
         .atMost(Duration.ofSeconds(2))
-        .untilAsserted(
-            () ->
-                assertTrue(
-                    terminated.getAsBoolean(),
-                    () ->
-                        "Unfinished expired request: expiry="
-                            + expiry
-                            + ", now="
-                            + Instant.now()
-                            + ", wallElapsed="
-                            + Duration.between(wallStart, Instant.now())
-                            + ", monotonicElapsed="
-                            + Duration.ofNanos(System.nanoTime() - nanoStart)));
+        .untilAsserted(() ->
+            assertTrue(
+                terminated.getAsBoolean(),
+                () ->
+                    "Unfinished expired request: expiry="
+                        + expiry
+                        + ", now="
+                        + Instant.now()
+                        + ", wallElapsed="
+                        + Duration.between(wallStart, Instant.now())
+                        + ", monotonicElapsed="
+                        + Duration.ofNanos(System.nanoTime() - nanoStart)));
   }
 
   static void awaitExpiry(Instant expiry) {
@@ -44,13 +43,12 @@ final class McpExpiryAssertions {
         .pollDelay(Duration.ZERO)
         .pollInterval(Duration.ofMillis(10))
         .atMost(Duration.ofSeconds(10))
-        .untilAsserted(
-            () -> {
-              var now = Instant.now();
+        .untilAsserted(() -> {
+          var now = Instant.now();
 
-              assertFalse(
-                  now.isBefore(expiry), "Token remains fresh: now=" + now + ", expiry=" + expiry);
-            });
+          assertFalse(
+              now.isBefore(expiry), "Token remains fresh: now=" + now + ", expiry=" + expiry);
+        });
   }
 
   static void assertNotBeforeExpiry(Instant expiry, Instant observed) {

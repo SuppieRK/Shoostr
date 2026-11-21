@@ -15,14 +15,19 @@ import java.net.Socket;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.security.KeyStore;
+import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Stream;
+import javax.net.ssl.SNIHostName;
 import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLSocket;
 import javax.net.ssl.TrustManagerFactory;
 import org.eclipse.jetty.http.HttpTester;
+import org.eclipse.jetty.server.SecureRequestCustomizer;
 import org.eclipse.jetty.server.ServerConnector;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
@@ -88,6 +93,67 @@ class EffectiveSecurityTest {
     }
 
     return identity;
+  }
+
+  @Test
+  void rejectsTlsHostMismatchBeforeInvokingTheEndpoint() throws Exception {
+    var identity = identity();
+    var context = trustedContext(identity);
+    var invoked = new AtomicInteger();
+    var app = new Shoostr();
+
+    try (Closeable appCleanup = app::close) {
+      app.modifyHttpConfiguration(
+          http -> assertNotNull(http.getCustomizer(SecureRequestCustomizer.class)));
+      app.tls(server -> {
+        server.setKeyStore(identity);
+        server.setKeyStorePassword("changeit");
+      });
+      app.routes()
+          .get(
+              "/host",
+              (request, response) -> {
+                invoked.incrementAndGet();
+                response.text("matched");
+              });
+
+      try (var test = TestServer.start(app, client -> client.sslContext(context))) {
+        var accepted = sendTlsHost(context, test.baseUri().getPort(), "localhost");
+        assertEquals(200, accepted.getStatus());
+        assertEquals("matched", accepted.getContent());
+
+        var rejected = sendTlsHost(context, test.baseUri().getPort(), "wrong.example");
+        assertEquals(400, rejected.getStatus());
+        assertEquals(1, invoked.get());
+      }
+    }
+  }
+
+  private SSLContext trustedContext(KeyStore identity) throws Exception {
+    var trust = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+    trust.init(identity);
+    var context = SSLContext.getInstance("TLS");
+    context.init(null, trust.getTrustManagers(), null);
+    return context;
+  }
+
+  private HttpTester.Response sendTlsHost(SSLContext context, int port, String host)
+      throws IOException {
+    try (var socket = (SSLSocket) context.getSocketFactory().createSocket("localhost", port)) {
+      socket.setSoTimeout(5000);
+      var parameters = socket.getSSLParameters();
+      parameters.setServerNames(List.of(new SNIHostName("localhost")));
+      socket.setSSLParameters(parameters);
+      socket.startHandshake();
+      socket
+          .getOutputStream()
+          .write(
+              ("GET /host HTTP/1.1\r\nHost: " + host + "\r\nConnection: close\r\n\r\n")
+                  .getBytes(StandardCharsets.US_ASCII));
+      socket.getOutputStream().flush();
+      return Objects.requireNonNull(
+          HttpTester.parseResponse(HttpTester.from(socket.getInputStream())));
+    }
   }
 
   @ParameterizedTest
@@ -189,11 +255,10 @@ class EffectiveSecurityTest {
       var app = application(family, true);
 
       try (Closeable appCleanup = app::close) {
-        app.tls(
-            server -> {
-              server.setKeyStore(identity);
-              server.setKeyStorePassword("changeit");
-            });
+        app.tls(server -> {
+          server.setKeyStore(identity);
+          server.setKeyStorePassword("changeit");
+        });
 
         try (var test = TestServer.start(app, client -> client.sslContext(tls))) {
           var response =
@@ -274,10 +339,8 @@ class EffectiveSecurityTest {
                   assertEquals(asserted, request.isEffectivelySecure());
 
                   children
-                      .submit(
-                          () ->
-                              assertThrows(
-                                  IllegalStateException.class, request::isEffectivelySecure))
+                      .submit(() ->
+                          assertThrows(IllegalStateException.class, request::isEffectivelySecure))
                       .get(3, TimeUnit.SECONDS);
                   response.text("checked");
                 });
@@ -291,14 +354,13 @@ class EffectiveSecurityTest {
           assertEquals("checked", response.body());
 
           executor
-              .submit(
-                  () -> {
-                    assertSame(thread.get(), Thread.currentThread());
+              .submit(() -> {
+                assertSame(thread.get(), Thread.currentThread());
 
-                    var request = saved.get();
+                var request = saved.get();
 
-                    assertThrows(IllegalStateException.class, request::isEffectivelySecure);
-                  })
+                assertThrows(IllegalStateException.class, request::isEffectivelySecure);
+              })
               .get(3, TimeUnit.SECONDS);
         }
       }

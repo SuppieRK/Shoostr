@@ -3,6 +3,7 @@ package io.github.suppierk.shoostr.example.responses;
 import io.github.suppierk.shoostr.MultipartOptions;
 import io.github.suppierk.shoostr.Options;
 import io.github.suppierk.shoostr.Shoostr;
+import io.github.suppierk.shoostr.http.HttpCharacters;
 import io.github.suppierk.shoostr.http.HttpMethods;
 import io.github.suppierk.shoostr.http.HttpStatusCodes;
 import io.github.suppierk.shoostr.http.MediaType;
@@ -34,7 +35,7 @@ public final class ResponseBodyExample {
                         (ignoredRequest, response) ->
                             response.body(
                                 MediaType.APPLICATION_OCTET_STREAM,
-                                new byte[] {0, 1, 127, (byte) 0xff}))
+                                new byte[] {0, 1, 127, (byte) HttpCharacters.MAX_UNSIGNED_BYTE_VALUE}))
                     // The selected charset controls both text encoding and Content-Type metadata.
                     .get(
                         "/latin1",
@@ -64,7 +65,7 @@ public final class ResponseBodyExample {
     options.setMaxResponseBytes(64);
     options.setStreamBufferBytes(512);
     options.setMaxParameters(1000);
-    options.setMultipart(MultipartOptions.defaults());
+    options.setMultipart(new MultipartOptions());
 
     return options;
   }

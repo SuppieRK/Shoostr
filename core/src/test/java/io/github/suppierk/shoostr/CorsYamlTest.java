@@ -11,6 +11,8 @@ import io.github.suppierk.shoostr.testing.TestServer;
 import java.io.Closeable;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.yaml.snakeyaml.Yaml;
 
 class CorsYamlTest {
@@ -92,6 +94,15 @@ class CorsYamlTest {
     assertEquals(60, snapshot.maxAgeSeconds());
   }
 
+  @Test
+  void preservesZeroPreflightCacheLifetimeWhenPublishingPolicy() {
+    var policy = new CorsPolicy();
+    policy.setMaxAgeSeconds(0L);
+
+    assertEquals(0L, policy.getMaxAgeSeconds());
+    assertEquals(0, new Cors(policy).policy().maxAgeSeconds());
+  }
+
   private CorsPolicy
       createSettingsForSettersRestoreDefaultsAndInvalidValuesRetainPreviousSettings() {
     return new Yaml()
@@ -134,6 +145,30 @@ class CorsYamlTest {
     assertEquals(60, policy.maxAgeSeconds());
   }
 
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void exposesConfiguredPermissionsThroughBeanAccessors(boolean wildcardMethods) {
+    var policy = createPolicyForMapsEveryExistingPolicyPropertyToTypedValues();
+    if (wildcardMethods) {
+      policy.setMethods(Set.of());
+      policy.setAllMethods(true);
+    }
+
+    policy.setCredentials(wildcardMethods);
+
+    assertEquals(Set.of("https://client.example"), policy.getOrigins());
+    assertEquals(
+        wildcardMethods ? Set.of() : Set.of(HttpMethods.POST, HttpMethods.OPTIONS),
+        policy.getMethods());
+    assertEquals(wildcardMethods, policy.getAllMethods());
+    assertEquals(wildcardMethods, policy.getCredentials());
+    assertEquals(
+        Set.of(HttpHeaders.CONTENT_TYPE, HttpHeaders.of("X-Proof")), policy.getAllowedHeaders());
+    assertEquals(
+        Set.of(HttpHeaders.ETAG, HttpHeaders.of("X-Request-Id")), policy.getExposedHeaders());
+    assertEquals(60L, policy.getMaxAgeSeconds());
+  }
+
   private CorsPolicy createPolicyForMapsEveryExistingPolicyPropertyToTypedValues() {
     return new Yaml()
         .loadAs(
@@ -168,8 +203,8 @@ class CorsYamlTest {
     var cors = new Cors(source);
     source.setOrigins(Set.of("https://changed.example"));
     cors.policy().setOrigins(Set.of("https://changed.example"));
-    var replacement = new CorsPolicy(Set.of("https://reports.example"));
-    var invalid = new CorsPolicy(Set.of("*"));
+    var replacement = CorsPolicy.builder().origins(Set.of("https://reports.example")).build();
+    var invalid = CorsPolicy.builder().origins(Set.of("*")).build();
     invalid.setCredentials(true);
     var app = new Shoostr();
 

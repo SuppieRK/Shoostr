@@ -103,8 +103,8 @@ class CoreRecordEqualityTest {
           .withPrefabValues(HttpMethods.class, HttpMethods.GET, HttpMethods.POST)
           .withPrefabValues(
               Csrf.class,
-              new Csrf(Set.of("https://first.example")),
-              new Csrf(Set.of("https://second.example")))
+              Csrf.builder().trustedOrigins(Set.of("https://first.example")).build(),
+              Csrf.builder().trustedOrigins(Set.of("https://second.example")).build())
           .withPrefabValues(ExecutorService.class, firstExecutor, secondExecutor)
           .withNonnullFields("method", "pattern", "routePattern", "handler", "parameters")
           .verify();
@@ -112,16 +112,10 @@ class CoreRecordEqualityTest {
   }
 
   @Test
-  void routeConstraintComparesMembershipBoundsAndEndpointRanks()
-      throws ReflectiveOperationException {
+  void routeConstraintComparesMembershipAndRepetitionBounds() throws ReflectiveOperationException {
     var type = nested(RadixRoutes.class, "Constraint");
-    var first = endpoint("/first/:id", "id", 1);
-    var second = endpoint("/second/:name", "name", 2);
     EqualsVerifier.forExamples(
-            constructRecord(type, "[0-9]+", 1L, 2L, 1, 10, Map.of(first, 1)),
-            constructRecord(type, "[a-z]+", 4L, 8L, 2, 20, Map.of(second, 2)))
-        .withPrefabValues(RadixRoutes.Endpoint.class, first, second)
-        .withNonnullFields("expression", "ranks")
+            constructRecord(type, 1L, 2L, 1, 10), constructRecord(type, 4L, 8L, 2, 20))
         .verify();
   }
 

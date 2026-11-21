@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -30,7 +31,7 @@ class OptionsYamlTest {
     assertFalse(options.getHttp2());
     assertFalse(options.getCompression());
     assertEquals(1000, options.getMaxParameters());
-    assertEquals(MultipartOptions.defaults(), options.getMultipart());
+    assertDefaultMultipart(options.getMultipart());
     assertEquals(8192, options.getStreamBufferBytes());
     assertFalse(options.getVirtualThreads());
   }
@@ -49,7 +50,7 @@ class OptionsYamlTest {
     assertEquals(Duration.ofSeconds(5), options.getShutdownTimeout());
     assertFalse(options.getHttp2());
     assertEquals(1000, options.getMaxParameters());
-    assertEquals(MultipartOptions.defaults(), options.getMultipart());
+    assertDefaultMultipart(options.getMultipart());
     assertEquals(8192, options.getStreamBufferBytes());
     assertFalse(options.getVirtualThreads());
   }
@@ -80,7 +81,7 @@ class OptionsYamlTest {
     assertFalse(options.getHttp2());
     assertFalse(options.getCompression());
     assertEquals(1000, options.getMaxParameters());
-    assertEquals(MultipartOptions.defaults(), options.getMultipart());
+    assertDefaultMultipart(options.getMultipart());
     assertEquals(8192, options.getStreamBufferBytes());
     assertFalse(options.getVirtualThreads());
   }
@@ -120,5 +121,41 @@ class OptionsYamlTest {
 
     assertInstanceOf(IllegalArgumentException.class, cause);
     assertEquals("Listener port must be between 0 and 65535", cause.getMessage());
+  }
+
+  @Test
+  void configuresNestedMultipartBeanPropertiesThroughSetters() {
+    var options = createOptionsWithNestedMultipartSettings();
+    var multipart = options.getMultipart();
+
+    assertEquals(8192L, multipart.getMaxBytes());
+    assertEquals(1024L, multipart.getMaxFileBytes());
+    assertEquals(8, multipart.getMaxParts());
+    assertEquals(1024, multipart.getMaxPartHeadersBytes());
+    assertEquals(128L, multipart.getMaxMemoryPartBytes());
+    assertNull(multipart.getTemporaryDirectory());
+  }
+
+  private Options createOptionsWithNestedMultipartSettings() {
+    return new Yaml()
+        .loadAs(
+            """
+            multipart:
+              maxFileBytes: 1024
+              maxBytes: 8192
+              maxParts: 8
+              maxPartHeadersBytes: 1024
+              maxMemoryPartBytes: 128
+            """,
+            Options.class);
+  }
+
+  private static void assertDefaultMultipart(MultipartOptions options) {
+    assertEquals(10_485_760L, options.getMaxBytes());
+    assertEquals(5_242_880L, options.getMaxFileBytes());
+    assertEquals(100, options.getMaxParts());
+    assertEquals(8192, options.getMaxPartHeadersBytes());
+    assertEquals(16_384L, options.getMaxMemoryPartBytes());
+    assertNull(options.getTemporaryDirectory());
   }
 }

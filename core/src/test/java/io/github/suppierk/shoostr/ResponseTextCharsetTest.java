@@ -146,7 +146,7 @@ class ResponseTextCharsetTest {
     configuredOptions.setMaxResponseBytes(1);
     configuredOptions.setStreamBufferBytes(512);
     configuredOptions.setMaxParameters(1000);
-    configuredOptions.setMultipart(MultipartOptions.defaults());
+    configuredOptions.setMultipart(new MultipartOptions());
 
     {
       var app =
@@ -191,13 +191,12 @@ class ResponseTextCharsetTest {
       createAppForAppliesTheLimitToEncodedBytesAndPreservesOutputWhenReplacementIsTooLarge(
           Options configuredOptions) {
     return new Shoostr(configuredOptions)
-        .modifyServer(
-            nativeServer -> {
-              var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
-              nativeConnector.setHost("127.0.0.1");
-              nativeConnector.setPort(0);
-              nativeConnector.setIdleTimeout(5000);
-            });
+        .modifyServer(nativeServer -> {
+          var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
+          nativeConnector.setHost("127.0.0.1");
+          nativeConnector.setPort(0);
+          nativeConnector.setIdleTimeout(5000);
+        });
   }
 
   @Test
@@ -278,11 +277,9 @@ class ResponseTextCharsetTest {
                 (ignoredRequest, response) -> {
                   var charset = rejectedEncoder("X-Test");
                   children
-                      .submit(
-                          () ->
-                              assertThrows(
-                                  IllegalStateException.class,
-                                  () -> response.text("late", charset)))
+                      .submit(() ->
+                          assertThrows(
+                              IllegalStateException.class, () -> response.text("late", charset)))
                       .get(5, TimeUnit.SECONDS);
                   response.text("ok", StandardCharsets.US_ASCII);
                 });
@@ -320,10 +317,8 @@ class ResponseTextCharsetTest {
           var response = saved.get();
           var charset = rejectedEncoder("X-Test");
           executor
-              .submit(
-                  () ->
-                      assertThrows(
-                          IllegalStateException.class, () -> response.text("late", charset)))
+              .submit(() ->
+                  assertThrows(IllegalStateException.class, () -> response.text("late", charset)))
               .get(5, TimeUnit.SECONDS);
         }
       }
@@ -396,7 +391,7 @@ class ResponseTextCharsetTest {
             .get(
                 "/typed",
                 (ignoredTypedRequest, response) -> {
-                  TypedResponse selected = response.text("café", StandardCharsets.ISO_8859_1);
+                  Response.Typed selected = response.text("café", StandardCharsets.ISO_8859_1);
 
                   assertSame(response, selected);
                   assertFalse(selected.isCommitted());

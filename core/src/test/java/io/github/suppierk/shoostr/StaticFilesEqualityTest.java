@@ -26,8 +26,8 @@ class StaticFilesEqualityTest {
       EqualsVerifier.forClass(StaticFiles.class)
           .withPrefabValues(
               Csrf.class,
-              new Csrf(Set.of("https://first.example")),
-              new Csrf(Set.of("https://second.example")))
+              Csrf.builder().trustedOrigins(Set.of("https://first.example")).build(),
+              Csrf.builder().trustedOrigins(Set.of("https://second.example")).build())
           .withPrefabValues(ResourceFactory.Closeable.class, firstFactory, secondFactory)
           .withPrefabValues(
               Resource.class, firstFactory.newResource(first), secondFactory.newResource(second))

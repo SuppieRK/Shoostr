@@ -436,6 +436,14 @@ class CorsExampleTest {
 
     assertThrows(
         IllegalArgumentException.class,
-        () -> new CorsPolicy(origins, methods, headers, true, headers, 0));
+        () ->
+            CorsPolicy.builder()
+                .origins(origins)
+                .methods(methods)
+                .allowedHeaders(headers)
+                .credentials(true)
+                .exposedHeaders(headers)
+                .maxAgeSeconds(0)
+                .build());
   }
 }

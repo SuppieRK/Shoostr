@@ -52,18 +52,16 @@ class McpOperationLifetimeTest {
     var mcp = operationServer(security, tool, nativeCompleted, cancelled, breakResponse);
     var app = new Shoostr();
     app.routes(routes -> routes.path("/mcp", mcp::routes));
-    app.beforeResponseFlush(
-        (request, ignoredResponse) -> {
-          if (request.header("X-Fail-Response").isPresent() && failResponse.get()) {
-            throw new IOException("fixture HTTP response failure after the native ping was sent");
-          }
-        });
-    app.afterRequest(
-        outcome -> {
-          if ("POST".equals(outcome.method()) && outcome.applicationFailure() != null) {
-            httpEnded.countDown();
-          }
-        });
+    app.beforeResponseFlush((request, ignoredResponse) -> {
+      if (request.header("X-Fail-Response").isPresent() && failResponse.get()) {
+        throw new IOException("fixture HTTP response failure after the native ping was sent");
+      }
+    });
+    app.afterRequest(outcome -> {
+      if ("POST".equals(outcome.method()) && outcome.applicationFailure() != null) {
+        httpEnded.countDown();
+      }
+    });
 
     try (var test = TestServer.start(app)) {
       var initialized = sendInitializedRequestForFailedResponse(test);
@@ -119,22 +117,21 @@ class McpOperationLifetimeTest {
                 .tools(
                     McpServerFeatures.AsyncToolSpecification.builder()
                         .tool(tool)
-                        .callHandler(
-                            (exchange, ignoredCallToolRequest) -> {
-                              var ping =
-                                  exchange
-                                      .ping()
-                                      .doOnSuccess(ignoredObject -> nativeCompleted.countDown())
-                                      .doOnCancel(cancelled::incrementAndGet);
-                              var notification =
-                                  createNotificationForFailedResponse(breakResponse, exchange);
+                        .callHandler((exchange, ignoredCallToolRequest) -> {
+                          var ping =
+                              exchange
+                                  .ping()
+                                  .doOnSuccess(ignoredObject -> nativeCompleted.countDown())
+                                  .doOnCancel(cancelled::incrementAndGet);
+                          var notification =
+                              createNotificationForFailedResponse(breakResponse, exchange);
 
-                              return Mono.when(ping, notification)
-                                  .thenReturn(
-                                      McpSchema.CallToolResult.builder()
-                                          .addTextContent("native operation completed")
-                                          .build());
-                            })
+                          return Mono.when(ping, notification)
+                              .thenReturn(
+                                  McpSchema.CallToolResult.builder()
+                                      .addTextContent("native operation completed")
+                                      .build());
+                        })
                         .build())
                 .build());
   }
@@ -153,20 +150,19 @@ class McpOperationLifetimeTest {
 
   private HttpResponse<byte[]> sendInitializedRequestForFailedResponse(TestServer test)
       throws IOException, InterruptedException {
-    return test.send(
-        request ->
-            request
-                .path("/mcp")
-                .method("POST")
-                .header("Content-Type", "application/json")
-                .header("Accept", "application/json, text/event-stream")
-                .body(
-                    """
-                    {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
-                      "protocolVersion":"2025-11-25","capabilities":{},
-                      "clientInfo":{"name":"operation-lifetime-fixture","version":"1.0"}}}
-                    """
-                        .getBytes(StandardCharsets.UTF_8)));
+    return test.send(request ->
+        request
+            .path("/mcp")
+            .method("POST")
+            .header("Content-Type", "application/json")
+            .header("Accept", "application/json, text/event-stream")
+            .body(
+                """
+                {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+                  "protocolVersion":"2025-11-25","capabilities":{},
+                  "clientInfo":{"name":"operation-lifetime-fixture","version":"1.0"}}}
+                """
+                    .getBytes(StandardCharsets.UTF_8)));
   }
 
   private HttpResponse<InputStream> sendResponseForFailedResponse(TestServer test, String sessionId)
@@ -193,15 +189,14 @@ class McpOperationLifetimeTest {
   private HttpResponse<byte[]> sendReplyRequestForFailedResponse(
       TestServer test, String sessionId, byte[] replyBody)
       throws IOException, InterruptedException {
-    return test.send(
-        request ->
-            request
-                .path("/mcp")
-                .method("POST")
-                .header("Content-Type", "application/json")
-                .header("Accept", "application/json, text/event-stream")
-                .header("Mcp-Session-Id", sessionId)
-                .header("MCP-Protocol-Version", "2025-11-25")
-                .body(replyBody));
+    return test.send(request ->
+        request
+            .path("/mcp")
+            .method("POST")
+            .header("Content-Type", "application/json")
+            .header("Accept", "application/json, text/event-stream")
+            .header("Mcp-Session-Id", sessionId)
+            .header("MCP-Protocol-Version", "2025-11-25")
+            .body(replyBody));
   }
 }

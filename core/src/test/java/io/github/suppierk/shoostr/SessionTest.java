@@ -157,7 +157,16 @@ class SessionTest {
                   request.getOrCreateSession().setAttribute("name", "alice");
                   response.text("created");
                 })
-            .get("/renew", (request, response) -> response.text(request.renewSessionId()))
+            .get(
+                "/renew",
+                (request, response) -> {
+                  var session = request.getSession().orElseThrow();
+                  var renewedId = request.renewSessionId();
+
+                  assertEquals(session.getId(), renewedId);
+
+                  response.text(renewedId);
+                })
             .get(
                 "/peek",
                 (request, response) -> {
@@ -196,6 +205,33 @@ class SessionTest {
                       HttpResponse.BodyHandlers.ofString())
                   .body());
         }
+      }
+    }
+  }
+
+  @Test
+  void rejectsRenewalWithoutCreatingAnAbsentSession() throws Exception {
+    var app = new Shoostr();
+
+    try (Closeable appCleanup = app::close) {
+      app.sessions();
+      app.routes()
+          .get(
+              "/renew",
+              (request, response) -> {
+                assertThrows(IllegalStateException.class, request::renewSessionId);
+                assertTrue(request.getSession().isEmpty());
+
+                response.text("absent");
+              });
+
+      try (var server = TestServer.start(app)) {
+        var result =
+            server.send(request -> request.path("/renew"), HttpResponse.BodyHandlers.ofString());
+
+        assertEquals(200, result.statusCode());
+        assertEquals("absent", result.body());
+        assertTrue(result.headers().firstValue("Set-Cookie").isEmpty());
       }
     }
   }
@@ -273,12 +309,11 @@ class SessionTest {
       var app = new Shoostr();
 
       try (Closeable appCleanup4 = app::close) {
-        app.sessions(
-            handler -> {
-              handler.setSessionCookie("WEBSESSION");
-              handler.setSameSite(SameSite.STRICT);
-              handler.setMaxCookieAge(60);
-            });
+        app.sessions(handler -> {
+          handler.setSessionCookie("WEBSESSION");
+          handler.setSameSite(SameSite.STRICT);
+          handler.setMaxCookieAge(60);
+        });
         app.routes()
             .get(
                 "/create",
@@ -348,14 +383,13 @@ class SessionTest {
               .pollDelay(Duration.ofMillis(1200))
               .pollInterval(Duration.ofMillis(1200))
               .atMost(Duration.ofSeconds(5))
-              .untilAsserted(
-                  () ->
-                      assertEquals(
-                          "absent",
-                          test.send(
-                                  request -> request.path("/peek").header("Cookie", cookie),
-                                  HttpResponse.BodyHandlers.ofString())
-                              .body()));
+              .untilAsserted(() ->
+                  assertEquals(
+                      "absent",
+                      test.send(
+                              request -> request.path("/peek").header("Cookie", cookie),
+                              HttpResponse.BodyHandlers.ofString())
+                          .body()));
         }
       }
     }
@@ -694,11 +728,10 @@ class SessionTest {
           for (int index = 0; index < 8; index++) {
             var path = "/write/" + index;
             futures.add(
-                workers.submit(
-                    () ->
-                        test.send(
-                            request -> request.path(path).header("Cookie", cookie),
-                            HttpResponse.BodyHandlers.ofString())));
+                workers.submit(() ->
+                    test.send(
+                        request -> request.path(path).header("Cookie", cookie),
+                        HttpResponse.BodyHandlers.ofString())));
           }
 
           try {

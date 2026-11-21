@@ -16,27 +16,21 @@ import org.junit.jupiter.params.provider.MethodSource;
 class RouteLookupBenchmarkTest {
   private static Stream<Arguments> catchAllCases() {
     return Stream.of(5, 5000)
-        .flatMap(
-            count ->
-                Stream.of("catchAllHit", "catchAllFallback", "catchAllWrongMethod", "catchAllMiss")
-                    .map(outcome -> Arguments.of(count, outcome)));
+        .flatMap(count ->
+            Stream.of("catchAllHit", "catchAllFallback", "catchAllWrongMethod", "catchAllMiss")
+                .map(outcome -> Arguments.of(count, outcome)));
   }
 
   private static Stream<Arguments> cases() {
     return Stream.of(5, 50, 500, 5000)
-        .flatMap(
-            count ->
-                Stream.of("shared", "divergent", "prefix")
-                    .flatMap(
-                        shape ->
-                            Stream.of("hit", "earlyMiss", "lateMiss", "wrongMethod", "mixed")
-                                .flatMap(
-                                    outcome ->
-                                        Stream.of("uniform", "hot")
-                                            .map(
-                                                distribution ->
-                                                    Arguments.of(
-                                                        count, shape, outcome, distribution)))));
+        .flatMap(count ->
+            Stream.of("shared", "divergent", "prefix")
+                .flatMap(shape ->
+                    Stream.of("hit", "earlyMiss", "lateMiss", "wrongMethod", "mixed")
+                        .flatMap(outcome ->
+                            Stream.of("uniform", "hot")
+                                .map(distribution ->
+                                    Arguments.of(count, shape, outcome, distribution)))));
   }
 
   @ParameterizedTest

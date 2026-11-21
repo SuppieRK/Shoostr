@@ -19,21 +19,18 @@ class ExtensionRequestBenchmarkTest {
             "localInstrumentation",
             "unselectedInstrumentation",
             "appInstrumentation")
-        .flatMap(
-            configuration ->
-                Stream.of(1, 1000)
-                    .flatMap(
-                        groups ->
-                            Stream.of("matched", "missed", "wrongMethod")
-                                .map(outcome -> Arguments.of(configuration, groups, outcome))));
+        .flatMap(configuration ->
+            Stream.of(1, 1000)
+                .flatMap(groups ->
+                    Stream.of("matched", "missed", "wrongMethod")
+                        .map(outcome -> Arguments.of(configuration, groups, outcome))));
   }
 
   private static Stream<Arguments> tracingCases() {
     return Stream.of("plain", "otelSelected", "otelUnselected", "otelAppWide")
-        .flatMap(
-            configuration ->
-                Stream.of("default", "platform", "forkJoin")
-                    .map(execution -> Arguments.of(configuration, execution)));
+        .flatMap(configuration ->
+            Stream.of("default", "platform", "forkJoin")
+                .map(execution -> Arguments.of(configuration, execution)));
   }
 
   @ParameterizedTest

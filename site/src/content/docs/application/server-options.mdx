@@ -30,7 +30,7 @@ Every new instance initializes its field defaults. Set only the properties your 
 | `http2` | `false` | `setHttp2` |
 | `compression` | `false` | `setCompression` |
 | `maxParameters` | 1,000 decoded pairs per query or URL-encoded form | `setMaxParameters` |
-| `multipart` | `MultipartOptions.defaults()` | `setMultipart` |
+| `multipart` | `new MultipartOptions()` | `setMultipart` |
 | `streamBufferBytes` | 8,192 bytes per streaming response buffer | `setStreamBufferBytes` |
 | `virtualThreads` | `false` | `setVirtualThreads` |
 

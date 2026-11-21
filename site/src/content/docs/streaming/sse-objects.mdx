@@ -14,9 +14,9 @@ import test from '../../../../../examples/10-streaming/sse/src/test/java/io/gith
 
 Object events combine server-sent event framing with application-provided serialization. A `Codec` converts a Java value to bytes; the typed event writer places its UTF-8 text into an SSE data frame.
 
-This task uses the typed route-registration view returned after configuring that codec. `TypedResponse` is the response view carrying that codec. Its `TypedEventStream` adds `sendObject(...)` to the ordinary event operations. Encoding a value does not add event history or replay behavior.
+This task uses the typed route-registration view returned after configuring that codec. `Response.Typed` is the response view carrying that codec. Its `Response.EventStream.Typed` adds `sendObject(...)` to the ordinary event operations. Encoding a value does not add event history or replay behavior.
 
-Register `routes.sse(...)` on the typed view obtained from a configured [codec](../../json/codec/). `TypedResponse.startEventStream()` supplies a `TypedEventStream`; `sendObject(value)` encodes the value before adding data fields and flushing its event. Ordinary strings, `SseEvent` values, comments and heartbeats bypass the codec. The [base SSE guide](../sse/) explains names, IDs and replay.
+Register `routes.sse(...)` on the typed view obtained from a configured [codec](../../json/codec/). `Response.Typed.startEventStream()` supplies a `Response.EventStream.Typed`; `sendObject(value)` encodes the value before adding data fields and flushing its event. Ordinary strings, `SseEvent` values, comments and heartbeats bypass the codec. The [base SSE guide](../sse/) explains names, IDs and replay.
 
 :::note[Object events require UTF-8 text]
 Use a codec that produces UTF-8 text, such as JSON, for SSE object output.

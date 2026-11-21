@@ -6,8 +6,11 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.suppierk.shoostr.http.HttpHeaders;
+import io.github.suppierk.shoostr.http.HttpStatusCodes;
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.lang.reflect.Proxy;
 import java.nio.ByteBuffer;
 import java.nio.channels.SeekableByteChannel;
@@ -15,10 +18,13 @@ import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.eclipse.jetty.http.HttpFields;
 import org.eclipse.jetty.server.Request;
 import org.eclipse.jetty.util.Callback;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 class ResponseResourceTest {
   private static Response response(
@@ -40,6 +46,7 @@ class ResponseResourceTest {
                 switch (method.getName()) {
                   case "getMethod" -> "GET";
                   case "getHeaders" -> requestHeaders;
+                  case "getSession" -> null;
                   case "consumeAvailable" -> true;
                   case "addHttpStreamWrapper" -> null;
                   default -> throw new UnsupportedOperationException(method.getName());
@@ -110,6 +117,54 @@ class ResponseResourceTest {
     assertSame(response, chained);
     assertEquals("ok", responseHeaders.get("X-Chain"));
     assertEquals("0123456789", body.toString(StandardCharsets.UTF_8));
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"redirect", "reset", "preflight"})
+  void releasesSelectedDescriptorsBeforeAllowingReplacementBodies(String replacement)
+      throws Exception {
+    var body = new ByteArrayOutputStream();
+    var channel = new TrackingChannel("0123456789", false);
+    var response = response(HttpFields.build(), HttpFields.build(), body);
+    response.resource(channel, 10, Instant.EPOCH, "text/plain");
+
+    switch (replacement) {
+      case "redirect" -> response.redirect("/replacement");
+      case "reset" -> response.reset(HttpStatusCodes.INTERNAL_SERVER_ERROR);
+      case "preflight" -> response.preflight();
+      default -> throw new IllegalArgumentException(replacement);
+    }
+
+    assertTrue(channel.closed());
+    response.status(200).text("replacement");
+    response.complete();
+
+    assertEquals("replacement", body.toString(StandardCharsets.UTF_8));
+  }
+
+  @Test
+  void closesRejectedInputWithoutReplacingTheSelectedResource() throws Exception {
+    var body = new ByteArrayOutputStream();
+    var channel = new TrackingChannel("0123456789", false);
+    var response = response(HttpFields.build(), HttpFields.build(), body);
+    response.resource(channel, 10, Instant.EPOCH, "text/plain");
+    var closed = new AtomicBoolean();
+    var input = trackedInput(closed);
+
+    assertThrows(IllegalStateException.class, () -> response.input(input, "text/plain"));
+    assertTrue(closed.get());
+    response.complete();
+
+    assertEquals("0123456789", body.toString(StandardCharsets.UTF_8));
+  }
+
+  private InputStream trackedInput(AtomicBoolean closed) {
+    return new ByteArrayInputStream("replacement".getBytes(StandardCharsets.UTF_8)) {
+      @Override
+      public void close() {
+        closed.set(true);
+      }
+    };
   }
 
   private static final class TrackingChannel implements SeekableByteChannel {

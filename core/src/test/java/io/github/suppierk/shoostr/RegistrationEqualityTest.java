@@ -84,8 +84,8 @@ class RegistrationEqualityTest {
                 CorsPolicy.builder().origins("https://second.example").build())
             .withPrefabValues(
                 Csrf.class,
-                new Csrf(Set.of("https://first.example")),
-                new Csrf(Set.of("https://second.example")))
+                Csrf.builder().trustedOrigins(Set.of("https://first.example")).build(),
+                Csrf.builder().trustedOrigins(Set.of("https://second.example")).build())
             .withGenericPrefabValues(IdentityHashMap.class, RegistrationEqualityTest::identityMap)
             .withNonnullFields("installed", "selections", "order", "initialize", "routeConsumers")
             .suppress(Warning.INHERITED_DIRECTLY_FROM_OBJECT, Warning.ALL_FIELDS_SHOULD_BE_USED)
@@ -152,18 +152,13 @@ class RegistrationEqualityTest {
                               null))))
               .withPrefabValues(
                   Csrf.class,
-                  new Csrf(Set.of("https://first.example")),
-                  new Csrf(Set.of("https://second.example")))
+                  Csrf.builder().trustedOrigins(Set.of("https://first.example")).build(),
+                  Csrf.builder().trustedOrigins(Set.of("https://second.example")).build())
               .withGenericPrefabValues(IdentityHashMap.class, RegistrationEqualityTest::identityMap)
-              .withPrefabValues(
-                  ThreadLocal.class,
-                  ThreadLocal.withInitial(() -> 1),
-                  ThreadLocal.withInitial(() -> 2))
               .withNonnullFields(
                   "root",
                   "lock",
                   "prefix",
-                  "activeGroupDepth",
                   "conditions",
                   "installed",
                   "notifications",
@@ -193,7 +188,7 @@ class RegistrationEqualityTest {
         try (Closeable secondCleanup2 = second::disposeRegistration) {
           first.get("/first", (request, response) -> response.text("first"));
           second.get("/second", (request, response) -> response.text("second"));
-          EqualsVerifier.forClass(TypedRoutes.class)
+          EqualsVerifier.forClass(Routes.Typed.class)
               .withPrefabValues(Routes.class, first, second)
               .withPrefabValues(Codec.class, codec("first"), codec("second"))
               .withNonnullFields("routes", "codec")
@@ -213,11 +208,11 @@ class RegistrationEqualityTest {
         var second = new Shoostr();
 
         try (Closeable secondCleanup = second::close) {
-          var firstView = new TypedRoutes(first.routes(), codec("first"));
-          var secondView = new TypedRoutes(second.routes(), codec("second"));
-          EqualsVerifier.forClass(TypedShoostr.class)
+          var firstView = new Routes.Typed(first.routes(), codec("first"));
+          var secondView = new Routes.Typed(second.routes(), codec("second"));
+          EqualsVerifier.forClass(Shoostr.Typed.class)
               .withPrefabValues(Shoostr.class, first, second)
-              .withPrefabValues(TypedRoutes.class, firstView, secondView)
+              .withPrefabValues(Routes.Typed.class, firstView, secondView)
               .withNonnullFields("app", "routes")
               .suppress(Warning.INHERITED_DIRECTLY_FROM_OBJECT, Warning.ALL_FIELDS_SHOULD_BE_USED)
               .verify();
@@ -231,7 +226,7 @@ class RegistrationEqualityTest {
     var first = new WebSocket().onText(WebSocketConnection::send);
     var second = new WebSocket().onBinary(WebSocketConnection::send);
     EqualsVerifier.forClass(WebSocket.class)
-        .withRedefinedSubclass(TypedWebSocket.class)
+        .withRedefinedSubclass(WebSocket.Typed.class)
         .withPrefabValues(WebSocket.class, first, second)
         .suppress(Warning.INHERITED_DIRECTLY_FROM_OBJECT, Warning.ALL_FIELDS_SHOULD_BE_USED)
         .verify();
@@ -239,7 +234,7 @@ class RegistrationEqualityTest {
 
   @Test
   void typedWebSocketConfigurationRetainsRegistrationIdentity() {
-    EqualsVerifier.forClass(TypedWebSocket.class)
+    EqualsVerifier.forClass(WebSocket.Typed.class)
         .withPrefabValues(Codec.class, codec("first"), codec("second"))
         .withNonnullFields("codec")
         .suppress(Warning.INHERITED_DIRECTLY_FROM_OBJECT, Warning.ALL_FIELDS_SHOULD_BE_USED)

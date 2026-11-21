@@ -2821,7 +2821,7 @@ public final class HttpHeaders {
       return Optional.empty();
     }
 
-    for (int index = 0; index < value.length(); index++) {
+    for (var index = 0; index < value.length(); index++) {
       if (value.charAt(index) > 127) {
         return Optional.empty();
       }
@@ -2835,8 +2835,8 @@ public final class HttpHeaders {
    * @return registered headers indexed by normalized wire name
    */
   private static Map<String, HttpHeaders> index() {
-    var result = new HashMap<String, HttpHeaders>();
-    for (var header :
+    final var result = new HashMap<String, HttpHeaders>();
+    for (final var header :
         new HttpHeaders[] {
           A_IM,
           ACCEPT,
@@ -3122,7 +3122,7 @@ public final class HttpHeaders {
       return false;
     }
 
-    for (int index = 0; index < name.length(); index++) {
+    for (var index = 0; index < name.length(); index++) {
       if (name.charAt(index) > 127) {
         return false;
       }

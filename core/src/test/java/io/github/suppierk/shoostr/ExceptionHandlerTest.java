@@ -197,17 +197,16 @@ class ExceptionHandlerTest {
     configuredOptions.setMaxResponseBytes(1024);
     configuredOptions.setStreamBufferBytes(8);
     configuredOptions.setMaxParameters(1000);
-    configuredOptions.setMultipart(MultipartOptions.defaults());
+    configuredOptions.setMultipart(new MultipartOptions());
 
     app =
         new Shoostr(configuredOptions)
-            .modifyServer(
-                nativeServer -> {
-                  var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
-                  nativeConnector.setHost("127.0.0.1");
-                  nativeConnector.setPort(0);
-                  nativeConnector.setIdleTimeout(5000);
-                });
+            .modifyServer(nativeServer -> {
+              var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
+              nativeConnector.setHost("127.0.0.1");
+              nativeConnector.setPort(0);
+              nativeConnector.setIdleTimeout(5000);
+            });
     app.exception(
         ContentTooLargeException.class,
         (ignoredFailure, request, response) ->
@@ -341,30 +340,28 @@ class ExceptionHandlerTest {
 
   private Future<Boolean> submitRegistrationForRegistrationRacingStartupIsIncludedOrRejected(
       ExecutorService executor, CountDownLatch release) {
-    return executor.submit(
-        () -> {
-          release.await();
+    return executor.submit(() -> {
+      release.await();
 
-          try {
-            app.exception(
-                NotFoundException.class,
-                (ignoredFailure, ignoredRequest, response) -> response.text("registered"));
+      try {
+        app.exception(
+            NotFoundException.class,
+            (ignoredFailure, ignoredRequest, response) -> response.text("registered"));
 
-            return true;
-          } catch (IllegalStateException ignoredFailure) {
-            return false;
-          }
-        });
+        return true;
+      } catch (IllegalStateException ignoredFailure) {
+        return false;
+      }
+    });
   }
 
   private Future<Shoostr> submitStartupForRegistrationRacingStartupIsIncludedOrRejected(
       ExecutorService executor, CountDownLatch release) {
-    return executor.submit(
-        () -> {
-          release.await();
+    return executor.submit(() -> {
+      release.await();
 
-          return app.start();
-        });
+      return app.start();
+    });
   }
 
   private HttpResponse<String> sendResultForRegistrationRacingStartupIsIncludedOrRejected(

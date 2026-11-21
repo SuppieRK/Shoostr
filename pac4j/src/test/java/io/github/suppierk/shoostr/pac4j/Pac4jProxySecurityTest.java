@@ -36,12 +36,10 @@ import org.pac4j.http.client.direct.DirectBasicAuthClient;
 class Pac4jProxySecurityTest {
   private static Stream<Arguments> metadataSources() {
     return Stream.of("host", "port", "scheme")
-        .flatMap(
-            accessor ->
-                Stream.concat(
-                        Stream.of("direct"),
-                        Arrays.stream(ForwardedHeaders.values()).map(Enum::name))
-                    .map(source -> Arguments.of(accessor, source)));
+        .flatMap(accessor ->
+            Stream.concat(
+                    Stream.of("direct"), Arrays.stream(ForwardedHeaders.values()).map(Enum::name))
+                .map(source -> Arguments.of(accessor, source)));
   }
 
   private static Shoostr application(
@@ -64,15 +62,14 @@ class Pac4jProxySecurityTest {
 
   private static DirectBasicAuthClient createProviderForApplication(
       AtomicReference<String> scheme) {
-    return new DirectBasicAuthClient(
-        (context, supplied) -> {
-          scheme.set(context.webContext().getScheme());
-          var profile = new CommonProfile();
-          profile.setId("alice");
-          supplied.setUserProfile(profile);
+    return new DirectBasicAuthClient((context, supplied) -> {
+      scheme.set(context.webContext().getScheme());
+      var profile = new CommonProfile();
+      profile.setId("alice");
+      supplied.setUserProfile(profile);
 
-          return Optional.of(supplied);
-        });
+      return Optional.of(supplied);
+    });
   }
 
   private static TestRequest authorized(TestRequest request) {
@@ -150,22 +147,21 @@ class Pac4jProxySecurityTest {
 
   private DirectBasicAuthClient createProviderForReadsOriginMetadataWithoutParsingTheOpaqueRawQuery(
       AtomicReference<String> observed, String accessor, AtomicReference<String> fullUrl) {
-    return new DirectBasicAuthClient(
-        (context, supplied) -> {
-          var web = context.webContext();
-          observed.set(
-              switch (accessor) {
-                case "host" -> web.getServerName();
-                case "port" -> Integer.toString(web.getServerPort());
-                default -> web.getScheme();
-              });
-          fullUrl.set(web.getFullRequestURL());
-          var profile = new CommonProfile();
-          profile.setId("alice");
-          supplied.setUserProfile(profile);
+    return new DirectBasicAuthClient((context, supplied) -> {
+      var web = context.webContext();
+      observed.set(
+          switch (accessor) {
+            case "host" -> web.getServerName();
+            case "port" -> Integer.toString(web.getServerPort());
+            default -> web.getScheme();
+          });
+      fullUrl.set(web.getFullRequestURL());
+      var profile = new CommonProfile();
+      profile.setId("alice");
+      supplied.setUserProfile(profile);
 
-          return Optional.of(supplied);
-        });
+      return Optional.of(supplied);
+    });
   }
 
   private String createForwardedForReadsOriginMetadataWithoutParsingTheOpaqueRawQuery(
@@ -280,11 +276,10 @@ class Pac4jProxySecurityTest {
       var app = application(family, true, scheme);
 
       try (Closeable appCleanup1 = app::close) {
-        app.tls(
-            server -> {
-              server.setKeyStore(identity);
-              server.setKeyStorePassword("changeit");
-            });
+        app.tls(server -> {
+          server.setKeyStore(identity);
+          server.setKeyStorePassword("changeit");
+        });
 
         try (var test = TestServer.start(app, client -> configureTlsClient(client, tls))) {
           var denied = test.send(request -> forwarding(authorized(request), family, "http"));

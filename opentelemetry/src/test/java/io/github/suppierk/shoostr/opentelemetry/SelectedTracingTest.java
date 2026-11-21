@@ -291,10 +291,9 @@ class SelectedTracingTest {
     withExecutionMode(virtualApplication);
     var authentication = new ContextAuthentication();
 
-    app.onRouteMatched(
-        (ignoredRequest, response) ->
-            response.setHeader(
-                "Observed", Boolean.toString(Span.current().getSpanContext().isValid())));
+    app.onRouteMatched((ignoredRequest, response) ->
+        response.setHeader(
+            "Observed", Boolean.toString(Span.current().getSpanContext().isValid())));
     app.routes()
         .get(
             "/selected",
@@ -339,10 +338,9 @@ class SelectedTracingTest {
   void doesNotObserveRequestRejectedBeforeMatching(boolean virtualApplication) throws Exception {
     withExecutionMode(virtualApplication);
 
-    app.onRequestHeaders(
-        (ignoredRequest, ignoredResponse) -> {
-          throw new IllegalArgumentException("rejected");
-        });
+    app.onRequestHeaders((ignoredRequest, ignoredResponse) -> {
+      throw new IllegalArgumentException("rejected");
+    });
     app.routes()
         .get(
             "/selected",
@@ -421,9 +419,8 @@ class SelectedTracingTest {
     app =
         new Shoostr(options)
             .afterRequest(outcomes::add)
-            .onRequestHeaders(
-                (request, response) ->
-                    assertEquals(virtualApplication, Thread.currentThread().isVirtual()));
+            .onRequestHeaders((request, response) ->
+                assertEquals(virtualApplication, Thread.currentThread().isVirtual()));
   }
 
   private static final class ContextAuthentication extends AuthenticationExtension {

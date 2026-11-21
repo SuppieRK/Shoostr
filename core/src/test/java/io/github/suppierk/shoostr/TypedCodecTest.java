@@ -61,13 +61,13 @@ class TypedCodecTest {
   void permitsOnlyFrameworkOwnedFinalTypedSubclasses() {
     assertTrue(Request.class.isSealed());
     assertTrue(Response.class.isSealed());
-    assertArrayEquals(new Class<?>[] {TypedRequest.class}, Request.class.getPermittedSubclasses());
+    assertArrayEquals(new Class<?>[] {Request.Typed.class}, Request.class.getPermittedSubclasses());
     assertArrayEquals(
-        new Class<?>[] {TypedResponse.class}, Response.class.getPermittedSubclasses());
-    assertTrue(Modifier.isFinal(TypedRequest.class.getModifiers()));
-    assertTrue(Modifier.isFinal(TypedResponse.class.getModifiers()));
-    assertEquals(0, TypedRequest.class.getConstructors().length);
-    assertEquals(0, TypedResponse.class.getConstructors().length);
+        new Class<?>[] {Response.Typed.class}, Response.class.getPermittedSubclasses());
+    assertTrue(Modifier.isFinal(Request.Typed.class.getModifiers()));
+    assertTrue(Modifier.isFinal(Response.Typed.class.getModifiers()));
+    assertEquals(0, Request.Typed.class.getConstructors().length);
+    assertEquals(0, Response.Typed.class.getConstructors().length);
   }
 
   @Test

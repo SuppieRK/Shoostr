@@ -65,13 +65,12 @@ class McpRequestLifetimeTest {
       ScheduledThreadPoolExecutor deadlines,
       CountDownLatch schedulerEntered,
       CountDownLatch releaseScheduler) {
-    return deadlines.submit(
-        () -> {
-          schedulerEntered.countDown();
+    return deadlines.submit(() -> {
+      schedulerEntered.countDown();
 
-          assertTrue(releaseScheduler.await(5, TimeUnit.SECONDS));
+      assertTrue(releaseScheduler.await(5, TimeUnit.SECONDS));
 
-          return null;
-        });
+      return null;
+    });
   }
 }

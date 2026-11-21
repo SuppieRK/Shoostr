@@ -2,14 +2,15 @@ package io.github.suppierk.shoostr;
 
 import java.time.Duration;
 import java.time.temporal.ChronoUnit;
+import java.util.Objects;
 import org.jspecify.annotations.Nullable;
 
 /**
  * Mutable application serving settings with defaults initialized on each field. Null setter inputs
  * restore property defaults. Configure an instance before passing it to {@link Shoostr}; the
  * application captures a private snapshot at construction. Later mutations affect only subsequent
- * applications. Do not mutate options concurrently with application construction. Native callbacks
- * override the initial transport settings.
+ * applications. Do not mutate options or their multipart settings concurrently with application
+ * construction. Native callbacks override the initial transport settings.
  *
  * <p>Host names are resolved at listener startup. The idle timeout measures connection inactivity;
  * the shutdown timeout controls server drain, not total application shutdown. HTTP/2 uses ALPN with
@@ -18,22 +19,36 @@ import org.jspecify.annotations.Nullable;
  * caller-owned. Response gzip does not enable request decompression.
  */
 public final class Options {
-  private String host = "0.0.0.0";
-  private Integer port = 8080;
-  private Integer maxRequestBytes = 1_048_576;
-  private Integer maxResponseBytes = 1_048_576;
-  private Integer maxRequestHeaderBytes = 8192;
-  private Duration idleTimeout = Duration.ofSeconds(30);
-  private Duration shutdownTimeout = Duration.ofSeconds(5);
-  private Boolean http2 = false;
-  private Boolean compression = false;
-  private Integer maxParameters = 1000;
-  private MultipartOptions multipart = MultipartOptions.defaults();
-  private Integer streamBufferBytes = 8192;
-  private Boolean virtualThreads = false;
+  private String host;
+  private Integer port;
+  private Integer maxRequestBytes;
+  private Integer maxResponseBytes;
+  private Integer maxRequestHeaderBytes;
+  private Duration idleTimeout;
+  private Duration shutdownTimeout;
+  private Boolean http2;
+  private Boolean compression;
+  private Integer maxParameters;
+  private MultipartOptions multipart;
+  private Integer streamBufferBytes;
+  private Boolean virtualThreads;
 
   /** Creates settings with the default listener, limits, protocols and execution mode. */
-  public Options() {}
+  public Options() {
+    this.host = "0.0.0.0";
+    this.port = 8080;
+    this.maxRequestBytes = 1_048_576;
+    this.maxResponseBytes = 1_048_576;
+    this.maxRequestHeaderBytes = 8192;
+    this.idleTimeout = Duration.ofSeconds(30);
+    this.shutdownTimeout = Duration.ofSeconds(5);
+    this.http2 = false;
+    this.compression = false;
+    this.maxParameters = 1000;
+    this.multipart = new MultipartOptions();
+    this.streamBufferBytes = 8192;
+    this.virtualThreads = false;
+  }
 
   /**
    * Captures validated settings without retaining a caller's mutable configuration.
@@ -41,19 +56,19 @@ public final class Options {
    * @param source settings copied before application construction proceeds
    */
   Options(Options source) {
-    setHost(source.getHost());
-    setPort(source.getPort());
-    setMaxRequestBytes(source.getMaxRequestBytes());
-    setMaxResponseBytes(source.getMaxResponseBytes());
-    setMaxRequestHeaderBytes(source.getMaxRequestHeaderBytes());
-    setIdleTimeout(source.getIdleTimeout());
-    setShutdownTimeout(source.getShutdownTimeout());
-    setHttp2(source.getHttp2());
-    setCompression(source.getCompression());
-    setMaxParameters(source.getMaxParameters());
-    setMultipart(source.getMultipart());
-    setStreamBufferBytes(source.getStreamBufferBytes());
-    setVirtualThreads(source.getVirtualThreads());
+    this.host = source.getHost();
+    this.port = source.getPort();
+    this.maxRequestBytes = source.getMaxRequestBytes();
+    this.maxResponseBytes = source.getMaxResponseBytes();
+    this.maxRequestHeaderBytes = source.getMaxRequestHeaderBytes();
+    this.idleTimeout = source.getIdleTimeout();
+    this.shutdownTimeout = source.getShutdownTimeout();
+    this.http2 = source.getHttp2();
+    this.compression = source.getCompression();
+    this.maxParameters = source.getMaxParameters();
+    this.multipart = new MultipartOptions(source.getMultipart());
+    this.streamBufferBytes = source.getStreamBufferBytes();
+    this.virtualThreads = source.getVirtualThreads();
   }
 
   /**
@@ -93,7 +108,7 @@ public final class Options {
    * @throws IllegalArgumentException if the value is invalid; the previous value is retained
    */
   public void setHost(@Nullable String value) {
-    String resolved = value == null ? "0.0.0.0" : value;
+    final var resolved = value == null ? "0.0.0.0" : value;
     if (resolved.isBlank()) {
       throw new IllegalArgumentException("Listener host must be nonblank");
     }
@@ -118,7 +133,7 @@ public final class Options {
    * @throws IllegalArgumentException if the value is invalid; the previous value is retained
    */
   public void setPort(@Nullable Integer value) {
-    int resolved = value == null ? 8080 : value;
+    final var resolved = value == null ? 8080 : value;
     if (resolved < 0 || resolved > 65535) {
       throw new IllegalArgumentException("Listener port must be between 0 and 65535");
     }
@@ -143,7 +158,7 @@ public final class Options {
    * @throws IllegalArgumentException if the value is invalid; the previous value is retained
    */
   public void setMaxRequestBytes(@Nullable Integer value) {
-    int resolved = value == null ? 1_048_576 : value;
+    final var resolved = value == null ? 1_048_576 : value;
     if (resolved < 1 || resolved == Integer.MAX_VALUE) {
       throw new IllegalArgumentException("Invalid buffered request limit");
     }
@@ -167,7 +182,7 @@ public final class Options {
    * @throws IllegalArgumentException if the value is invalid; the previous value is retained
    */
   public void setMaxResponseBytes(@Nullable Integer value) {
-    int resolved = value == null ? 1_048_576 : value;
+    final var resolved = value == null ? 1_048_576 : value;
     if (resolved < 1) {
       throw new IllegalArgumentException("Maximum response bytes must be positive");
     }
@@ -192,7 +207,7 @@ public final class Options {
    * @throws IllegalArgumentException if the value is invalid; the previous value is retained
    */
   public void setMaxRequestHeaderBytes(@Nullable Integer value) {
-    int resolved = value == null ? 8192 : value;
+    final var resolved = value == null ? 8192 : value;
     if (resolved < 1) {
       throw new IllegalArgumentException("Maximum request header bytes must be positive");
     }
@@ -217,7 +232,7 @@ public final class Options {
    * @throws IllegalArgumentException if the value is invalid; the previous value is retained
    */
   public void setIdleTimeout(@Nullable Duration value) {
-    Duration resolved = value == null ? Duration.ofSeconds(30) : value;
+    final var resolved = value == null ? Duration.ofSeconds(30) : value;
     validateTimeout(resolved);
 
     idleTimeout = resolved;
@@ -239,7 +254,7 @@ public final class Options {
    * @throws IllegalArgumentException if the value is invalid; the previous value is retained
    */
   public void setShutdownTimeout(@Nullable Duration value) {
-    Duration resolved = value == null ? Duration.ofSeconds(5) : value;
+    final var resolved = value == null ? Duration.ofSeconds(5) : value;
     validateTimeout(resolved);
 
     shutdownTimeout = resolved;
@@ -299,7 +314,7 @@ public final class Options {
    * @throws IllegalArgumentException if the value is invalid; the previous value is retained
    */
   public void setMaxParameters(@Nullable Integer value) {
-    int resolved = value == null ? 1000 : value;
+    final var resolved = value == null ? 1000 : value;
     if (resolved < 1) {
       throw new IllegalArgumentException("Maximum parameter count must be positive");
     }
@@ -310,7 +325,7 @@ public final class Options {
   /**
    * Reads the multipart setting.
    *
-   * @return multipart parser and temporary storage settings
+   * @return mutable multipart settings used by subsequent application construction
    */
   public MultipartOptions getMultipart() {
     return multipart;
@@ -319,11 +334,11 @@ public final class Options {
   /**
    * Sets the multipart setting for subsequent application construction.
    *
-   * @param value multipart parser and temporary storage settings; null restores the default
+   * @param value caller-owned mutable multipart settings; null creates fresh defaults
    * @throws IllegalArgumentException if the value is invalid; the previous value is retained
    */
   public void setMultipart(@Nullable MultipartOptions value) {
-    multipart = value == null ? MultipartOptions.defaults() : value;
+    multipart = value == null ? new MultipartOptions() : value;
   }
 
   /**
@@ -342,7 +357,7 @@ public final class Options {
    * @throws IllegalArgumentException if the value is invalid; the previous value is retained
    */
   public void setStreamBufferBytes(@Nullable Integer value) {
-    int resolved = value == null ? 8192 : value;
+    final var resolved = value == null ? 8192 : value;
     if (resolved < 1) {
       throw new IllegalArgumentException("Stream buffer bytes must be positive");
     }
@@ -367,5 +382,59 @@ public final class Options {
    */
   public void setVirtualThreads(@Nullable Boolean value) {
     virtualThreads = value != null && value;
+  }
+
+  /**
+   * Compares all current settings, including the multipart settings.
+   *
+   * @param value object to compare
+   * @return whether both objects contain equal settings
+   */
+  @Override
+  public boolean equals(@Nullable Object value) {
+    if (this == value) {
+      return true;
+    }
+
+    if (!(value instanceof Options other)) {
+      return false;
+    }
+
+    return Objects.equals(host, other.host)
+        && Objects.equals(port, other.port)
+        && Objects.equals(maxRequestBytes, other.maxRequestBytes)
+        && Objects.equals(maxResponseBytes, other.maxResponseBytes)
+        && Objects.equals(maxRequestHeaderBytes, other.maxRequestHeaderBytes)
+        && Objects.equals(idleTimeout, other.idleTimeout)
+        && Objects.equals(shutdownTimeout, other.shutdownTimeout)
+        && Objects.equals(http2, other.http2)
+        && Objects.equals(compression, other.compression)
+        && Objects.equals(maxParameters, other.maxParameters)
+        && Objects.equals(multipart, other.multipart)
+        && Objects.equals(streamBufferBytes, other.streamBufferBytes)
+        && Objects.equals(virtualThreads, other.virtualThreads);
+  }
+
+  /**
+   * Hashes all current settings, including the multipart settings.
+   *
+   * @return hash of the current settings
+   */
+  @Override
+  public int hashCode() {
+    return Objects.hash(
+        host,
+        port,
+        maxRequestBytes,
+        maxResponseBytes,
+        maxRequestHeaderBytes,
+        idleTimeout,
+        shutdownTimeout,
+        http2,
+        compression,
+        maxParameters,
+        multipart,
+        streamBufferBytes,
+        virtualThreads);
   }
 }

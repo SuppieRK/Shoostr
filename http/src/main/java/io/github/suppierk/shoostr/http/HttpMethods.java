@@ -281,9 +281,9 @@ public enum HttpMethods {
    * @return methods indexed by wire token
    */
   private static Map<String, HttpMethods> lookup() {
-    var methods = new HashMap<String, HttpMethods>();
+    final var methods = new HashMap<String, HttpMethods>();
 
-    for (var method : values()) {
+    for (final var method : values()) {
       methods.put(method.value, method);
     }
 

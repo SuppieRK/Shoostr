@@ -56,20 +56,19 @@ class McpExpiryTest {
 
   private HttpResponse<byte[]> sendInitializedRequestForFarFutureExpiry(TestServer test)
       throws IOException, InterruptedException {
-    return test.send(
-        request ->
-            request
-                .path("/mcp")
-                .method("POST")
-                .header("Content-Type", "application/json")
-                .header("Accept", "application/json, text/event-stream")
-                .body(
-                    """
-                    {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
-                      "protocolVersion":"2025-11-25","capabilities":{},
-                      "clientInfo":{"name":"expiry-fixture","version":"1.0"}}}
-                    """
-                        .getBytes(StandardCharsets.UTF_8)));
+    return test.send(request ->
+        request
+            .path("/mcp")
+            .method("POST")
+            .header("Content-Type", "application/json")
+            .header("Accept", "application/json, text/event-stream")
+            .body(
+                """
+                {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+                  "protocolVersion":"2025-11-25","capabilities":{},
+                  "clientInfo":{"name":"expiry-fixture","version":"1.0"}}}
+                """
+                    .getBytes(StandardCharsets.UTF_8)));
   }
 
   private HttpResponse<InputStream> sendResponseForFarFutureExpiry(
@@ -136,20 +135,19 @@ class McpExpiryTest {
   private HttpResponse<byte[]>
       sendInitializedRequestForEndsAnIdleListeningStreamAtItsAuthenticatedTokenExpiry(
           TestServer test) throws IOException, InterruptedException {
-    return test.send(
-        request ->
-            request
-                .path("/mcp")
-                .method("POST")
-                .header("Content-Type", "application/json")
-                .header("Accept", "application/json, text/event-stream")
-                .body(
-                    """
-                    {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
-                      "protocolVersion":"2025-11-25","capabilities":{},
-                      "clientInfo":{"name":"expiry-fixture","version":"1.0"}}}
-                    """
-                        .getBytes(StandardCharsets.UTF_8)));
+    return test.send(request ->
+        request
+            .path("/mcp")
+            .method("POST")
+            .header("Content-Type", "application/json")
+            .header("Accept", "application/json, text/event-stream")
+            .body(
+                """
+                {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+                  "protocolVersion":"2025-11-25","capabilities":{},
+                  "clientInfo":{"name":"expiry-fixture","version":"1.0"}}}
+                """
+                    .getBytes(StandardCharsets.UTF_8)));
   }
 
   private HttpResponse<InputStream>
@@ -168,15 +166,14 @@ class McpExpiryTest {
 
   private Future<Instant> submitEndedForEndsAnIdleListeningStreamAtItsAuthenticatedTokenExpiry(
       ExecutorService readers, InputStream input) {
-    return readers.submit(
-        () -> {
-          try {
-            input.readAllBytes();
-          } catch (IOException ignoredFailure) {
-            // A committed stream may end by transport failure instead of clean EOF.
-          }
+    return readers.submit(() -> {
+      try {
+        input.readAllBytes();
+      } catch (IOException ignoredFailure) {
+        // A committed stream may end by transport failure instead of clean EOF.
+      }
 
-          return Instant.now();
-        });
+      return Instant.now();
+    });
   }
 }

@@ -1,8 +1,12 @@
 package io.github.suppierk.shoostr;
 
+import static io.github.suppierk.shoostr.Locks.getUnderLock;
+import static io.github.suppierk.shoostr.Locks.runUnderLock;
+
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Consumer;
 import java.util.function.Function;
 
@@ -20,6 +24,8 @@ public final class ApplicationCallbacks {
   final List<Handler> afterFlush;
   final List<Consumer<RequestOutcome>> completed;
   final List<Function<Request, RequestObservation>> observations;
+
+  private final ReentrantLock registrationLock;
   private boolean closed;
 
   /** Creates an empty collector for one installation. */
@@ -32,6 +38,8 @@ public final class ApplicationCallbacks {
     this.afterFlush = new ArrayList<>();
     this.completed = new ArrayList<>();
     this.observations = new ArrayList<>();
+
+    this.registrationLock = new ReentrantLock();
   }
 
   /**
@@ -40,7 +48,7 @@ public final class ApplicationCallbacks {
    * @param handler callback
    * @return this collector
    */
-  public synchronized ApplicationCallbacks onRequestHeaders(Handler handler) {
+  public ApplicationCallbacks onRequestHeaders(Handler handler) {
     return add(headers, handler);
   }
 
@@ -50,7 +58,7 @@ public final class ApplicationCallbacks {
    * @param handler callback
    * @return this collector
    */
-  public synchronized ApplicationCallbacks onRouteMatched(Handler handler) {
+  public ApplicationCallbacks onRouteMatched(Handler handler) {
     return add(matched, handler);
   }
 
@@ -61,7 +69,7 @@ public final class ApplicationCallbacks {
    * @param handler callback
    * @return this collector
    */
-  public synchronized ApplicationCallbacks beforeRouteHandler(Handler handler) {
+  public ApplicationCallbacks beforeRouteHandler(Handler handler) {
     return add(before, handler);
   }
 
@@ -71,7 +79,7 @@ public final class ApplicationCallbacks {
    * @param handler callback
    * @return this collector
    */
-  public synchronized ApplicationCallbacks afterRouteHandler(Handler handler) {
+  public ApplicationCallbacks afterRouteHandler(Handler handler) {
     return add(after, handler);
   }
 
@@ -81,7 +89,7 @@ public final class ApplicationCallbacks {
    * @param handler callback
    * @return this collector
    */
-  public synchronized ApplicationCallbacks beforeResponseFlush(Handler handler) {
+  public ApplicationCallbacks beforeResponseFlush(Handler handler) {
     return add(beforeFlush, handler);
   }
 
@@ -91,7 +99,7 @@ public final class ApplicationCallbacks {
    * @param handler callback
    * @return this collector
    */
-  public synchronized ApplicationCallbacks afterResponseFlush(Handler handler) {
+  public ApplicationCallbacks afterResponseFlush(Handler handler) {
     return add(afterFlush, handler);
   }
 
@@ -101,10 +109,8 @@ public final class ApplicationCallbacks {
    * @param observer terminal observer
    * @return this collector
    */
-  public synchronized ApplicationCallbacks afterRequest(Consumer<RequestOutcome> observer) {
-    requireMutable();
-    completed.add(Objects.requireNonNull(observer));
-    return this;
+  public ApplicationCallbacks afterRequest(Consumer<RequestOutcome> observer) {
+    return add(completed, observer);
   }
 
   /**
@@ -114,38 +120,39 @@ public final class ApplicationCallbacks {
    * @param factory observation factory
    * @return this collector
    */
-  public synchronized ApplicationCallbacks observe(Function<Request, RequestObservation> factory) {
-    requireMutable();
-    observations.add(Objects.requireNonNull(factory));
-    return this;
+  public ApplicationCallbacks observe(Function<Request, RequestObservation> factory) {
+    return add(observations, factory);
   }
 
-  /** Closes registration under the same monitor used by retained writers. */
-  synchronized void freeze() {
-    closed = true;
-  }
-
-  /**
-   * Rejects registration after installation finishes.
-   *
-   * @throws IllegalStateException if installation has returned or thrown
-   */
-  private void requireMutable() {
-    if (closed) {
-      throw new IllegalStateException("Extension installation has finished");
-    }
+  /** Closes registration under the same lock used by retained writers. */
+  void freeze() {
+    runUnderLock(
+        registrationLock,
+        () -> {
+          closed = true;
+        });
   }
 
   /**
-   * Adds a validated callback while the caller holds this collector's monitor.
+   * Adds a validated callback while holding this collector's registration lock.
    *
-   * @param handlers target lifecycle phase
-   * @param handler callback
+   * @param <T> callback type
+   * @param callbacks target lifecycle phase
+   * @param callback callback to register
    * @return this collector
+   * @throws IllegalStateException if installation has finished already
    */
-  private ApplicationCallbacks add(List<Handler> handlers, Handler handler) {
-    requireMutable();
-    handlers.add(Objects.requireNonNull(handler));
-    return this;
+  private <T> ApplicationCallbacks add(List<T> callbacks, T callback) {
+    return Objects.requireNonNull(
+        getUnderLock(
+            registrationLock,
+            () -> {
+              if (closed) {
+                throw new IllegalStateException("Extension installation has finished");
+              }
+
+              callbacks.add(Objects.requireNonNull(callback));
+              return this;
+            }));
   }
 }

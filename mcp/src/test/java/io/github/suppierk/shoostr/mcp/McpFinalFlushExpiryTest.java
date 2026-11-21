@@ -45,32 +45,29 @@ class McpFinalFlushExpiryTest {
     var mcp = createMcpForInterruptsTheFrameworkFinalFlushAfterTheHandlerReturns(expiry);
     var app = new Shoostr();
     app.routes(routes -> routes.path("/mcp", group -> mcp.routes(group, selected)));
-    app.afterRouteHandler(
-        (request, ignoredResponse) -> {
-          if (request.header("X-Expiring").isPresent()) {
-            request.attribute("handler-returned", true);
-          }
-        });
-    app.beforeResponseFlush(
-        (request, ignoredResponse) -> {
-          if (request.attribute("handler-returned").filter(Boolean.TRUE::equals).isPresent()) {
-            finalFlush.countDown();
+    app.afterRouteHandler((request, ignoredResponse) -> {
+      if (request.header("X-Expiring").isPresent()) {
+        request.attribute("handler-returned", true);
+      }
+    });
+    app.beforeResponseFlush((request, ignoredResponse) -> {
+      if (request.attribute("handler-returned").filter(Boolean.TRUE::equals).isPresent()) {
+        finalFlush.countDown();
 
-            try {
-              // Only the lifetime's interrupt or unconditional test cleanup may release this hold.
-              hold.await();
-            } catch (InterruptedException failure) {
-              interrupted.set(Instant.now());
-              throw failure;
-            }
-          }
-        });
-    app.afterRequest(
-        outcome -> {
-          if ("POST".equals(outcome.method()) && outcome.applicationFailure() != null) {
-            completed.countDown();
-          }
-        });
+        try {
+          // Only the lifetime's interrupt or unconditional test cleanup may release this hold.
+          hold.await();
+        } catch (InterruptedException failure) {
+          interrupted.set(Instant.now());
+          throw failure;
+        }
+      }
+    });
+    app.afterRequest(outcome -> {
+      if ("POST".equals(outcome.method()) && outcome.applicationFailure() != null) {
+        completed.countDown();
+      }
+    });
 
     try (selected;
         var readers = Executors.newVirtualThreadPerTaskExecutor();
@@ -126,20 +123,19 @@ class McpFinalFlushExpiryTest {
   private HttpResponse<byte[]>
       sendInitializedRequestForInterruptsTheFrameworkFinalFlushAfterTheHandlerReturns(
           TestServer test) throws IOException, InterruptedException {
-    return test.send(
-        request ->
-            request
-                .path("/mcp")
-                .method("POST")
-                .header("Content-Type", "application/json")
-                .header("Accept", "application/json, text/event-stream")
-                .body(
-                    """
-                    {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
-                      "protocolVersion":"2025-11-25","capabilities":{},
-                      "clientInfo":{"name":"final-flush","version":"1.0"}}}
-                    """
-                        .getBytes(StandardCharsets.UTF_8)));
+    return test.send(request ->
+        request
+            .path("/mcp")
+            .method("POST")
+            .header("Content-Type", "application/json")
+            .header("Accept", "application/json, text/event-stream")
+            .body(
+                """
+                {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+                  "protocolVersion":"2025-11-25","capabilities":{},
+                  "clientInfo":{"name":"final-flush","version":"1.0"}}}
+                """
+                    .getBytes(StandardCharsets.UTF_8)));
   }
 
   private HttpResponse<InputStream>
@@ -162,15 +158,14 @@ class McpFinalFlushExpiryTest {
 
   private Future<Instant> submitEndedForInterruptsTheFrameworkFinalFlushAfterTheHandlerReturns(
       ExecutorService readers, InputStream body) {
-    return readers.submit(
-        () -> {
-          try {
-            body.readAllBytes();
-          } catch (IOException ignoredFailure) {
-            // Expiry aborts an already committed stream rather than replacing its status.
-          }
+    return readers.submit(() -> {
+      try {
+        body.readAllBytes();
+      } catch (IOException ignoredFailure) {
+        // Expiry aborts an already committed stream rather than replacing its status.
+      }
 
-          return Instant.now();
-        });
+      return Instant.now();
+    });
   }
 }

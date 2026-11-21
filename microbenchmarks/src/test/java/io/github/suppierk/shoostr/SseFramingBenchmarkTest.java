@@ -10,13 +10,10 @@ import org.junit.jupiter.params.provider.MethodSource;
 class SseFramingBenchmarkTest {
   private static Stream<Arguments> cases() {
     return Stream.of(128, 65536)
-        .flatMap(
-            bytes ->
-                Stream.of("single", "multiline")
-                    .flatMap(
-                        lines ->
-                            Stream.of("data", "metadata")
-                                .map(event -> Arguments.of(bytes, lines, event))));
+        .flatMap(bytes ->
+            Stream.of("single", "multiline")
+                .flatMap(lines ->
+                    Stream.of("data", "metadata").map(event -> Arguments.of(bytes, lines, event))));
   }
 
   @ParameterizedTest

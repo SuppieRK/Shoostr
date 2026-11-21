@@ -13,13 +13,11 @@ import org.junit.jupiter.params.provider.MethodSource;
 class TelemetryObservationBenchmarkTest {
   private static Stream<Arguments> cases() {
     return Stream.of("minimal", "micrometer", "otelNoop", "otelDropped", "otelRecording")
-        .flatMap(
-            configuration ->
-                Stream.of("absent", "remote")
-                    .flatMap(
-                        parent ->
-                            Stream.of("matched", "missed", "serverError")
-                                .map(outcome -> Arguments.of(configuration, parent, outcome))));
+        .flatMap(configuration ->
+            Stream.of("absent", "remote")
+                .flatMap(parent ->
+                    Stream.of("matched", "missed", "serverError")
+                        .map(outcome -> Arguments.of(configuration, parent, outcome))));
   }
 
   @ParameterizedTest

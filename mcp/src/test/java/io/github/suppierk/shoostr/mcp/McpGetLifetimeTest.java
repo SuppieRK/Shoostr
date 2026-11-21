@@ -154,20 +154,19 @@ class McpGetLifetimeTest {
   private HttpResponse<byte[]>
       sendInitializedRequestForFreshReplyCompletesTheRootsCallbackAfterItsGetTransportEnds(
           TestServer test) throws IOException, InterruptedException {
-    return test.send(
-        request ->
-            request
-                .path("/mcp")
-                .method("POST")
-                .header("Content-Type", "application/json")
-                .header("Accept", "application/json, text/event-stream")
-                .body(
-                    """
-                    {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
-                      "protocolVersion":"2025-11-25","capabilities":{"roots":{"listChanged":true}},
-                      "clientInfo":{"name":"get-lifetime-fixture","version":"1.0"}}}
-                    """
-                        .getBytes(StandardCharsets.UTF_8)));
+    return test.send(request ->
+        request
+            .path("/mcp")
+            .method("POST")
+            .header("Content-Type", "application/json")
+            .header("Accept", "application/json, text/event-stream")
+            .body(
+                """
+                {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+                  "protocolVersion":"2025-11-25","capabilities":{"roots":{"listChanged":true}},
+                  "clientInfo":{"name":"get-lifetime-fixture","version":"1.0"}}}
+                """
+                    .getBytes(StandardCharsets.UTF_8)));
   }
 
   private HttpResponse<InputStream>
@@ -187,37 +186,35 @@ class McpGetLifetimeTest {
   private HttpResponse<byte[]>
       sendNotifiedRequestForFreshReplyCompletesTheRootsCallbackAfterItsGetTransportEnds(
           TestServer test, String sessionId) throws IOException, InterruptedException {
-    return test.send(
-        request ->
-            request
-                .path("/mcp")
-                .method("POST")
-                .header("Content-Type", "application/json")
-                .header("Accept", "application/json, text/event-stream")
-                .header("Mcp-Session-Id", sessionId)
-                .header("MCP-Protocol-Version", "2025-11-25")
-                .body(
-                    """
-                    {"jsonrpc":"2.0","method":"notifications/roots/list_changed"}
-                    """
-                        .getBytes(StandardCharsets.UTF_8)));
+    return test.send(request ->
+        request
+            .path("/mcp")
+            .method("POST")
+            .header("Content-Type", "application/json")
+            .header("Accept", "application/json, text/event-stream")
+            .header("Mcp-Session-Id", sessionId)
+            .header("MCP-Protocol-Version", "2025-11-25")
+            .body(
+                """
+                {"jsonrpc":"2.0","method":"notifications/roots/list_changed"}
+                """
+                    .getBytes(StandardCharsets.UTF_8)));
   }
 
   private Future<Instant>
       submitOldEndedForFreshReplyCompletesTheRootsCallbackAfterItsGetTransportEnds(
           ExecutorService readers, BufferedReader reader) {
-    return readers.submit(
-        () -> {
-          try {
-            while (reader.readLine() != null) {
-              // Drain the superseded connection before answering its native request.
-            }
-          } catch (IOException ignoredFailure) {
-            // EOF and a closed transport both end the original HTTP owner.
-          }
+    return readers.submit(() -> {
+      try {
+        while (reader.readLine() != null) {
+          // Drain the superseded connection before answering its native request.
+        }
+      } catch (IOException ignoredFailure) {
+        // EOF and a closed transport both end the original HTTP owner.
+      }
 
-          return Instant.now();
-        });
+      return Instant.now();
+    });
   }
 
   private HttpResponse<InputStream>
@@ -245,15 +242,14 @@ class McpGetLifetimeTest {
       sendReplyRequestForFreshReplyCompletesTheRootsCallbackAfterItsGetTransportEnds(
           TestServer test, String sessionId, byte[] replyBody)
           throws IOException, InterruptedException {
-    return test.send(
-        request ->
-            request
-                .path("/mcp")
-                .method("POST")
-                .header("Content-Type", "application/json")
-                .header("Accept", "application/json, text/event-stream")
-                .header("Mcp-Session-Id", sessionId)
-                .header("MCP-Protocol-Version", "2025-11-25")
-                .body(replyBody));
+    return test.send(request ->
+        request
+            .path("/mcp")
+            .method("POST")
+            .header("Content-Type", "application/json")
+            .header("Accept", "application/json, text/event-stream")
+            .header("Mcp-Session-Id", sessionId)
+            .header("MCP-Protocol-Version", "2025-11-25")
+            .body(replyBody));
   }
 }

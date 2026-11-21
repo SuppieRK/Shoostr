@@ -130,8 +130,49 @@ public final class HttpCharacters {
   /** String equivalent of {@link #TAB}. */
   public static final String TAB_STRING = "" + TAB;
 
+  /** Space. */
+  public static final char SPACE = ' ';
+
+  /** String equivalent of {@link #SPACE}. */
+  public static final String SPACE_STRING = " ";
+
+  /** ASCII shift-in control character ({@code 0x0F}). */
+  public static final char SHIFT_IN_CONTROL = 0xF;
+
+  /** ASCII delete control character ({@code 0x7F}). */
+  public static final char DELETE_CONTROL = 0x7F;
+
+  /** Tilde ({@code ~}). */
+  public static final char TILDE = '~';
+
+  /** Exclamation mark ({@code !}). */
+  public static final char EXCLAMATION_MARK = '!';
+
+  /** Maximum unsigned byte value ({@code 255}). */
+  public static final char MAX_UNSIGNED_BYTE_VALUE = 0xFF;
+
+  /** Uppercase letter Z. */
+  public static final char Z_UPPERCASE = 'Z';
+
   /** Prevents instances of this HTTP syntax utility class. */
   private HttpCharacters() {}
+
+  /**
+   * Checks whether a value follows the RFC 9110 HTTP token grammar.
+   *
+   * <p>A token is an ASCII letter, digit, or {@code !#$%&'*+-.^_`|~}. No trimming, case conversion,
+   * or registry lookup is performed.
+   *
+   * @param value candidate HTTP token
+   * @return true for a nonempty HTTP token, or false for empty or invalid input
+   * @throws NullPointerException if value is null
+   */
+  public static boolean isValidHttpToken(char value) {
+    return (value >= '0' && value <= '9')
+        || (value >= 'A' && value <= 'Z')
+        || (value >= 'a' && value <= 'z')
+        || "!#$%&'*+-.^_`|~".indexOf(value) >= 0;
+  }
 
   /**
    * Checks whether a value follows the RFC 9110 HTTP token grammar.
@@ -150,11 +191,7 @@ public final class HttpCharacters {
     }
 
     for (var index = 0; index < value.length(); index++) {
-      var character = value.charAt(index);
-      if (!(character >= '0' && character <= '9')
-          && !(character >= 'A' && character <= 'Z')
-          && !(character >= 'a' && character <= 'z')
-          && "!#$%&'*+-.^_`|~".indexOf(character) < 0) {
+      if (!isValidHttpToken(value.charAt(index))) {
         return false;
       }
     }

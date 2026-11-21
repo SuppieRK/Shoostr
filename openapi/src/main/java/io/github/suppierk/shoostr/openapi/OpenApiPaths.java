@@ -1,18 +1,26 @@
 package io.github.suppierk.shoostr.openapi;
 
+import io.github.suppierk.shoostr.http.HttpCharacters;
 import io.swagger.v3.oas.models.Operation;
 import io.swagger.v3.oas.models.media.JsonSchema;
 import io.swagger.v3.oas.models.parameters.Parameter;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
 /** Startup-only translation of registered Shoostr templates into representable OpenAPI paths. */
 final class OpenApiPaths {
-  /** Prevents instantiation of stateless path translation. */
-  private OpenApiPaths() {}
+  /**
+   * Prevents instantiation of stateless path translation.
+   *
+   * @throws UnsupportedOperationException always
+   */
+  private OpenApiPaths() {
+    throw new UnsupportedOperationException("Cannot instantiate class");
+  }
 
   /**
    * Normalizes segment constraints and validates explicitly declared path parameters.
@@ -23,8 +31,8 @@ final class OpenApiPaths {
    * @throws IllegalArgumentException if the template or parameters cannot be represented
    */
   static String normalize(String template, Operation operation) {
-    var names = new LinkedHashMap<String, String>();
-    var normalized = normalizeSegments(template, names);
+    final var names = new LinkedHashMap<String, String>();
+    final var normalized = normalizeSegments(template, names);
 
     validateParameters(template, operation, names);
 
@@ -40,25 +48,26 @@ final class OpenApiPaths {
    * @throws IllegalArgumentException if a catch-all cannot be represented
    */
   private static String normalizeSegments(String template, Map<String, String> names) {
-    var segments = template.split("/", -1);
-    for (int segmentIndex = 0; segmentIndex < segments.length; segmentIndex++) {
-      var segment = segments[segmentIndex];
-      if (!segment.startsWith("{")) {
+    final var segments = template.split(HttpCharacters.PATH_SEPARATOR_STRING, -1);
+    for (var segmentIndex = 0; segmentIndex < segments.length; segmentIndex++) {
+      final var segment = segments[segmentIndex];
+      if (!segment.startsWith(HttpCharacters.OPEN_CURLY_BRACE_STRING)) {
         continue;
       }
 
-      var content = segment.substring(1, segment.length() - 1);
-      if (content.startsWith("*")) {
+      final var content = segment.substring(1, segment.length() - 1);
+      if (content.startsWith(HttpCharacters.ASTERISK_STRING)) {
         throw new IllegalArgumentException("OpenAPI cannot represent catch-all route: " + template);
       }
 
-      int colon = content.indexOf(':');
-      var name = colon < 0 ? content : content.substring(0, colon);
+      final var colon = content.indexOf(HttpCharacters.COLON_SIGN);
+      final var name = colon < 0 ? content : content.substring(0, colon);
       names.put(name, colon < 0 ? "" : content.substring(colon + 1));
-      segments[segmentIndex] = "{" + name + "}";
+      segments[segmentIndex] =
+          HttpCharacters.OPEN_CURLY_BRACE_STRING + name + HttpCharacters.CLOSE_CURLY_BRACE_STRING;
     }
 
-    return String.join("/", segments);
+    return String.join(HttpCharacters.PATH_SEPARATOR_STRING, segments);
   }
 
   /**
@@ -71,24 +80,24 @@ final class OpenApiPaths {
    */
   private static void validateParameters(
       String template, Operation operation, Map<String, String> names) {
-    var missing = new HashSet<>(names.keySet());
-    if (operation.getParameters() != null) {
-      for (var parameter : operation.getParameters()) {
-        if (!"path".equals(parameter.getIn())) {
-          continue;
-        }
+    final var missing = new HashSet<>(names.keySet());
+    final List<Parameter> parameters =
+        Objects.requireNonNullElse(operation.getParameters(), List.of());
+    for (final var parameter : parameters) {
+      if (!"path".equals(parameter.getIn())) {
+        continue;
+      }
 
-        var name = Objects.requireNonNull(parameter.getName());
-        var constraint = names.get(name);
-        if (constraint == null || !Boolean.TRUE.equals(parameter.getRequired())) {
-          throw new IllegalArgumentException(
-              "Invalid declared path parameter: " + name + " on " + template);
-        }
+      final var name = Objects.requireNonNull(parameter.getName());
+      final var constraint = names.get(name);
+      if (constraint == null || !Boolean.TRUE.equals(parameter.getRequired())) {
+        throw new IllegalArgumentException(
+            "Invalid declared path parameter: " + name + " on " + template);
+      }
 
-        missing.remove(name);
-        if (!constraint.isEmpty()) {
-          applyConstraint(parameter, constraint, name, template);
-        }
+      missing.remove(name);
+      if (!constraint.isEmpty()) {
+        applyConstraint(parameter, constraint, name, template);
       }
     }
 
@@ -109,7 +118,7 @@ final class OpenApiPaths {
    */
   private static void applyConstraint(
       Parameter parameter, String constraint, String name, String template) {
-    var declared = parameter.getSchema();
+    final var declared = parameter.getSchema();
     if (parameter.getContent() != null
         || declared == null
         || declared.get$ref() != null
@@ -121,13 +130,13 @@ final class OpenApiPaths {
               + template);
     }
 
-    var pattern = "^(?:" + constraint + ")$";
+    final var pattern = "^(?:" + constraint + ")$";
     if (declared.getPattern() == null) {
       declared.setPattern(pattern);
-      parameter.setSchema(declared);
-    } else {
-      var routeSchema = new JsonSchema().types(Set.of("string")).pattern(pattern);
-      parameter.setSchema(new JsonSchema().addAllOfItem(declared).addAllOfItem(routeSchema));
+      return;
     }
+
+    final var routeSchema = new JsonSchema().types(Set.of("string")).pattern(pattern);
+    parameter.setSchema(new JsonSchema().addAllOfItem(declared).addAllOfItem(routeSchema));
   }
 }

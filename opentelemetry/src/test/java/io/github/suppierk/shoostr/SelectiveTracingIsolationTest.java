@@ -37,9 +37,8 @@ class SelectiveTracingIsolationTest {
     options.setVirtualThreads(virtualApplication);
 
     return new Shoostr(options)
-        .onRequestHeaders(
-            (request, response) ->
-                assertEquals(virtualApplication, Thread.currentThread().isVirtual()));
+        .onRequestHeaders((request, response) ->
+            assertEquals(virtualApplication, Thread.currentThread().isVirtual()));
   }
 
   @ParameterizedTest
@@ -225,16 +224,14 @@ class SelectiveTracingIsolationTest {
   private Future<HttpResponse<String>>
       submitOuterForDoesNotInheritAnotherRequestTraceWhileHelpingAnUnselectedRequest(
           ExecutorService drivers, TestServer test) {
-    return drivers.submit(
-        () ->
-            test.send(
-                request ->
-                    request
-                        .path("/outer")
-                        .header(
-                            "traceparent",
-                            "00-11111111111111111111111111111111-0123456789012345-01"),
-                HttpResponse.BodyHandlers.ofString()));
+    return drivers.submit(() ->
+        test.send(
+            request ->
+                request
+                    .path("/outer")
+                    .header(
+                        "traceparent", "00-11111111111111111111111111111111-0123456789012345-01"),
+            HttpResponse.BodyHandlers.ofString()));
   }
 
   private Future<HttpResponse<String>>

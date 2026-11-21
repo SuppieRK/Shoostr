@@ -433,7 +433,7 @@ public enum HttpStatusCodes {
    */
   private static Map<Integer, HttpStatusCodes> lookup() {
     final var lookup = new HashMap<Integer, HttpStatusCodes>();
-    for (var value : HttpStatusCodes.values()) {
+    for (final var value : HttpStatusCodes.values()) {
       lookup.put(value.value(), value);
     }
     return lookup;

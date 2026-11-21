@@ -178,14 +178,13 @@ class ExtensionLifecycleTest {
   }
 
   private AuthenticationExtension bearerAuthentication() {
-    return authenticator(
-        (request, response) -> {
-          if (!"Bearer valid".equals(request.header("Authorization").orElse(null))) {
-            throw new UnauthorizedException("Bearer");
-          }
+    return authenticator((request, response) -> {
+      if (!"Bearer valid".equals(request.header("Authorization").orElse(null))) {
+        throw new UnauthorizedException("Bearer");
+      }
 
-          request.principal(() -> "alice");
-        });
+      request.principal(() -> "alice");
+    });
   }
 
   @Test
@@ -241,11 +240,10 @@ class ExtensionLifecycleTest {
       try (Closeable appCleanup8 = app::close) {
         app.withExtension(admission);
         app.routes().get("/first", (request, response) -> response.text("first"));
-        app.routes(
-            routes ->
-                routes.path(
-                    "/nested",
-                    child -> child.get("/second", (request, response) -> response.text("second"))));
+        app.routes(routes ->
+            routes.path(
+                "/nested",
+                child -> child.get("/second", (request, response) -> response.text("second"))));
 
         try (var test = TestServer.start(app)) {
           var first =
@@ -523,9 +521,8 @@ class ExtensionLifecycleTest {
   void makesAuthenticatedPrincipalAvailableToExtensionAdmission() throws Exception {
     var auth = authenticator((request, ignoredResponse) -> request.principal(() -> "alice"));
     var admission =
-        new AdmissionExtension(
-            (request, ignoredResponse) ->
-                request.attribute("identity", request.principal().orElseThrow().getName()));
+        new AdmissionExtension((request, ignoredResponse) ->
+            request.attribute("identity", request.principal().orElseThrow().getName()));
 
     {
       var app = new Shoostr();
@@ -738,10 +735,9 @@ class ExtensionLifecycleTest {
                   routes.get(
                       (ignoredRequest, response) -> response.text("handler"),
                       lifecycle -> {
-                        lifecycle.beforeRouteHandler(
-                            (ignoredRequest, ignoredResponse) -> {
-                              throw new IllegalArgumentException("local");
-                            });
+                        lifecycle.beforeRouteHandler((ignoredRequest, ignoredResponse) -> {
+                          throw new IllegalArgumentException("local");
+                        });
                         lifecycle.afterRouteHandler(
                             (ignoredRequest, ignoredResponse) -> events.add("after-local"));
                       });
@@ -781,10 +777,9 @@ class ExtensionLifecycleTest {
                 "/observed",
                 (ignoredRequest, response) -> response.text("ok"),
                 lifecycle -> {
-                  lifecycle.afterRequest(
-                      ignoredRequestOutcome -> {
-                        throw new IllegalStateException("observer failed");
-                      });
+                  lifecycle.afterRequest(ignoredRequestOutcome -> {
+                    throw new IllegalStateException("observer failed");
+                  });
                   lifecycle.afterRequest(outcomes::add);
                 });
 
@@ -909,11 +904,10 @@ class ExtensionLifecycleTest {
       try (Closeable appCleanup27 = app::close) {
         app.beforeResponseFlush((ignoredRequest, ignoredResponse) -> events.add("app-before"));
         app.afterResponseFlush((ignoredRequest, ignoredResponse) -> events.add("app-after"));
-        app.afterRequest(
-            outcome -> {
-              events.add("app-terminal");
-              completed.add(outcome);
-            });
+        app.afterRequest(outcome -> {
+          events.add("app-terminal");
+          completed.add(outcome);
+        });
         app.routes()
             .sse(
                 "/events",

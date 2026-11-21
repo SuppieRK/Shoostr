@@ -86,20 +86,19 @@ class McpMailboxAdmissionTest {
 
   private static HttpResponse<byte[]> sendInitializedRequestForWithStream(TestServer test)
       throws IOException, InterruptedException {
-    return test.send(
-        request ->
-            request
-                .path("/mcp")
-                .method("POST")
-                .header("Content-Type", "application/json")
-                .header("Accept", "application/json, text/event-stream")
-                .body(
-                    """
-                    {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
-                    "protocolVersion":"2025-11-25","capabilities":{},
-                    "clientInfo":{"name":"mailbox-test","version":"1.0"}}}
-                    """
-                        .getBytes(StandardCharsets.UTF_8)));
+    return test.send(request ->
+        request
+            .path("/mcp")
+            .method("POST")
+            .header("Content-Type", "application/json")
+            .header("Accept", "application/json, text/event-stream")
+            .body(
+                """
+                {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+                "protocolVersion":"2025-11-25","capabilities":{},
+                "clientInfo":{"name":"mailbox-test","version":"1.0"}}}
+                """
+                    .getBytes(StandardCharsets.UTF_8)));
   }
 
   private static Map<String, Object> observed(AtomicInteger traversals) {
@@ -134,14 +133,13 @@ class McpMailboxAdmissionTest {
     return new McpStreamableServerTransportProvider() {
       @Override
       public void setSessionFactory(McpStreamableServerSession.Factory factory) {
-        transport.setSessionFactory(
-            parameters -> {
-              var session = listeningSession(exercise);
-              var result = initializationResult();
+        transport.setSessionFactory(parameters -> {
+          var session = listeningSession(exercise);
+          var result = initializationResult();
 
-              return new McpStreamableServerSession.McpStreamableServerSessionInit(
-                  session, Mono.just(result));
-            });
+          return new McpStreamableServerSession.McpStreamableServerSessionInit(
+              session, Mono.just(result));
+        });
       }
 
       @Override
@@ -218,21 +216,20 @@ class McpMailboxAdmissionTest {
           AtomicInteger rejectedTraversal,
           AtomicReference<Throwable> rejected)
           throws Exception {
-    return withStream(
-        stream -> {
-          stream
-              .sendMessage(new McpSchema.JSONRPCNotification("probe", observed(acceptedTraversal)))
-              .subscribe(ignored -> {}, failures::add, acknowledgments::incrementAndGet);
-          for (int index = 1; index < 64; index++) {
-            stream
-                .sendMessage(new McpSchema.JSONRPCNotification("probe", Map.of("value", "safe")))
-                .subscribe(ignored -> {}, failures::add, acknowledgments::incrementAndGet);
-          }
-          stream
-              .sendMessage(new McpSchema.JSONRPCNotification("probe", observed(rejectedTraversal)))
-              .subscribe(ignored -> {}, rejected::set);
-          stream.closeGracefully().block(Duration.ofSeconds(1));
-        });
+    return withStream(stream -> {
+      stream
+          .sendMessage(new McpSchema.JSONRPCNotification("probe", observed(acceptedTraversal)))
+          .subscribe(ignored -> {}, failures::add, acknowledgments::incrementAndGet);
+      for (int index = 1; index < 64; index++) {
+        stream
+            .sendMessage(new McpSchema.JSONRPCNotification("probe", Map.of("value", "safe")))
+            .subscribe(ignored -> {}, failures::add, acknowledgments::incrementAndGet);
+      }
+      stream
+          .sendMessage(new McpSchema.JSONRPCNotification("probe", observed(rejectedTraversal)))
+          .subscribe(ignored -> {}, rejected::set);
+      stream.closeGracefully().block(Duration.ofSeconds(1));
+    });
   }
 
   @Test
@@ -252,16 +249,15 @@ class McpMailboxAdmissionTest {
   private HttpResponse<String>
       sendResponseForRejectsSubscriptionAfterClosureWithoutTraversingThePayload(
           AtomicInteger traversals, AtomicReference<Throwable> rejected) throws Exception {
-    return withStream(
-        stream -> {
-          var deferred =
-              stream.sendMessage(new McpSchema.JSONRPCNotification("probe", observed(traversals)));
+    return withStream(stream -> {
+      var deferred =
+          stream.sendMessage(new McpSchema.JSONRPCNotification("probe", observed(traversals)));
 
-          assertEquals(0, traversals.get());
+      assertEquals(0, traversals.get());
 
-          stream.closeGracefully().block(Duration.ofSeconds(1));
-          deferred.subscribe(ignored -> {}, rejected::set);
-        });
+      stream.closeGracefully().block(Duration.ofSeconds(1));
+      deferred.subscribe(ignored -> {}, rejected::set);
+    });
   }
 
   @Test
@@ -284,23 +280,22 @@ class McpMailboxAdmissionTest {
       CountDownLatch release,
       AtomicReference<Throwable> rejected)
       throws Exception {
-    return withStream(
-        stream -> {
-          try (var senders = Executors.newVirtualThreadPerTaskExecutor()) {
-            var sending =
-                submitSendingForRejectsClosureDuringEncodingWithoutHoldingTheMailboxLock(
-                    senders, stream, traversals, entered, release, rejected);
+    return withStream(stream -> {
+      try (var senders = Executors.newVirtualThreadPerTaskExecutor()) {
+        var sending =
+            submitSendingForRejectsClosureDuringEncodingWithoutHoldingTheMailboxLock(
+                senders, stream, traversals, entered, release, rejected);
 
-            try {
-              await(entered, 2);
-              finish(senders.submit(() -> stream.closeGracefully().block(Duration.ofSeconds(1))));
-            } finally {
-              release.countDown();
-            }
+        try {
+          await(entered, 2);
+          finish(senders.submit(() -> stream.closeGracefully().block(Duration.ofSeconds(1))));
+        } finally {
+          release.countDown();
+        }
 
-            finish(sending);
-          }
-        });
+        finish(sending);
+      }
+    });
   }
 
   private Future<Disposable>
@@ -311,13 +306,11 @@ class McpMailboxAdmissionTest {
           CountDownLatch entered,
           CountDownLatch release,
           AtomicReference<Throwable> rejected) {
-    return senders.submit(
-        () ->
-            stream
-                .sendMessage(
-                    new McpSchema.JSONRPCNotification(
-                        "probe", pausing(traversals, entered, release)))
-                .subscribe(ignored -> {}, rejected::set));
+    return senders.submit(() ->
+        stream
+            .sendMessage(
+                new McpSchema.JSONRPCNotification("probe", pausing(traversals, entered, release)))
+            .subscribe(ignored -> {}, rejected::set));
   }
 
   @Test
@@ -348,39 +341,35 @@ class McpMailboxAdmissionTest {
       CountDownLatch release,
       AtomicReference<Throwable> rejected)
       throws Exception {
-    return withStream(
-        stream -> {
-          for (int index = 0; index < 63; index++) {
-            stream
-                .sendMessage(new McpSchema.JSONRPCNotification("probe", Map.of("value", "safe")))
-                .subscribe(ignored -> {}, failures::add, acknowledgments::incrementAndGet);
-          }
+    return withStream(stream -> {
+      for (int index = 0; index < 63; index++) {
+        stream
+            .sendMessage(new McpSchema.JSONRPCNotification("probe", Map.of("value", "safe")))
+            .subscribe(ignored -> {}, failures::add, acknowledgments::incrementAndGet);
+      }
 
-          try (var senders = Executors.newVirtualThreadPerTaskExecutor()) {
-            var paused =
-                submitPausedForRejectsCompetingAdmissionAfterEncodingWithoutExceedingTheFrameLimit(
-                    senders, stream, traversals, entered, release, rejected);
+      try (var senders = Executors.newVirtualThreadPerTaskExecutor()) {
+        var paused =
+            submitPausedForRejectsCompetingAdmissionAfterEncodingWithoutExceedingTheFrameLimit(
+                senders, stream, traversals, entered, release, rejected);
 
-            try {
-              await(entered, 2);
-              finish(
-                  senders.submit(
-                      () ->
-                          stream
-                              .sendMessage(
-                                  new McpSchema.JSONRPCNotification(
-                                      "probe", Map.of("value", "last")))
-                              .subscribe(
-                                  ignored -> {}, failures::add, acknowledgments::incrementAndGet)));
-            } finally {
-              release.countDown();
-            }
+        try {
+          await(entered, 2);
+          finish(
+              senders.submit(() ->
+                  stream
+                      .sendMessage(
+                          new McpSchema.JSONRPCNotification("probe", Map.of("value", "last")))
+                      .subscribe(ignored -> {}, failures::add, acknowledgments::incrementAndGet)));
+        } finally {
+          release.countDown();
+        }
 
-            finish(paused);
-          }
+        finish(paused);
+      }
 
-          stream.closeGracefully().block(Duration.ofSeconds(1));
-        });
+      stream.closeGracefully().block(Duration.ofSeconds(1));
+    });
   }
 
   private Future<Disposable>
@@ -391,12 +380,10 @@ class McpMailboxAdmissionTest {
           CountDownLatch entered,
           CountDownLatch release,
           AtomicReference<Throwable> rejected) {
-    return senders.submit(
-        () ->
-            stream
-                .sendMessage(
-                    new McpSchema.JSONRPCNotification(
-                        "probe", pausing(traversals, entered, release)))
-                .subscribe(ignored -> {}, rejected::set));
+    return senders.submit(() ->
+        stream
+            .sendMessage(
+                new McpSchema.JSONRPCNotification("probe", pausing(traversals, entered, release)))
+            .subscribe(ignored -> {}, rejected::set));
   }
 }

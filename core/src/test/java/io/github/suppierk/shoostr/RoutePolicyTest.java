@@ -108,9 +108,8 @@ class RoutePolicyTest {
     var outer =
         new AdmissionExtension((request, ignoredResponse) -> request.attribute("order", "outer"));
     var inner =
-        new AdmissionExtension(
-            (request, ignoredResponse) ->
-                request.attribute("order", request.attribute("order").orElseThrow() + ",inner"));
+        new AdmissionExtension((request, ignoredResponse) ->
+            request.attribute("order", request.attribute("order").orElseThrow() + ",inner"));
 
     {
       var app = new Shoostr();
@@ -142,10 +141,8 @@ class RoutePolicyTest {
   @Test
   void preventsExtensionAdmissionFromStartingStream() throws Exception {
     var admission =
-        new AdmissionExtension(
-            (ignoredRequest, response) ->
-                assertThrows(
-                    IllegalStateException.class, () -> response.startStream("text/plain")));
+        new AdmissionExtension((ignoredRequest, response) ->
+            assertThrows(IllegalStateException.class, () -> response.startStream("text/plain")));
 
     {
       var app = new Shoostr();
@@ -221,10 +218,9 @@ class RoutePolicyTest {
 
       try (Closeable appCleanup4 = app::close) {
         var admission =
-            new AdmissionExtension(
-                (ignoredRequest, ignoredResponse) -> {
-                  throw new ForbiddenException();
-                });
+            new AdmissionExtension((ignoredRequest, ignoredResponse) -> {
+              throw new ForbiddenException();
+            });
         app.routes()
             .path(
                 "/",
@@ -251,10 +247,9 @@ class RoutePolicyTest {
 
       try (Closeable appCleanup5 = app::close) {
         var admission =
-            new AdmissionExtension(
-                (ignoredRequest, ignoredResponse) -> {
-                  throw new ForbiddenException();
-                });
+            new AdmissionExtension((ignoredRequest, ignoredResponse) -> {
+              throw new ForbiddenException();
+            });
         app.routes()
             .path(
                 "/api",

@@ -41,12 +41,11 @@ class McpUrlElicitationTest {
     var mcp = urlCompletionServer(session);
     var app = new Shoostr();
     app.routes(routes -> routes.path("/mcp", mcp::routes));
-    app.beforeResponseFlush(
-        (request, ignoredResponse) -> {
-          if ("GET".equals(request.method())) {
-            listening.countDown();
-          }
-        });
+    app.beforeResponseFlush((request, ignoredResponse) -> {
+      if ("GET".equals(request.method())) {
+        listening.countDown();
+      }
+    });
 
     try (var test = TestServer.start(app);
         var client = openClientForNativeUrlCompletion(test, completed)) {
@@ -85,15 +84,14 @@ class McpUrlElicitationTest {
                 .tools(
                     McpServerFeatures.SyncToolSpecification.builder()
                         .tool(McpSchema.Tool.builder("authorize", Map.of("type", "object")).build())
-                        .callHandler(
-                            (exchange, ignoredCallToolRequest) -> {
-                              session.complete(exchange.sessionId());
-                              var result = sendResultForNativeUrlCompletion(exchange);
+                        .callHandler((exchange, ignoredCallToolRequest) -> {
+                          session.complete(exchange.sessionId());
+                          var result = sendResultForNativeUrlCompletion(exchange);
 
-                              return McpSchema.CallToolResult.builder()
-                                  .addTextContent(result.action().name())
-                                  .build();
-                            })
+                          return McpSchema.CallToolResult.builder()
+                              .addTextContent(result.action().name())
+                              .build();
+                        })
                         .build())
                 .build());
   }
@@ -119,9 +117,8 @@ class McpUrlElicitationTest {
                 .endpoint("/mcp")
                 .build())
         .capabilities(McpSchema.ClientCapabilities.builder().elicitation(false, true).build())
-        .urlElicitation(
-            ignoredElicitUrlRequest ->
-                McpSchema.ElicitResult.builder(McpSchema.ElicitResult.Action.ACCEPT).build())
+        .urlElicitation(ignoredElicitUrlRequest ->
+            McpSchema.ElicitResult.builder(McpSchema.ElicitResult.Action.ACCEPT).build())
         .elicitationCompleteConsumer(completed::complete)
         .requestTimeout(Duration.ofSeconds(5))
         .initializationTimeout(Duration.ofSeconds(5));
@@ -171,16 +168,15 @@ class McpUrlElicitationTest {
                 .tools(
                     McpServerFeatures.SyncToolSpecification.builder()
                         .tool(McpSchema.Tool.builder("authorize", Map.of("type", "object")).build())
-                        .callHandler(
-                            (exchange, ignoredCallToolRequest) -> {
-                              var result =
-                                  sendResultForPreservesTheNativeClientsUrlElicitationDecision(
-                                      exchange);
+                        .callHandler((exchange, ignoredCallToolRequest) -> {
+                          var result =
+                              sendResultForPreservesTheNativeClientsUrlElicitationDecision(
+                                  exchange);
 
-                              return McpSchema.CallToolResult.builder()
-                                  .addTextContent(result.action().name())
-                                  .build();
-                            })
+                          return McpSchema.CallToolResult.builder()
+                              .addTextContent(result.action().name())
+                              .build();
+                        })
                         .build())
                 .build());
   }
@@ -209,12 +205,11 @@ class McpUrlElicitationTest {
                 .endpoint("/mcp")
                 .build())
         .capabilities(McpSchema.ClientCapabilities.builder().elicitation(false, true).build())
-        .urlElicitation(
-            request -> {
-              received.complete(request);
+        .urlElicitation(request -> {
+          received.complete(request);
 
-              return McpSchema.ElicitResult.builder(action).build();
-            })
+          return McpSchema.ElicitResult.builder(action).build();
+        })
         .requestTimeout(Duration.ofSeconds(5))
         .initializationTimeout(Duration.ofSeconds(5));
   }

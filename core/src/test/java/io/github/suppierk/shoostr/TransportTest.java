@@ -110,14 +110,13 @@ class TransportTest {
 
   private static void enableMutualTls(Shoostr app) throws Exception {
     var store = testKeyStore();
-    app.tls(
-        tls -> {
-          tls.setKeyStore(store);
-          tls.setKeyStorePassword(String.valueOf(PASSWORD));
-          tls.setTrustStore(store);
-          tls.setNeedClientAuth(true);
-          tls.setIncludeProtocols("TLSv1.2");
-        });
+    app.tls(tls -> {
+      tls.setKeyStore(store);
+      tls.setKeyStorePassword(String.valueOf(PASSWORD));
+      tls.setTrustStore(store);
+      tls.setNeedClientAuth(true);
+      tls.setIncludeProtocols("TLSv1.2");
+    });
   }
 
   private static SSLContext mutualTlsContext(KeyStore identity) throws Exception {
@@ -147,9 +146,8 @@ class TransportTest {
     {
       var app =
           new Shoostr()
-              .modifyServer(
-                  nativeServerConfiguration ->
-                      ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
+              .modifyServer(nativeServerConfiguration ->
+                  ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
 
       try (Closeable appCleanup = app::close;
           var client = secureClient(HttpClient.Version.HTTP_1_1)) {
@@ -186,9 +184,8 @@ class TransportTest {
     {
       var app =
           new Shoostr()
-              .modifyServer(
-                  nativeServerConfiguration ->
-                      ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
+              .modifyServer(nativeServerConfiguration ->
+                  ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
 
       try (Closeable appCleanup1 = app::close;
           var client =
@@ -244,9 +241,8 @@ class TransportTest {
     {
       var app =
           new Shoostr()
-              .modifyServer(
-                  nativeServerConfiguration ->
-                      ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
+              .modifyServer(nativeServerConfiguration ->
+                  ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
 
       try (Closeable appCleanup2 = app::close;
           var trustedClient =
@@ -326,9 +322,8 @@ class TransportTest {
     {
       var app =
           new Shoostr()
-              .modifyServer(
-                  nativeServerConfiguration ->
-                      ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
+              .modifyServer(nativeServerConfiguration ->
+                  ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
 
       try (Closeable appCleanup3 = app::close;
           var trustedClient =
@@ -397,9 +392,8 @@ class TransportTest {
     {
       var app =
           new Shoostr(configuredOptions)
-              .modifyServer(
-                  nativeServerConfiguration ->
-                      ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
+              .modifyServer(nativeServerConfiguration ->
+                  ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
 
       try (Closeable appCleanup4 = app::close;
           var client = secureClient(HttpClient.Version.HTTP_2)) {
@@ -473,9 +467,8 @@ class TransportTest {
     {
       var app =
           new Shoostr(configuredOptions)
-              .modifyServer(
-                  nativeServerConfiguration ->
-                      ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
+              .modifyServer(nativeServerConfiguration ->
+                  ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
 
       try (Closeable appCleanup5 = app::close;
           var client = secureClient(HttpClient.Version.HTTP_2)) {
@@ -583,9 +576,8 @@ class TransportTest {
     {
       var app =
           new Shoostr(configuredOptions)
-              .modifyServer(
-                  nativeServerConfiguration ->
-                      ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
+              .modifyServer(nativeServerConfiguration ->
+                  ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
 
       try (Closeable appCleanup6 = app::close;
           var client = secureClient(HttpClient.Version.HTTP_2)) {
@@ -645,9 +637,8 @@ class TransportTest {
     {
       var app =
           new Shoostr(configuredOptions)
-              .modifyServer(
-                  nativeServerConfiguration ->
-                      ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
+              .modifyServer(nativeServerConfiguration ->
+                  ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
 
       try (Closeable appCleanup7 = app::close;
           var client = secureClient(HttpClient.Version.HTTP_2)) {
@@ -713,20 +704,17 @@ class TransportTest {
     {
       var app =
           new Shoostr(configuredOptions)
-              .modifyServer(
-                  nativeServerConfiguration ->
-                      ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
+              .modifyServer(nativeServerConfiguration ->
+                  ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
 
       try (Closeable appCleanup8 = app::close;
           var client = secureClient(HttpClient.Version.HTTP_2)) {
         enableTls(app, tlsContext);
-        app.modifyServer(
-            server -> {
-              nativeServer.set(server);
-              ownedExecutor.set(
-                  (ExecutorService)
-                      VirtualThreads.getVirtualThreadsExecutor(server.getThreadPool()));
-            });
+        app.modifyServer(server -> {
+          nativeServer.set(server);
+          ownedExecutor.set(
+              (ExecutorService) VirtualThreads.getVirtualThreadsExecutor(server.getThreadPool()));
+        });
         app.routes().get("/warmup", (ignoredRequest, response) -> response.text("ready"));
         app.routes()
             .get(
@@ -773,14 +761,13 @@ class TransportTest {
 
           var graceful = nativeServer.get().getDescendant(GracefulHandler.class);
           closing =
-              CompletableFuture.runAsync(
-                  () -> {
-                    try {
-                      app.close();
-                    } catch (IOException failure) {
-                      throw new CompletionException(failure);
-                    }
-                  });
+              CompletableFuture.runAsync(() -> {
+                try {
+                  app.close();
+                } catch (IOException failure) {
+                  throw new CompletionException(failure);
+                }
+              });
           await()
               .pollInterval(Duration.ofMillis(10))
               .atMost(Duration.ofSeconds(3))
@@ -846,30 +833,26 @@ class TransportTest {
     {
       var app =
           new Shoostr(configuredOptions)
-              .modifyServer(
-                  nativeServerConfiguration ->
-                      ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
+              .modifyServer(nativeServerConfiguration ->
+                  ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
 
       try (Closeable appCleanup9 = app::close;
           var client = secureClient(HttpClient.Version.HTTP_2)) {
         enableTls(app, tlsContext);
-        app.afterRequest(
-            result -> {
-              if ("/blocked".equals(result.routePattern())) {
-                outcome.set(result);
-                observed.countDown();
-              }
-            });
+        app.afterRequest(result -> {
+          if ("/blocked".equals(result.routePattern())) {
+            outcome.set(result);
+            observed.countDown();
+          }
+        });
         app.sessions(sessionHandler::set);
-        app.modifyServer(
-            server -> {
-              nativeServer.set(server);
-              ownedExecutor.set(
-                  (ExecutorService)
-                      VirtualThreads.getVirtualThreadsExecutor(server.getThreadPool()));
-              server.setStopTimeout(100);
-              ((ServerConnector) server.getConnectors()[0]).setShutdownIdleTimeout(0);
-            });
+        app.modifyServer(server -> {
+          nativeServer.set(server);
+          ownedExecutor.set(
+              (ExecutorService) VirtualThreads.getVirtualThreadsExecutor(server.getThreadPool()));
+          server.setStopTimeout(100);
+          ((ServerConnector) server.getConnectors()[0]).setShutdownIdleTimeout(0);
+        });
         app.routes()
             .path(
                 "/",
@@ -953,14 +936,13 @@ class TransportTest {
   private CompletableFuture<Void>
       createClosingForForcedHttpsHttp2StopInterruptsBlockedWorkAndReleasesTheOwnedExecutor(
           Shoostr app) {
-    return CompletableFuture.runAsync(
-        () -> {
-          try {
-            app.close();
-          } catch (IOException failure) {
-            throw new CompletionException(failure);
-          }
-        });
+    return CompletableFuture.runAsync(() -> {
+      try {
+        app.close();
+      } catch (IOException failure) {
+        throw new CompletionException(failure);
+      }
+    });
   }
 
   @ParameterizedTest
@@ -987,61 +969,57 @@ class TransportTest {
     {
       var app =
           new Shoostr(configuredOptions)
-              .modifyServer(
-                  nativeServerConfiguration ->
-                      ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
+              .modifyServer(nativeServerConfiguration ->
+                  ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
 
       try (Closeable appCleanup10 = app::close;
           var client = secureClient(HttpClient.Version.HTTP_2)) {
 
         enableTls(app);
-        app.observe(
-                request ->
-                    new RequestObservation() {
-                      @Override
-                      public void complete(RequestOutcome result) {
-                        // Only close() participates in this cleanup-order assertion.
-                      }
-
-                      @Override
-                      public void close() {
-                        invocationCleaned.set(true);
-                      }
-                    })
-            .afterRequest(
-                result -> {
-                  observedAfterCleanup.set(invocationCleaned.get());
-                  observations.incrementAndGet();
-                  outcome.set(result);
-                  observed.countDown();
-                })
-            .modifyServer(
-                server -> {
-                  server.setStopTimeout(100);
-                  ((ServerConnector) server.getConnectors()[0]).setShutdownIdleTimeout(0);
-                  var pool = (QueuedThreadPool) server.getThreadPool();
-                  cleanupPool.set(pool);
-                  pool.setStopTimeout(100);
-                  if (virtual) {
-                    ownedExecutor.set((ExecutorService) pool.getVirtualThreadsExecutor());
-                  } else {
-                    assertNull(pool.getVirtualThreadsExecutor());
+        app.observe(request ->
+                new RequestObservation() {
+                  @Override
+                  public void complete(RequestOutcome result) {
+                    // Only close() participates in this cleanup-order assertion.
                   }
 
-                  var connectionFactories =
-                      server
-                          .getConnectors()[0]
-                          .getConnectionFactories()
-                          .toArray(ConnectionFactory[]::new);
-                  var delayed =
-                      createDelayedForForcedHttp2StopStillObservesCleanupDispatchedAfterExecutorShutdown(
-                          server, connectionFactories, cleanupHeld, releaseCleanup);
-                  delayed.setHost("127.0.0.1");
-                  delayed.setPort(0);
-                  delayed.setShutdownIdleTimeout(0);
-                  server.addConnector(delayed);
-                  cleanupConnector.set(delayed);
-                });
+                  @Override
+                  public void close() {
+                    invocationCleaned.set(true);
+                  }
+                })
+            .afterRequest(result -> {
+              observedAfterCleanup.set(invocationCleaned.get());
+              observations.incrementAndGet();
+              outcome.set(result);
+              observed.countDown();
+            })
+            .modifyServer(server -> {
+              server.setStopTimeout(100);
+              ((ServerConnector) server.getConnectors()[0]).setShutdownIdleTimeout(0);
+              var pool = (QueuedThreadPool) server.getThreadPool();
+              cleanupPool.set(pool);
+              pool.setStopTimeout(100);
+              if (virtual) {
+                ownedExecutor.set((ExecutorService) pool.getVirtualThreadsExecutor());
+              } else {
+                assertNull(pool.getVirtualThreadsExecutor());
+              }
+
+              var connectionFactories =
+                  server
+                      .getConnectors()[0]
+                      .getConnectionFactories()
+                      .toArray(ConnectionFactory[]::new);
+              var delayed =
+                  createDelayedForForcedHttp2StopStillObservesCleanupDispatchedAfterExecutorShutdown(
+                      server, connectionFactories, cleanupHeld, releaseCleanup);
+              delayed.setHost("127.0.0.1");
+              delayed.setPort(0);
+              delayed.setShutdownIdleTimeout(0);
+              server.addConnector(delayed);
+              cleanupConnector.set(delayed);
+            });
         app.routes()
             .get(
                 "/blocked",
@@ -1137,14 +1115,13 @@ class TransportTest {
   private CompletableFuture<Void>
       createClosingForForcedHttp2StopStillObservesCleanupDispatchedAfterExecutorShutdown(
           Shoostr app) {
-    return CompletableFuture.runAsync(
-        () -> {
-          try {
-            app.close();
-          } catch (IOException failure) {
-            throw new CompletionException(failure);
-          }
-        });
+    return CompletableFuture.runAsync(() -> {
+      try {
+        app.close();
+      } catch (IOException failure) {
+        throw new CompletionException(failure);
+      }
+    });
   }
 
   @Test
@@ -1160,9 +1137,8 @@ class TransportTest {
     {
       var app =
           new Shoostr(configuredOptions)
-              .modifyServer(
-                  nativeServerConfiguration ->
-                      ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
+              .modifyServer(nativeServerConfiguration ->
+                  ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
 
       try (Closeable appCleanup11 = app::close;
           var client = HttpClient.newBuilder().version(HttpClient.Version.HTTP_2).build()) {
@@ -1204,14 +1180,13 @@ class TransportTest {
           assertTrue(entered.await(3, TimeUnit.SECONDS));
 
           closing =
-              CompletableFuture.runAsync(
-                  () -> {
-                    try {
-                      app.close();
-                    } catch (IOException failure) {
-                      throw new CompletionException(failure);
-                    }
-                  });
+              CompletableFuture.runAsync(() -> {
+                try {
+                  app.close();
+                } catch (IOException failure) {
+                  throw new CompletionException(failure);
+                }
+              });
           var graceful = nativeServer.get().getDescendant(GracefulHandler.class);
           await()
               .pollInterval(Duration.ofMillis(10))
@@ -1251,9 +1226,8 @@ class TransportTest {
     {
       var app =
           new Shoostr(configuredOptions)
-              .modifyServer(
-                  nativeServerConfiguration ->
-                      ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
+              .modifyServer(nativeServerConfiguration ->
+                  ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
 
       try (Closeable appCleanup12 = app::close) {
 
@@ -1273,9 +1247,8 @@ class TransportTest {
           }
 
           var gzipOnly =
-              test.send(
-                  request ->
-                      request.path("/data").header("Accept-Encoding", "gzip;q=1, identity;q=0"));
+              test.send(request ->
+                  request.path("/data").header("Accept-Encoding", "gzip;q=1, identity;q=0"));
 
           assertEquals(200, gzipOnly.statusCode());
           assertEquals("gzip", gzipOnly.headers().firstValue("Content-Encoding").orElseThrow());
@@ -1309,6 +1282,35 @@ class TransportTest {
     }
   }
 
+  @ParameterizedTest
+  @ValueSource(strings = {"gzip", "identity"})
+  void explicitContentCodingOverridesRejectedWildcard(String coding) throws Exception {
+    var payload = "compressible-body-".repeat(100);
+    var options = new Options();
+    options.setCompression(true);
+    var app = new Shoostr(options);
+
+    try (Closeable appCleanup = app::close) {
+      app.routes().get("/data", (request, response) -> response.text(payload));
+
+      try (var test = TestServer.start(app)) {
+        var result =
+            test.send(request ->
+                request.path("/data").header("Accept-Encoding", "*;q=0, " + coding + ";q=1"));
+
+        assertEquals(200, result.statusCode());
+        assertEquals(coding, result.headers().firstValue("Content-Encoding").orElse("identity"));
+        if ("gzip".equals(coding)) {
+          try (var gzip = new GZIPInputStream(new ByteArrayInputStream(result.body()))) {
+            assertEquals(payload, new String(gzip.readAllBytes(), StandardCharsets.UTF_8));
+          }
+        } else {
+          assertEquals(payload, new String(result.body(), StandardCharsets.UTF_8));
+        }
+      }
+    }
+  }
+
   @Test
   void compressionReturnsEmptyNotAcceptableWhenGzipAndIdentityAreRejected() throws Exception {
     var configuredOptions = new Options();
@@ -1317,9 +1319,8 @@ class TransportTest {
     {
       var app =
           new Shoostr(configuredOptions)
-              .modifyServer(
-                  nativeServerConfiguration ->
-                      ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
+              .modifyServer(nativeServerConfiguration ->
+                  ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
 
       try (Closeable appCleanup13 = app::close) {
 
@@ -1380,9 +1381,8 @@ class TransportTest {
           assertEquals("br", custom.headers().firstValue("Content-Encoding").orElseThrow());
 
           var optOut =
-              test.send(
-                  request ->
-                      request.path("/opt-out").header("Accept-Encoding", "gzip;q=1, identity;q=0"));
+              test.send(request ->
+                  request.path("/opt-out").header("Accept-Encoding", "gzip;q=1, identity;q=0"));
 
           assertEquals(406, optOut.statusCode());
           assertEquals(0, optOut.body().length);
@@ -1402,28 +1402,25 @@ class TransportTest {
   private HttpResponse<byte[]>
       sendEmptyRequestForCompressionReturnsEmptyNotAcceptableWhenGzipAndIdentityAreRejected(
           TestServer test) throws IOException, InterruptedException {
-    return test.send(
-        request ->
-            request.path("/empty").header("Accept-Encoding", "gzip;q=0, *;q=1, identity;q=0"));
+    return test.send(request ->
+        request.path("/empty").header("Accept-Encoding", "gzip;q=0, *;q=1, identity;q=0"));
   }
 
   private HttpResponse<byte[]>
       sendHeadRequestForCompressionReturnsEmptyNotAcceptableWhenGzipAndIdentityAreRejected(
           TestServer test) throws IOException, InterruptedException {
-    return test.send(
-        request ->
-            request
-                .path("/finite")
-                .header("Accept-Encoding", "gzip;q=0, *;q=1, identity;q=0")
-                .method("HEAD"));
+    return test.send(request ->
+        request
+            .path("/finite")
+            .header("Accept-Encoding", "gzip;q=0, *;q=1, identity;q=0")
+            .method("HEAD"));
   }
 
   private HttpResponse<byte[]>
       sendCustomRequestForCompressionReturnsEmptyNotAcceptableWhenGzipAndIdentityAreRejected(
           TestServer test) throws IOException, InterruptedException {
-    return test.send(
-        request ->
-            request.path("/custom").header("Accept-Encoding", "gzip;q=0, *;q=1, identity;q=0"));
+    return test.send(request ->
+        request.path("/custom").header("Accept-Encoding", "gzip;q=0, *;q=1, identity;q=0"));
   }
 
   @Test
@@ -1436,9 +1433,8 @@ class TransportTest {
     {
       var app =
           new Shoostr(configuredOptions)
-              .modifyServer(
-                  nativeServerConfiguration ->
-                      ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
+              .modifyServer(nativeServerConfiguration ->
+                  ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
 
       try (Closeable appCleanup14 = app::close) {
 
@@ -1459,12 +1455,11 @@ class TransportTest {
 
   private HttpResponse<byte[]> sendResultForCompressionRejectsRangedFileWhenIdentityIsForbidden(
       TestServer test) throws IOException, InterruptedException {
-    return test.send(
-        request ->
-            request
-                .path("/file")
-                .header("Accept-Encoding", "gzip;q=1, identity;q=0")
-                .header("Range", "bytes=0-1999"));
+    return test.send(request ->
+        request
+            .path("/file")
+            .header("Accept-Encoding", "gzip;q=1, identity;q=0")
+            .header("Range", "bytes=0-1999"));
   }
 
   @Test
@@ -1475,9 +1470,8 @@ class TransportTest {
     {
       var app =
           new Shoostr(configuredOptions)
-              .modifyServer(
-                  nativeServerConfiguration ->
-                      ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
+              .modifyServer(nativeServerConfiguration ->
+                  ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
 
       try (Closeable appCleanup15 = app::close) {
 
@@ -1505,9 +1499,8 @@ class TransportTest {
 
   private HttpResponse<byte[]> sendResultForCompressionRejectsUnacceptableExceptionHandlerRecovery(
       TestServer test) throws IOException, InterruptedException {
-    return test.send(
-        request ->
-            request.path("/failure").header("Accept-Encoding", "gzip;q=0, *;q=1, identity;q=0"));
+    return test.send(request ->
+        request.path("/failure").header("Accept-Encoding", "gzip;q=0, *;q=1, identity;q=0"));
   }
 
   @Test
@@ -1520,9 +1513,8 @@ class TransportTest {
     {
       var app =
           new Shoostr(configuredOptions)
-              .modifyServer(
-                  nativeServerConfiguration ->
-                      ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
+              .modifyServer(nativeServerConfiguration ->
+                  ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
 
       try (Closeable appCleanup16 = app::close) {
 
@@ -1565,9 +1557,8 @@ class TransportTest {
     {
       var app =
           new Shoostr(configuredOptions)
-              .modifyServer(
-                  nativeServerConfiguration ->
-                      ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
+              .modifyServer(nativeServerConfiguration ->
+                  ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
 
       try (Closeable appCleanup17 = app::close) {
 
@@ -1590,9 +1581,8 @@ class TransportTest {
               partial.headers().firstValue("Content-Encoding").filter("gzip"::equals).isPresent());
 
           var head =
-              test.send(
-                  request ->
-                      request.path("/file").header("Accept-Encoding", "gzip").method("HEAD"));
+              test.send(request ->
+                  request.path("/file").header("Accept-Encoding", "gzip").method("HEAD"));
 
           assertEquals(200, head.statusCode());
           assertEquals(0, head.body().length);
@@ -1610,9 +1600,8 @@ class TransportTest {
           assertTrue(empty.headers().firstValue("Content-Encoding").isEmpty());
 
           var emptyHead =
-              test.send(
-                  request ->
-                      request.path("/empty").header("Accept-Encoding", "gzip").method("HEAD"));
+              test.send(request ->
+                  request.path("/empty").header("Accept-Encoding", "gzip").method("HEAD"));
 
           assertEquals(204, emptyHead.statusCode());
           assertEquals(0, emptyHead.body().length);
@@ -1626,12 +1615,8 @@ class TransportTest {
   private HttpResponse<byte[]>
       sendPartialRequestForCompressionPreservesHeadBodylessAndPartialFileResponses(TestServer test)
           throws IOException, InterruptedException {
-    return test.send(
-        request ->
-            request
-                .path("/file")
-                .header("Accept-Encoding", "gzip")
-                .header("Range", "bytes=0-1999"));
+    return test.send(request ->
+        request.path("/file").header("Accept-Encoding", "gzip").header("Range", "bytes=0-1999"));
   }
 
   @Test
@@ -1645,9 +1630,8 @@ class TransportTest {
     {
       var app =
           new Shoostr(configuredOptions)
-              .modifyServer(
-                  nativeServerConfiguration ->
-                      ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
+              .modifyServer(nativeServerConfiguration ->
+                  ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
 
       try (Closeable appCleanup18 = app::close) {
 
@@ -1692,12 +1676,11 @@ class TransportTest {
   private HttpResponse<byte[]>
       sendHeadRequestForAcceptsHeadWhenTheMatchingGetFileCanBeCompressedAndIdentityIsForbidden(
           TestServer test) throws IOException, InterruptedException {
-    return test.send(
-        request ->
-            request
-                .path("/head-gzip")
-                .header("Accept-Encoding", "gzip;q=1, identity;q=0")
-                .method("HEAD"));
+    return test.send(request ->
+        request
+            .path("/head-gzip")
+            .header("Accept-Encoding", "gzip;q=1, identity;q=0")
+            .method("HEAD"));
   }
 
   @Test
@@ -1713,26 +1696,22 @@ class TransportTest {
     {
       var app =
           new Shoostr(configuredOptions)
-              .modifyServer(
-                  nativeServerConfiguration ->
-                      ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
+              .modifyServer(nativeServerConfiguration ->
+                  ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
 
       try (Closeable appCleanup19 = app::close) {
-        app.modifyServer(
-            server -> {
-              nativeServer.set(server);
-              ownedExecutor.set(
-                  (ExecutorService)
-                      VirtualThreads.getVirtualThreadsExecutor(server.getThreadPool()));
-            });
+        app.modifyServer(server -> {
+          nativeServer.set(server);
+          ownedExecutor.set(
+              (ExecutorService) VirtualThreads.getVirtualThreadsExecutor(server.getThreadPool()));
+        });
         app.sessions(sessionHandler::set);
         var keyStore = keyStoreFile();
-        app.tls(
-            tls -> {
-              tlsContext.set(tls);
-              tls.setKeyStorePath(keyStore.toString());
-              tls.setKeyStorePassword("wrong-password");
-            });
+        app.tls(tls -> {
+          tlsContext.set(tls);
+          tls.setKeyStorePath(keyStore.toString());
+          tls.setKeyStorePassword("wrong-password");
+        });
         app.routes().get("/", (ignoredRequest, response) -> response.text("never"));
 
         assertThrows(Exception.class, app::start);
@@ -1756,9 +1735,8 @@ class TransportTest {
     {
       var app =
           new Shoostr(configuredOptions)
-              .modifyServer(
-                  nativeServerConfiguration ->
-                      ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
+              .modifyServer(nativeServerConfiguration ->
+                  ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
 
       try (Closeable appCleanup20 = app::close;
           var client = secureClient(HttpClient.Version.HTTP_2)) {
@@ -1805,9 +1783,8 @@ class TransportTest {
     {
       var app =
           new Shoostr(configuredOptions)
-              .modifyServer(
-                  nativeServerConfiguration ->
-                      ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
+              .modifyServer(nativeServerConfiguration ->
+                  ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
 
       try (Closeable appCleanup21 = app::close;
           var client = HttpClient.newBuilder().version(HttpClient.Version.HTTP_2).build()) {
@@ -1857,9 +1834,8 @@ class TransportTest {
     {
       var app =
           new Shoostr(configuredOptions)
-              .modifyServer(
-                  nativeServerConfiguration ->
-                      ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
+              .modifyServer(nativeServerConfiguration ->
+                  ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
 
       try (Closeable appCleanup22 = app::close;
           var client = secureClient(HttpClient.Version.HTTP_2)) {
@@ -1920,9 +1896,8 @@ class TransportTest {
     {
       var app =
           new Shoostr(configuredOptions)
-              .modifyServer(
-                  nativeServerConfiguration ->
-                      ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
+              .modifyServer(nativeServerConfiguration ->
+                  ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
 
       try (Closeable appCleanup23 = app::close) {
 
@@ -1963,9 +1938,8 @@ class TransportTest {
     {
       var app =
           new Shoostr(configuredOptions)
-              .modifyServer(
-                  nativeServerConfiguration ->
-                      ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
+              .modifyServer(nativeServerConfiguration ->
+                  ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
 
       try (Closeable appCleanup24 = app::close) {
 
@@ -1998,9 +1972,8 @@ class TransportTest {
     {
       var app =
           new Shoostr(configuredOptions)
-              .modifyServer(
-                  nativeServerConfiguration ->
-                      ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
+              .modifyServer(nativeServerConfiguration ->
+                  ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
 
       try (Closeable appCleanup25 = app::close) {
 
@@ -2011,9 +1984,8 @@ class TransportTest {
         try (var test = TestServer.start(app)) {
 
           var result =
-              test.send(
-                  request ->
-                      request.path("/image").header("Accept-Encoding", "gzip;q=1, identity;q=0"));
+              test.send(request ->
+                  request.path("/image").header("Accept-Encoding", "gzip;q=1, identity;q=0"));
 
           assertEquals(406, result.statusCode());
           assertEquals(0, result.body().length);
@@ -2031,9 +2003,8 @@ class TransportTest {
     {
       var app =
           new Shoostr(configuredOptions)
-              .modifyServer(
-                  nativeServerConfiguration ->
-                      ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
+              .modifyServer(nativeServerConfiguration ->
+                  ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
 
       try (Closeable appCleanup26 = app::close) {
 
@@ -2042,9 +2013,8 @@ class TransportTest {
         try (var test = TestServer.start(app)) {
 
           var result =
-              test.send(
-                  request ->
-                      request.path("/small").header("Accept-Encoding", "gzip;q=1, identity;q=0"));
+              test.send(request ->
+                  request.path("/small").header("Accept-Encoding", "gzip;q=1, identity;q=0"));
 
           assertEquals(406, result.statusCode());
           assertEquals(0, result.body().length);
@@ -2064,33 +2034,30 @@ class TransportTest {
     {
       var app =
           new Shoostr(configuredOptions)
-              .modifyServer(
-                  nativeServerConfiguration ->
-                      ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
+              .modifyServer(nativeServerConfiguration ->
+                  ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
 
       try (Closeable appCleanup27 = app::close) {
 
-        app.modifyServer(
-            server -> {
-              var graceful = assertInstanceOf(GracefulHandler.class, server.getHandler());
-              var compressor = assertInstanceOf(CompressionHandler.class, graceful.getHandler());
+        app.modifyServer(server -> {
+          var graceful = assertInstanceOf(GracefulHandler.class, server.getHandler());
+          var compressor = assertInstanceOf(CompressionHandler.class, graceful.getHandler());
 
-              compressor.putConfiguration(
-                  "/*",
-                  CompressionConfig.builder()
-                      .defaults()
-                      .decompressExcludePath("/*")
-                      .compressExcludeMimeType("text/plain")
-                      .build());
-            });
+          compressor.putConfiguration(
+              "/*",
+              CompressionConfig.builder()
+                  .defaults()
+                  .decompressExcludePath("/*")
+                  .compressExcludeMimeType("text/plain")
+                  .build());
+        });
         app.routes().get("/text", (ignoredRequest, response) -> response.text(payload));
 
         try (var test = TestServer.start(app)) {
 
           var result =
-              test.send(
-                  request ->
-                      request.path("/text").header("Accept-Encoding", "gzip;q=1, identity;q=0"));
+              test.send(request ->
+                  request.path("/text").header("Accept-Encoding", "gzip;q=1, identity;q=0"));
 
           assertEquals(406, result.statusCode());
           assertEquals(0, result.body().length);
@@ -2110,28 +2077,26 @@ class TransportTest {
     {
       var app =
           new Shoostr(configuredOptions)
-              .modifyServer(
-                  nativeServerConfiguration ->
-                      ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
+              .modifyServer(nativeServerConfiguration ->
+                  ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
 
       try (Closeable appCleanup28 = app::close) {
 
-        app.modifyServer(
-            server -> {
-              var graceful = assertInstanceOf(GracefulHandler.class, server.getHandler());
-              var compressor = assertInstanceOf(CompressionHandler.class, graceful.getHandler());
+        app.modifyServer(server -> {
+          var graceful = assertInstanceOf(GracefulHandler.class, server.getHandler());
+          var compressor = assertInstanceOf(CompressionHandler.class, graceful.getHandler());
 
-              compressor.putConfiguration(
-                  "/app/*",
-                  CompressionConfig.builder()
-                      .defaults()
-                      .decompressExcludePath("/*")
-                      .compressExcludeMimeType("text/plain")
-                      .build());
-              var context = new ContextHandler("/app");
-              context.setHandler(compressor.getHandler());
-              compressor.setHandler(context);
-            });
+          compressor.putConfiguration(
+              "/app/*",
+              CompressionConfig.builder()
+                  .defaults()
+                  .decompressExcludePath("/*")
+                  .compressExcludeMimeType("text/plain")
+                  .build());
+          var context = new ContextHandler("/app");
+          context.setHandler(compressor.getHandler());
+          compressor.setHandler(context);
+        });
         app.routes().get("/text", (ignoredRequest, response) -> response.text(payload));
 
         try (var test = TestServer.start(app)) {
@@ -2164,23 +2129,21 @@ class TransportTest {
     {
       var app =
           new Shoostr(configuredOptions)
-              .modifyServer(
-                  nativeServerConfiguration ->
-                      ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
+              .modifyServer(nativeServerConfiguration ->
+                  ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
 
       try (Closeable appCleanup29 = app::close) {
 
-        app.modifyServer(
-            server -> {
-              var graceful = assertInstanceOf(GracefulHandler.class, server.getHandler());
-              var compressor = assertInstanceOf(CompressionHandler.class, graceful.getHandler());
+        app.modifyServer(server -> {
+          var graceful = assertInstanceOf(GracefulHandler.class, server.getHandler());
+          var compressor = assertInstanceOf(CompressionHandler.class, graceful.getHandler());
 
-              compressor.putCompression(new GzipCompression());
-              var unselected =
-                  createUnselectedForUsesOnlyTheSelectedCompressorThresholdWhenIdentityIsForbidden();
-              unselected.setMinCompressSize(10000);
-              compressor.putCompression(unselected);
-            });
+          compressor.putCompression(new GzipCompression());
+          var unselected =
+              createUnselectedForUsesOnlyTheSelectedCompressorThresholdWhenIdentityIsForbidden();
+          unselected.setMinCompressSize(10000);
+          compressor.putCompression(unselected);
+        });
         app.routes().get("/selected", (ignoredRequest, response) -> response.text(payload));
 
         try (var test = TestServer.start(app)) {
@@ -2224,9 +2187,8 @@ class TransportTest {
     {
       var app =
           new Shoostr(configuredOptions)
-              .modifyServer(
-                  nativeServerConfiguration ->
-                      ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
+              .modifyServer(nativeServerConfiguration ->
+                  ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
 
       try (Closeable appCleanup30 = app::close) {
 
@@ -2239,6 +2201,7 @@ class TransportTest {
 
           assertEquals(406, result.statusCode());
           assertEquals(0, result.body().length);
+          assertTrue(result.headers().allValues("Vary").contains("Accept-Encoding"));
         }
       }
     }
@@ -2247,12 +2210,8 @@ class TransportTest {
   private HttpResponse<byte[]>
       sendResultForRejectsForbiddenIdentityWhenNativeMethodExcludesCompression(TestServer test)
           throws IOException, InterruptedException {
-    return test.send(
-        request ->
-            request
-                .path("/data")
-                .header("Accept-Encoding", "gzip;q=1, identity;q=0")
-                .method("PUT"));
+    return test.send(request ->
+        request.path("/data").header("Accept-Encoding", "gzip;q=1, identity;q=0").method("PUT"));
   }
 
   @Test
@@ -2265,9 +2224,8 @@ class TransportTest {
     {
       var app =
           new Shoostr(configuredOptions)
-              .modifyServer(
-                  nativeServerConfiguration ->
-                      ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
+              .modifyServer(nativeServerConfiguration ->
+                  ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
 
       try (Closeable appCleanup31 = app::close) {
 
@@ -2324,9 +2282,8 @@ class TransportTest {
     {
       var app =
           new Shoostr(configuredOptions)
-              .modifyServer(
-                  nativeServerConfiguration ->
-                      ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
+              .modifyServer(nativeServerConfiguration ->
+                  ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
 
       try (Closeable appCleanup32 = app::close) {
 
@@ -2377,9 +2334,8 @@ class TransportTest {
     {
       var app =
           new Shoostr(configuredOptions)
-              .modifyServer(
-                  nativeServerConfiguration ->
-                      ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
+              .modifyServer(nativeServerConfiguration ->
+                  ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
 
       try (Closeable appCleanup33 = app::close;
           var client = secureClient(HttpClient.Version.HTTP_2)) {
@@ -2470,9 +2426,8 @@ class TransportTest {
     {
       var app =
           new Shoostr(configuredOptions)
-              .modifyServer(
-                  nativeServerConfiguration ->
-                      ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
+              .modifyServer(nativeServerConfiguration ->
+                  ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
 
       try (Closeable appCleanup34 = app::close;
           var client = secureClient(HttpClient.Version.HTTP_2)) {
@@ -2544,12 +2499,11 @@ class TransportTest {
   private void enableTls(Shoostr app, AtomicReference<SslContextFactory.Server> context)
       throws Exception {
     var keyStore = keyStoreFile();
-    app.tls(
-        tls -> {
-          context.set(tls);
-          tls.setKeyStorePath(keyStore.toString());
-          tls.setKeyStorePassword(String.valueOf(PASSWORD));
-        });
+    app.tls(tls -> {
+      context.set(tls);
+      tls.setKeyStorePath(keyStore.toString());
+      tls.setKeyStorePassword(String.valueOf(PASSWORD));
+    });
   }
 
   private Path keyStoreFile() throws Exception {

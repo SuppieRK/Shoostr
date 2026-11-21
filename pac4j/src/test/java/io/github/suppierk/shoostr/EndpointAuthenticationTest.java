@@ -69,10 +69,8 @@ class EndpointAuthenticationTest {
 
   private static Stream<Arguments> rejections() {
     return Stream.of("platform", "virtual", "fork-join", "wrapped-fork-join")
-        .flatMap(
-            type ->
-                Stream.of(
-                    Arguments.of(type, "wrong", 401), Arguments.of(type, "unauthorized", 403)));
+        .flatMap(type ->
+            Stream.of(Arguments.of(type, "wrong", 401), Arguments.of(type, "unauthorized", 403)));
   }
 
   @ParameterizedTest

@@ -20,18 +20,30 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Function;
 import org.eclipse.jetty.server.ServerConnector;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 class RequestObservationTest {
+  @Test
+  void providesCloseableDefaultAttachmentWithoutCompletingTheObservation() throws Exception {
+    var completed = new AtomicBoolean();
+    RequestObservation observation = outcome -> completed.set(true);
+
+    try (var attachment = observation.attach()) {
+      assertNotNull(attachment);
+    }
+
+    assertFalse(completed.get());
+  }
+
   private static Shoostr withExecutionMode(Options options, boolean virtualApplication) {
     options.setVirtualThreads(virtualApplication);
 
     return new Shoostr(options)
-        .onRequestHeaders(
-            (request, response) ->
-                assertEquals(virtualApplication, Thread.currentThread().isVirtual()));
+        .onRequestHeaders((request, response) ->
+            assertEquals(virtualApplication, Thread.currentThread().isVirtual()));
   }
 
   @ParameterizedTest
@@ -46,7 +58,7 @@ class RequestObservationTest {
     configuredOptions.setMaxResponseBytes(16 * 1024 * 1024);
     configuredOptions.setStreamBufferBytes(1024);
     configuredOptions.setMaxParameters(1000);
-    configuredOptions.setMultipart(MultipartOptions.defaults());
+    configuredOptions.setMultipart(new MultipartOptions());
 
     {
       var app =
@@ -98,13 +110,12 @@ class RequestObservationTest {
   private Shoostr createAppForKeepsTheObservationOpenAfterInvocationUntilTheSlowTransportTerminates(
       Options configuredOptions, boolean virtualApplication) {
     return withExecutionMode(configuredOptions, virtualApplication)
-        .modifyServer(
-            nativeServer -> {
-              var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
-              nativeConnector.setHost("127.0.0.1");
-              nativeConnector.setPort(0);
-              nativeConnector.setIdleTimeout(10000);
-            });
+        .modifyServer(nativeServer -> {
+          var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
+          nativeConnector.setHost("127.0.0.1");
+          nativeConnector.setPort(0);
+          nativeConnector.setIdleTimeout(10000);
+        });
   }
 
   private Function<Request, RequestObservation>
@@ -135,36 +146,33 @@ class RequestObservationTest {
       var app = withExecutionMode(new Options(), virtualApplication);
 
       try (Closeable appCleanup1 = app::close) {
-        app.observe(
-            ignoredRequest -> {
-              throw new IllegalStateException("factory failed");
+        app.observe(ignoredRequest -> {
+          throw new IllegalStateException("factory failed");
+        });
+        app.observe(ignoredRequest ->
+            new RequestObservation() {
+              @Override
+              public void close() {
+                throw new IllegalStateException("scope failed");
+              }
+
+              @Override
+              public void complete(RequestOutcome outcome) {
+                throw new IllegalStateException("recorder failed");
+              }
             });
-        app.observe(
-            ignoredRequest ->
-                new RequestObservation() {
-                  @Override
-                  public void close() {
-                    throw new IllegalStateException("scope failed");
-                  }
+        app.observe(ignoredRequest ->
+            new RequestObservation() {
+              @Override
+              public void close() {
+                closed.set(true);
+              }
 
-                  @Override
-                  public void complete(RequestOutcome outcome) {
-                    throw new IllegalStateException("recorder failed");
-                  }
-                });
-        app.observe(
-            ignoredRequest ->
-                new RequestObservation() {
-                  @Override
-                  public void close() {
-                    closed.set(true);
-                  }
-
-                  @Override
-                  public void complete(RequestOutcome outcome) {
-                    result.complete(outcome);
-                  }
-                });
+              @Override
+              public void complete(RequestOutcome outcome) {
+                result.complete(outcome);
+              }
+            });
         app.routes().get("/ok", (ignoredRequest, response) -> response.text("ok"));
 
         try (var test = TestServer.start(app)) {
@@ -195,27 +203,26 @@ class RequestObservationTest {
       var app = withExecutionMode(new Options(), virtualApplication);
 
       try (Closeable appCleanup2 = app::close) {
-        app.observe(
-            ignoredRequest -> {
-              current.set("observed");
+        app.observe(ignoredRequest -> {
+          current.set("observed");
 
-              return new RequestObservation() {
-                @Override
-                public void close() {
-                  assertEquals("observed", current.get());
+          return new RequestObservation() {
+            @Override
+            public void close() {
+              assertEquals("observed", current.get());
 
-                  current.remove();
-                  closed.set(true);
-                }
+              current.remove();
+              closed.set(true);
+            }
 
-                @Override
-                public void complete(RequestOutcome outcome) {
-                  assertTrue(closed.get());
+            @Override
+            public void complete(RequestOutcome outcome) {
+              assertTrue(closed.get());
 
-                  result.complete(outcome);
-                }
-              };
-            });
+              result.complete(outcome);
+            }
+          };
+        });
         app.onRequestHeaders(
             (ignoredRequest, ignoredResponse) -> assertEquals("observed", current.get()));
 

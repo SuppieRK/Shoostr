@@ -38,17 +38,16 @@ class HttpCompatibilityTest {
     configuredOptions.setMaxResponseBytes(1024);
     configuredOptions.setStreamBufferBytes(8);
     configuredOptions.setMaxParameters(1000);
-    configuredOptions.setMultipart(MultipartOptions.defaults());
+    configuredOptions.setMultipart(new MultipartOptions());
 
     app =
         new Shoostr(configuredOptions)
-            .modifyServer(
-                nativeServer -> {
-                  var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
-                  nativeConnector.setHost("127.0.0.1");
-                  nativeConnector.setPort(0);
-                  nativeConnector.setIdleTimeout(5000);
-                });
+            .modifyServer(nativeServer -> {
+              var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
+              nativeConnector.setHost("127.0.0.1");
+              nativeConnector.setPort(0);
+              nativeConnector.setIdleTimeout(5000);
+            });
   }
 
   @AfterEach
@@ -184,9 +183,8 @@ class HttpCompatibilityTest {
 
   private HttpResponse<byte[]> sendResponseForCachesRequestBytesWithoutExposingMutableStorage(
       TestServer test, byte[] expected) throws IOException, InterruptedException {
-    return test.send(
-        request ->
-            request.path("/body").timeout(Duration.ofSeconds(3)).method("POST").body(expected));
+    return test.send(request ->
+        request.path("/body").timeout(Duration.ofSeconds(3)).method("POST").body(expected));
   }
 
   @ParameterizedTest

@@ -134,17 +134,15 @@ class AuthenticationCompositionTest {
             .path(
                 "/first",
                 child ->
-                    child.get(
-                        (request, response) ->
-                            response.text(request.principal().orElseThrow().getName())),
+                    child.get((request, response) ->
+                        response.text(request.principal().orElseThrow().getName())),
                 lifecycle -> lifecycle.withExtension(first));
         app.routes()
             .path(
                 "/second",
                 child ->
-                    child.get(
-                        (request, response) ->
-                            response.text(request.principal().orElseThrow().getName())),
+                    child.get((request, response) ->
+                        response.text(request.principal().orElseThrow().getName())),
                 lifecycle -> lifecycle.withExtension(second));
 
         try (var test = TestServer.start(app)) {

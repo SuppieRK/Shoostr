@@ -51,18 +51,16 @@ class McpDetachedOperationCleanupTest {
             security, tool, breakResponse, nativePending, cancellations, nativeCancelled);
     var app = new Shoostr();
     app.routes(routes -> routes.path("/mcp", mcp::routes));
-    app.beforeResponseFlush(
-        (request, ignoredResponse) -> {
-          if (request.header("X-Fail-Response").isPresent() && failResponse.get()) {
-            throw new IOException("fixture HTTP failure while native work remains pending");
-          }
-        });
-    app.afterRequest(
-        outcome -> {
-          if ("POST".equals(outcome.method()) && outcome.applicationFailure() != null) {
-            httpEnded.countDown();
-          }
-        });
+    app.beforeResponseFlush((request, ignoredResponse) -> {
+      if (request.header("X-Fail-Response").isPresent() && failResponse.get()) {
+        throw new IOException("fixture HTTP failure while native work remains pending");
+      }
+    });
+    app.afterRequest(outcome -> {
+      if ("POST".equals(outcome.method()) && outcome.applicationFailure() != null) {
+        httpEnded.countDown();
+      }
+    });
 
     try (var test = TestServer.start(app)) {
       var initialization = createInitializationForCancelsDetachedNativeWorkWhenItsOwnerTerminates();
@@ -126,26 +124,24 @@ class McpDetachedOperationCleanupTest {
                 .tools(
                     McpServerFeatures.AsyncToolSpecification.builder()
                         .tool(tool)
-                        .callHandler(
-                            (exchange, ignoredCallToolRequest) ->
-                                breakResponse
-                                    .asMono()
-                                    .then(
-                                        exchange.loggingNotification(
-                                            McpSchema.LoggingMessageNotification.builder(
-                                                    McpSchema.LoggingLevel.INFO,
-                                                    "end original HTTP exchange")
-                                                .build()))
-                                    .onErrorResume(ignoredFailure -> Mono.empty())
-                                    .then(
-                                        Mono.<McpSchema.CallToolResult>never()
-                                            .doOnSubscribe(
-                                                ignoredSubscription -> nativePending.countDown())
-                                            .doOnCancel(
-                                                () -> {
-                                                  cancellations.incrementAndGet();
-                                                  nativeCancelled.countDown();
-                                                })))
+                        .callHandler((exchange, ignoredCallToolRequest) ->
+                            breakResponse
+                                .asMono()
+                                .then(
+                                    exchange.loggingNotification(
+                                        McpSchema.LoggingMessageNotification.builder(
+                                                McpSchema.LoggingLevel.INFO,
+                                                "end original HTTP exchange")
+                                            .build()))
+                                .onErrorResume(ignoredFailure -> Mono.empty())
+                                .then(
+                                    Mono.<McpSchema.CallToolResult>never()
+                                        .doOnSubscribe(
+                                            ignoredSubscription -> nativePending.countDown())
+                                        .doOnCancel(() -> {
+                                          cancellations.incrementAndGet();
+                                          nativeCancelled.countDown();
+                                        })))
                         .build())
                 .build());
   }
@@ -162,14 +158,13 @@ class McpDetachedOperationCleanupTest {
 
   private HttpResponse<byte[]> initializeSession(TestServer test, byte[] initialization)
       throws IOException, InterruptedException {
-    return test.send(
-        request ->
-            request
-                .path("/mcp")
-                .method("POST")
-                .header("Content-Type", "application/json")
-                .header("Accept", "application/json, text/event-stream")
-                .body(initialization));
+    return test.send(request ->
+        request
+            .path("/mcp")
+            .method("POST")
+            .header("Content-Type", "application/json")
+            .header("Accept", "application/json, text/event-stream")
+            .body(initialization));
   }
 
   private HttpResponse<InputStream> sendResponseForCancelsDetachedNativeWorkWhenItsOwnerTerminates(
@@ -195,13 +190,12 @@ class McpDetachedOperationCleanupTest {
 
   private HttpResponse<byte[]> deleteSession(TestServer test, String sessionId)
       throws IOException, InterruptedException {
-    return test.send(
-        request ->
-            request
-                .path("/mcp")
-                .method("DELETE")
-                .header("Mcp-Session-Id", sessionId)
-                .header("MCP-Protocol-Version", "2025-11-25"));
+    return test.send(request ->
+        request
+            .path("/mcp")
+            .method("DELETE")
+            .header("Mcp-Session-Id", sessionId)
+            .header("MCP-Protocol-Version", "2025-11-25"));
   }
 
   private HttpResponse<String> sendUsableRequestForCancelsDetachedNativeWorkWhenItsOwnerTerminates(

@@ -1,7 +1,9 @@
 package io.github.suppierk.shoostr.mcp;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.params.provider.Arguments.arguments;
 
 import io.github.suppierk.shoostr.Shoostr;
 import io.github.suppierk.shoostr.testing.TestServer;
@@ -16,9 +18,12 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
 import java.util.Set;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 class McpProtocolInputTest {
@@ -32,7 +37,9 @@ class McpProtocolInputTest {
             + "\"clientInfo\":{\"name\":\"input\",\"version\":\"1\"}}",
         "{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{},\"clientInfo\":[]}",
         "{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{},"
-            + "\"clientInfo\":{\"name\":1,\"version\":\"1\"}}"
+            + "\"clientInfo\":{\"name\":1,\"version\":\"1\"}}",
+        "{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{},"
+            + "\"clientInfo\":{\"name\":\"input\",\"version\":\"1\"},\"_meta\":[1]}"
       })
   void rejectsInvalidInitializationParametersWithoutCreatingSession(String parameters)
       throws Exception {
@@ -106,6 +113,7 @@ class McpProtocolInputTest {
               .readValue(response.body(), new TypeRef<Map<String, Object>>() {});
 
       assertEquals(Map.of("code", -32700, "message", "Parse error"), result.get("error"));
+      assertFalse(result.containsKey("id"));
     }
   }
 
@@ -183,20 +191,19 @@ class McpProtocolInputTest {
   private HttpResponse<byte[]>
       sendInitializedRequestForRejectsAnUnsupportedHttpProtocolVersionBeforeNativeDispatch(
           TestServer test) throws IOException, InterruptedException {
-    return test.send(
-        request ->
-            request
-                .path("/mcp")
-                .method("POST")
-                .header("Content-Type", "application/json")
-                .header("Accept", "application/json, text/event-stream")
-                .body(
-                    """
-                    {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
-                      "protocolVersion":"2025-11-25","capabilities":{},
-                      "clientInfo":{"name":"input","version":"1.0"}}}
-                    """
-                        .getBytes(StandardCharsets.UTF_8)));
+    return test.send(request ->
+        request
+            .path("/mcp")
+            .method("POST")
+            .header("Content-Type", "application/json")
+            .header("Accept", "application/json, text/event-stream")
+            .body(
+                """
+                {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+                  "protocolVersion":"2025-11-25","capabilities":{},
+                  "clientInfo":{"name":"input","version":"1.0"}}}
+                """
+                    .getBytes(StandardCharsets.UTF_8)));
   }
 
   private HttpResponse<InputStream>
@@ -222,23 +229,9 @@ class McpProtocolInputTest {
   }
 
   @ParameterizedTest
-  @ValueSource(
-      strings = {
-        "[]",
-        "{}",
-        "null",
-        "1",
-        "{\"jsonrpc\":\"1.0\",\"id\":1,\"method\":\"ping\"}",
-        "{\"jsonrpc\":\"2.0\",\"id\":null,\"method\":\"ping\"}",
-        "{\"jsonrpc\":\"2.0\",\"id\":1.5,\"method\":\"ping\"}",
-        "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":1}",
-        "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"ping\",\"params\":[]}",
-        "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"ping\",\"result\":{}}",
-        "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{},\"error\":{}}",
-        "{\"jsonrpc\":\"2.0\",\"id\":1,\"error\":{\"code\":\"-32603\",\"message\":\"failure\"}}"
-      })
-  void rejectsInvalidEnvelopesAsRequestsRatherThanParseOrServerErrors(String body)
-      throws Exception {
+  @MethodSource("invalidEnvelopes")
+  void rejectsInvalidEnvelopesAsRequestsRatherThanParseOrServerErrors(
+      String body, Object expectedId) throws Exception {
     var mcp = createMcpForRejectsInvalidEnvelopesAsRequestsRatherThanParseOrServerErrors();
     var app = new Shoostr();
     app.routes(routes -> routes.path("/mcp", mcp::routes));
@@ -256,7 +249,31 @@ class McpProtocolInputTest {
 
       assertEquals("2.0", result.get("jsonrpc"));
       assertEquals(Map.of("code", -32600, "message", "Invalid Request"), result.get("error"));
+      if (expectedId == null) {
+        assertFalse(result.containsKey("id"));
+      } else {
+        assertEquals(expectedId, result.get("id"));
+      }
     }
+  }
+
+  private static Stream<Arguments> invalidEnvelopes() {
+    return Stream.of(
+        arguments("[]", null),
+        arguments("{}", null),
+        arguments("null", null),
+        arguments("1", null),
+        arguments("{\"jsonrpc\":\"1.0\",\"id\":1,\"method\":\"ping\"}", 1),
+        arguments("{\"jsonrpc\":\"2.0\",\"id\":null,\"method\":\"ping\"}", null),
+        arguments("{\"jsonrpc\":\"2.0\",\"id\":1.5,\"method\":\"ping\"}", null),
+        arguments("{\"jsonrpc\":\"2.0\",\"id\":\"request-1\",\"method\":1}", "request-1"),
+        arguments("{\"jsonrpc\":\"2.0\",\"id\":2147483648,\"method\":1}", 2_147_483_648L),
+        arguments("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"ping\",\"params\":[]}", 1),
+        arguments("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"ping\",\"result\":{}}", 1),
+        arguments("{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{},\"error\":{}}", 1),
+        arguments(
+            "{\"jsonrpc\":\"2.0\",\"id\":1,\"error\":{\"code\":\"-32603\",\"message\":\"failure\"}}",
+            1));
   }
 
   private Mcp<McpSyncServer>
@@ -311,6 +328,7 @@ class McpProtocolInputTest {
 
       assertEquals("2.0", result.get("jsonrpc"));
       assertEquals(Map.of("code", -32700, "message", "Parse error"), result.get("error"));
+      assertFalse(result.containsKey("id"));
     }
   }
 

@@ -21,13 +21,61 @@ import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 class ObservationHandoffTest {
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void restoresWorkerInterruptionBeforeClosingRemainingAttachedScopes(boolean virtualApplication)
+      throws Exception {
+    var interrupted = new AtomicBoolean();
+    var completions = new AtomicInteger();
+    var finished = new CompletableFuture<Void>();
+
+    try (var workers = Executors.newSingleThreadExecutor()) {
+      var app = withExecutionMode(new Options(), virtualApplication);
+
+      try (Closeable appCleanup = app::close) {
+        app.observe(ignored -> interruptingScopeObservation(interrupted, completions, false));
+        app.observe(ignored -> interruptingScopeObservation(interrupted, completions, true));
+        app.afterRequest(ignored -> finished.complete(null));
+        app.routes().get("/interrupt", workers, (request, response) -> response.text("ok"));
+
+        try (var test = TestServer.start(app)) {
+          assertEquals(200, test.send(request -> request.path("/interrupt")).statusCode());
+          finished.get(5, TimeUnit.SECONDS);
+
+          assertTrue(interrupted.get());
+          assertEquals(2, completions.get());
+        }
+      }
+    }
+  }
+
+  private RequestObservation interruptingScopeObservation(
+      AtomicBoolean interrupted, AtomicInteger completions, boolean interrupts) {
+    return new RequestObservation() {
+      @Override
+      public AutoCloseable attach() {
+        return () -> {
+          if (interrupts) {
+            throw new InterruptedException("attached scope interrupted");
+          }
+
+          interrupted.set(Thread.interrupted());
+        };
+      }
+
+      @Override
+      public void complete(RequestOutcome outcome) {
+        completions.incrementAndGet();
+      }
+    };
+  }
+
   private static Shoostr withExecutionMode(Options options, boolean virtualApplication) {
     options.setVirtualThreads(virtualApplication);
 
     return new Shoostr(options)
-        .onRequestHeaders(
-            (request, response) ->
-                assertEquals(virtualApplication, Thread.currentThread().isVirtual()));
+        .onRequestHeaders((request, response) ->
+            assertEquals(virtualApplication, Thread.currentThread().isVirtual()));
   }
 
   @ParameterizedTest
@@ -46,35 +94,34 @@ class ObservationHandoffTest {
 
       try (Closeable appCleanup = app::close) {
         for (var value : List.of("alpha", "beta")) {
-          app.observe(
-              ignored -> {
-                var original = context.get();
+          app.observe(ignored -> {
+            var original = context.get();
+            context.set(value);
+
+            return new RequestObservation() {
+              @Override
+              public AutoCloseable attach() {
+                var previous = context.get();
+                events.add(value);
                 context.set(value);
 
-                return new RequestObservation() {
-                  @Override
-                  public AutoCloseable attach() {
-                    var previous = context.get();
-                    events.add(value);
-                    context.set(value);
-
-                    return () -> {
-                      context.set(previous);
-                      events.add("/" + value);
-                    };
-                  }
-
-                  @Override
-                  public void close() {
-                    context.set(original);
-                  }
-
-                  @Override
-                  public void complete(RequestOutcome outcome) {
-                    completions.incrementAndGet();
-                  }
+                return () -> {
+                  context.set(previous);
+                  events.add("/" + value);
                 };
-              });
+              }
+
+              @Override
+              public void close() {
+                context.set(original);
+              }
+
+              @Override
+              public void complete(RequestOutcome outcome) {
+                completions.incrementAndGet();
+              }
+            };
+          });
         }
         app.afterRequest(ignoredRequestOutcome -> finished.complete(null));
         app.routes()
@@ -113,53 +160,50 @@ class ObservationHandoffTest {
       var app = withExecutionMode(new Options(), virtualApplication);
 
       try (Closeable appCleanup1 = app::close) {
-        app.observe(
-            ignoredRequest ->
-                new RequestObservation() {
-                  @Override
-                  public AutoCloseable attach() {
-                    return () -> laterClosed.set(true);
-                  }
+        app.observe(ignoredRequest ->
+            new RequestObservation() {
+              @Override
+              public AutoCloseable attach() {
+                return () -> laterClosed.set(true);
+              }
 
-                  @Override
-                  public void complete(RequestOutcome outcome) {
-                    completions.incrementAndGet();
-                  }
-                });
-        app.observe(
-            ignoredRequest ->
-                new RequestObservation() {
-                  @Override
-                  public AutoCloseable attach() {
-                    if ("attach".equals(failurePhase)) {
-                      throw new IllegalStateException("attach failed");
-                    }
+              @Override
+              public void complete(RequestOutcome outcome) {
+                completions.incrementAndGet();
+              }
+            });
+        app.observe(ignoredRequest ->
+            new RequestObservation() {
+              @Override
+              public AutoCloseable attach() {
+                if ("attach".equals(failurePhase)) {
+                  throw new IllegalStateException("attach failed");
+                }
 
-                    return () -> {
-                      throw new IOException("close failed");
-                    };
-                  }
+                return () -> {
+                  throw new IOException("close failed");
+                };
+              }
 
-                  @Override
-                  public void complete(RequestOutcome outcome) {
-                    completions.incrementAndGet();
-                  }
-                });
-        app.observe(
-            ignoredRequest ->
-                new RequestObservation() {
-                  @Override
-                  public AutoCloseable attach() {
-                    laterAttached.set(true);
+              @Override
+              public void complete(RequestOutcome outcome) {
+                completions.incrementAndGet();
+              }
+            });
+        app.observe(ignoredRequest ->
+            new RequestObservation() {
+              @Override
+              public AutoCloseable attach() {
+                laterAttached.set(true);
 
-                    return () -> {};
-                  }
+                return () -> {};
+              }
 
-                  @Override
-                  public void complete(RequestOutcome outcome) {
-                    completions.incrementAndGet();
-                  }
-                });
+              @Override
+              public void complete(RequestOutcome outcome) {
+                completions.incrementAndGet();
+              }
+            });
         app.afterRequest(ignoredRequestOutcome -> finished.complete(null));
         app.routes().get("/failure", workers, (ignoredRequest, response) -> response.text("ok"));
 
@@ -190,37 +234,36 @@ class ObservationHandoffTest {
       var app = withExecutionMode(new Options(), virtualApplication);
 
       try (Closeable appCleanup2 = app::close) {
-        app.observe(
-            ignoredRequest -> {
-              var owner = Thread.currentThread();
+        app.observe(ignoredRequest -> {
+          var owner = Thread.currentThread();
+          context.set("observation");
+
+          return new RequestObservation() {
+            @Override
+            public AutoCloseable attach() {
+              sameOwner.set(owner == Thread.currentThread());
+              events.add("attach");
               context.set("observation");
 
-              return new RequestObservation() {
-                @Override
-                public AutoCloseable attach() {
-                  sameOwner.set(owner == Thread.currentThread());
-                  events.add("attach");
-                  context.set("observation");
-
-                  return () -> {
-                    context.remove();
-                    events.add("attached-close");
-                  };
-                }
-
-                @Override
-                public void close() {
-                  context.remove();
-                  events.add("original-close");
-                }
-
-                @Override
-                public void complete(RequestOutcome outcome) {
-                  events.add("complete");
-                  finished.complete(null);
-                }
+              return () -> {
+                context.remove();
+                events.add("attached-close");
               };
-            });
+            }
+
+            @Override
+            public void close() {
+              context.remove();
+              events.add("original-close");
+            }
+
+            @Override
+            public void complete(RequestOutcome outcome) {
+              events.add("complete");
+              finished.complete(null);
+            }
+          };
+        });
         app.exception(
             RejectedExecutionException.class,
             (ignoredFailure, ignoredRequest, response) ->

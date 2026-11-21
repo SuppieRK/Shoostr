@@ -58,8 +58,7 @@ class NativeSessionLifecycleTest {
   }
 
   @Test
-  void readsExistingSessionsAfterCommitButRejectsRenewalAndSameExchangeRecreation()
-      throws Exception {
+  void readsExistingSessionsAfterCommitButRejectsRenewalAndCreation() throws Exception {
     {
       var app = new Shoostr().sessions();
 
@@ -94,9 +93,15 @@ class NativeSessionLifecycleTest {
 
                   assertFalse(session.isValid());
                   assertTrue(request.getSession().isEmpty());
-                  assertThrows(IllegalStateException.class, request::getOrCreateSession);
 
-                  response.text("invalidated");
+                  var output = response.startStream("text/plain");
+                  output.write("invalidated:");
+                  output.flush();
+
+                  assertThrows(IllegalStateException.class, request::getOrCreateSession);
+                  assertTrue(request.getSession().isEmpty());
+
+                  output.write("absent");
                 })
             .get(
                 "/state",
@@ -129,7 +134,7 @@ class NativeSessionLifecycleTest {
                   HttpResponse.BodyHandlers.ofString());
 
           assertEquals(200, invalidated.statusCode());
-          assertEquals("invalidated", invalidated.body());
+          assertEquals("invalidated:absent", invalidated.body());
 
           var absent =
               test.send(
@@ -146,6 +151,79 @@ class NativeSessionLifecycleTest {
         }
       }
     }
+  }
+
+  @Test
+  void recreatesSessionWithFreshIdAndEmptyStateAfterInvalidation() throws Exception {
+    {
+      var app = new Shoostr().sessions();
+
+      try (Closeable appCleanup = app::close) {
+        app.routes()
+            .get(
+                "/create",
+                (request, response) -> {
+                  var session = request.getOrCreateSession();
+                  session.setAttribute("name", "alice");
+                  response.text(session.getId());
+                })
+            .get(
+                "/replace",
+                (request, response) -> {
+                  var previous = request.getSession().orElseThrow();
+                  assertEquals("alice", previous.getAttribute("name"));
+
+                  previous.invalidate();
+
+                  assertFalse(previous.isValid());
+                  assertTrue(request.getSession().isEmpty());
+
+                  var replacement = request.getOrCreateSession();
+
+                  assertTrue(replacement.isValid());
+                  assertTrue(replacement.getAttributeNameSet().isEmpty());
+                  response.text(replacement.getId());
+                })
+            .get(
+                "/state",
+                (request, response) ->
+                    response.text(request.getSession().map(Session::getId).orElse("absent")));
+
+        try (var test =
+            TestServer.start(
+                app,
+                client ->
+                    client.cookieHandler(new CookieManager(null, CookiePolicy.ACCEPT_NONE)))) {
+          var original =
+              test.send(request -> request.path("/create"), HttpResponse.BodyHandlers.ofString());
+
+          assertEquals(200, original.statusCode());
+
+          var originalCookie = sessionCookie(original);
+          var replacement =
+              test.send(
+                  request -> request.path("/replace").header("Cookie", originalCookie),
+                  HttpResponse.BodyHandlers.ofString());
+
+          assertEquals(200, replacement.statusCode());
+          assertNotEquals(original.body(), replacement.body());
+          assertEquals(replacement.body(), readSessionId(test, sessionCookie(replacement)));
+          assertEquals("absent", readSessionId(test, originalCookie));
+        }
+      }
+    }
+  }
+
+  private String sessionCookie(HttpResponse<String> response) {
+    return response.headers().firstValue("Set-Cookie").orElseThrow().split(";", 2)[0];
+  }
+
+  private String readSessionId(TestServer test, String cookie)
+      throws IOException, InterruptedException {
+    return test.send(
+            request -> request.path("/state").header("Cookie", cookie),
+            HttpResponse.BodyHandlers.ofString())
+        .body();
   }
 
   @Test
@@ -171,12 +249,11 @@ class NativeSessionLifecycleTest {
                         });
                   }
                 })
-            .sessions(
-                nativeHandler -> {
-                  handler.set(nativeHandler);
-                  nativeHandler.setSessionIdManager(
-                      new DefaultSessionIdManager(nativeHandler.getServer()));
-                });
+            .sessions(nativeHandler -> {
+              handler.set(nativeHandler);
+              nativeHandler.setSessionIdManager(
+                  new DefaultSessionIdManager(nativeHandler.getServer()));
+            });
 
         var failure = assertThrows(IllegalStateException.class, app::start);
 
@@ -277,15 +354,14 @@ class NativeSessionLifecycleTest {
 
   private HttpResponse<byte[]> sendResultForNeedsExplicitSecureCookiesBehindTrustedTlsTermination(
       TestServer test, ForwardedHeaders family) throws IOException, InterruptedException {
-    return test.send(
-        request -> {
-          request.path("/session");
-          if (family == ForwardedHeaders.RFC7239) {
-            request.header("Forwarded", "for=203.0.113.7;proto=https");
-          } else {
-            request.header("X-Forwarded-For", "203.0.113.7").header("X-Forwarded-Proto", "https");
-          }
-        });
+    return test.send(request -> {
+      request.path("/session");
+      if (family == ForwardedHeaders.RFC7239) {
+        request.header("Forwarded", "for=203.0.113.7;proto=https");
+      } else {
+        request.header("X-Forwarded-For", "203.0.113.7").header("X-Forwarded-Proto", "https");
+      }
+    });
   }
 
   @ParameterizedTest
@@ -309,11 +385,10 @@ class NativeSessionLifecycleTest {
       try (Closeable appCleanup4 = app::close) {
         app.sessions();
         if (secure) {
-          app.tls(
-              server -> {
-                server.setKeyStore(identity);
-                server.setKeyStorePassword("changeit");
-              });
+          app.tls(server -> {
+            server.setKeyStore(identity);
+            server.setKeyStorePassword("changeit");
+          });
         }
 
         app.routes()
@@ -368,12 +443,11 @@ class NativeSessionLifecycleTest {
             .withExtension(authentication)
             .withExtension(csrf)
             .withExtension(cors)
-            .onRequestHeaders(
-                (request, response) -> {
-                  if ("OPTIONS".equals(request.method())) {
-                    assertTrue(request.getSession().isEmpty());
-                  }
-                });
+            .onRequestHeaders((request, response) -> {
+              if ("OPTIONS".equals(request.method())) {
+                assertTrue(request.getSession().isEmpty());
+              }
+            });
         app.routes()
             .get(
                 "/create",
@@ -476,27 +550,25 @@ class NativeSessionLifecycleTest {
 
   private HttpResponse<byte[]> sendPreflightRequestForSessionBypass(
       TestServer test, String origin, String cookie) throws IOException, InterruptedException {
-    return test.send(
-        testRequest ->
-            testRequest
-                .path("/write")
-                .method("OPTIONS")
-                .header("Origin", origin)
-                .header("Cookie", cookie)
-                .header("Access-Control-Request-Method", "POST")
-                .header("Access-Control-Request-Headers", "Authorization, X-CSRF-Token"));
+    return test.send(testRequest ->
+        testRequest
+            .path("/write")
+            .method("OPTIONS")
+            .header("Origin", origin)
+            .header("Cookie", cookie)
+            .header("Access-Control-Request-Method", "POST")
+            .header("Access-Control-Request-Headers", "Authorization, X-CSRF-Token"));
   }
 
   private HttpResponse<byte[]> sendDeniedRequestForSessionBypass(TestServer test, String cookie)
       throws IOException, InterruptedException {
-    return test.send(
-        testRequest ->
-            testRequest
-                .path("/write")
-                .method("POST")
-                .header("Origin", "https://client.example")
-                .header("Cookie", cookie)
-                .header("Authorization", "Bearer secret"));
+    return test.send(testRequest ->
+        testRequest
+            .path("/write")
+            .method("POST")
+            .header("Origin", "https://client.example")
+            .header("Cookie", cookie)
+            .header("Authorization", "Bearer secret"));
   }
 
   private HttpResponse<String> sendAcceptedRequestForSessionBypass(
@@ -525,17 +597,16 @@ class NativeSessionLifecycleTest {
 
       try (Closeable appCleanup6 = app::close) {
         app.sessions(handler -> sessionsConfigured.set(true))
-            .modifyServer(
-                server -> {
-                  server.getConnectors()[0].addEventListener(
-                      new LifeCycle.Listener() {
-                        @Override
-                        public void lifeCycleStarted(LifeCycle event) {
-                          listening.set(true);
-                        }
-                      });
-                  server.getDescendant(ContextHandler.class).setHandler(new DefaultHandler());
-                });
+            .modifyServer(server -> {
+              server.getConnectors()[0].addEventListener(
+                  new LifeCycle.Listener() {
+                    @Override
+                    public void lifeCycleStarted(LifeCycle event) {
+                      listening.set(true);
+                    }
+                  });
+              server.getDescendant(ContextHandler.class).setHandler(new DefaultHandler());
+            });
         app.routes().get("/owned", (request, response) -> response.text("owned"));
 
         assertThrows(IllegalStateException.class, app::start);
@@ -595,22 +666,20 @@ class NativeSessionLifecycleTest {
       var app = new Shoostr();
 
       try (Closeable appCleanup9 = app::close) {
-        app.modifyServer(
-            server -> {
-              var handler = server.getDescendant(SessionHandler.class);
+        app.modifyServer(server -> {
+          var handler = server.getDescendant(SessionHandler.class);
 
-              assertNotNull(handler);
+          assertNotNull(handler);
 
-              nativeHandler.set(handler);
-              callbacks.add("server");
-            });
-        app.sessions(
-            handler -> {
-              assertEquals(nativeHandler.get(), handler);
+          nativeHandler.set(handler);
+          callbacks.add("server");
+        });
+        app.sessions(handler -> {
+          assertEquals(nativeHandler.get(), handler);
 
-              callbacks.add("sessions");
-              handler.setSessionCookie("VISITOR");
-            });
+          callbacks.add("sessions");
+          handler.setSessionCookie("VISITOR");
+        });
         app.routes()
             .get(
                 "/peek",

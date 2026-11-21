@@ -65,12 +65,8 @@ class ServerSentEventsTest {
   private HttpResponse<byte[]>
       sendResultForEmitsTheQueryParameterAsExactEventBytesForPositiveAcceptHeaders(
           TestServer test, String accept) throws IOException, InterruptedException {
-    return test.send(
-        request ->
-            request
-                .path("/events?qp=my-qp")
-                .header("Accept", accept)
-                .timeout(Duration.ofSeconds(3)));
+    return test.send(request ->
+        request.path("/events?qp=my-qp").header("Accept", accept).timeout(Duration.ofSeconds(3)));
   }
 
   @Test
@@ -99,6 +95,33 @@ class ServerSentEventsTest {
                   .getBytes(StandardCharsets.UTF_8),
               result.body());
         }
+      }
+    }
+  }
+
+  @Test
+  void framesLeadingNewlinesWithoutExposingPayloadAsEventFields() throws Exception {
+    var app = new Shoostr();
+
+    try (Closeable appCleanup = app::close) {
+      app.routes()
+          .sse(
+              "/events",
+              (ignoredRequest, response) -> {
+                var events = response.startEventStream();
+                events.send("\nid: forged");
+                events.send("\rid: forged");
+                events.comment("\nretry: 1");
+              });
+
+      try (var test = TestServer.start(app)) {
+        var result = test.send(request -> request.path("/events"));
+
+        assertEquals(200, result.statusCode());
+        assertArrayEquals(
+            ("data: \ndata: id: forged\n\n".repeat(2) + ": \n: retry: 1\n\n")
+                .getBytes(StandardCharsets.UTF_8),
+            result.body());
       }
     }
   }
@@ -138,7 +161,7 @@ class ServerSentEventsTest {
     options.setMaxResponseBytes(defaults.getMaxResponseBytes());
     options.setStreamBufferBytes(8);
     options.setMaxParameters(1000);
-    options.setMultipart(MultipartOptions.defaults());
+    options.setMultipart(new MultipartOptions());
     var before = new AtomicInteger();
     var after = new AtomicInteger();
 
@@ -833,10 +856,9 @@ class ServerSentEventsTest {
             .pollInterval(Duration.ofMillis(25))
             .during(Duration.ofMillis(750))
             .atMost(Duration.ofSeconds(2))
-            .untilAsserted(
-                () ->
-                    assertTrue(
-                        sent.get() < 256, "Stalled peer must not admit an unbounded event queue"));
+            .untilAsserted(() ->
+                assertTrue(
+                    sent.get() < 256, "Stalled peer must not admit an unbounded event queue"));
         socket.close();
         await().atMost(Duration.ofSeconds(3)).until(() -> cleaned.getCount() == 0);
       }
@@ -856,11 +878,10 @@ class ServerSentEventsTest {
 
       try (Closeable appCleanup23 = app::close;
           var client = HttpClient.newHttpClient()) {
-        app.modifyServer(
-            server -> {
-              server.setStopTimeout(100);
-              ((ServerConnector) server.getConnectors()[0]).setShutdownIdleTimeout(0);
-            });
+        app.modifyServer(server -> {
+          server.setStopTimeout(100);
+          ((ServerConnector) server.getConnectors()[0]).setShutdownIdleTimeout(0);
+        });
         app.routes()
             .get(
                 "/events",

@@ -22,41 +22,37 @@ class AuthenticationGroupsTest {
     Authenticator bearerAuthenticator = createBearerAuthenticatorForRegisterAuthenticationGroups();
     var bearer = new Pac4j(new DirectBearerAuthClient(bearerAuthenticator), "Bearer");
 
-    app.routes(
-        routes -> {
-          routes.path(
-              "/rest",
-              child ->
-                  child.get(
-                      (request, response) ->
-                          response.text(request.principal().orElseThrow().getName())),
-              extensions -> extensions.withExtension(basic));
-          routes.path(
-              "/mcp",
-              child ->
-                  child.get(
-                      (request, response) ->
-                          response.text(request.principal().orElseThrow().getName())),
-              extensions -> extensions.withExtension(bearer));
-        });
+    app.routes(routes -> {
+      routes.path(
+          "/rest",
+          child ->
+              child.get((request, response) ->
+                  response.text(request.principal().orElseThrow().getName())),
+          extensions -> extensions.withExtension(basic));
+      routes.path(
+          "/mcp",
+          child ->
+              child.get((request, response) ->
+                  response.text(request.principal().orElseThrow().getName())),
+          extensions -> extensions.withExtension(bearer));
+    });
   }
 
   private static Pac4j createBasicForRegisterAuthenticationGroups() {
     return new Pac4j(
-        new DirectBasicAuthClient(
-            (ignored, supplied) -> {
-              if (!(supplied instanceof UsernamePasswordCredentials credentials)
-                  || !"alice".equals(credentials.getUsername())
-                  || !"correct".equals(credentials.getPassword())) {
-                return Optional.empty();
-              }
+        new DirectBasicAuthClient((ignored, supplied) -> {
+          if (!(supplied instanceof UsernamePasswordCredentials credentials)
+              || !"alice".equals(credentials.getUsername())
+              || !"correct".equals(credentials.getPassword())) {
+            return Optional.empty();
+          }
 
-              var profile = new CommonProfile();
-              profile.setId("alice");
-              supplied.setUserProfile(profile);
+          var profile = new CommonProfile();
+          profile.setId("alice");
+          supplied.setUserProfile(profile);
 
-              return Optional.of(supplied);
-            }),
+          return Optional.of(supplied);
+        }),
         "Basic");
   }
 

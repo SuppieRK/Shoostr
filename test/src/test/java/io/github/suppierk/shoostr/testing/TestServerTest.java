@@ -49,10 +49,9 @@ class TestServerTest {
   @Test
   void closesAppWhenConfigurationFails() {
     var app = new Shoostr();
-    app.modifyServer(
-        ignoredServer -> {
-          throw new IllegalArgumentException("invalid fixture configuration");
-        });
+    app.modifyServer(ignoredServer -> {
+      throw new IllegalArgumentException("invalid fixture configuration");
+    });
 
     assertThrows(IllegalArgumentException.class, () -> TestServer.start(app));
 
@@ -66,15 +65,14 @@ class TestServerTest {
   @Test
   void reportsNativeStopFailuresThroughClose() throws Exception {
     var app = new Shoostr();
-    app.modifyServer(
-        jetty ->
-            jetty.addBean(
-                new AbstractLifeCycle() {
-                  @Override
-                  protected void doStop() throws Exception {
-                    throw new IOException("forced native stop failure");
-                  }
-                }));
+    app.modifyServer(jetty ->
+        jetty.addBean(
+            new AbstractLifeCycle() {
+              @Override
+              protected void doStop() throws Exception {
+                throw new IOException("forced native stop failure");
+              }
+            }));
     app.routes().get("/", (ignoredRequest, response) -> response.text("ready"));
     var server = TestServer.start(app);
 

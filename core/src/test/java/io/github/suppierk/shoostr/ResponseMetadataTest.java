@@ -267,21 +267,17 @@ class ResponseMetadataTest {
 
               try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
                 executor
-                    .submit(
-                        () -> {
-                          assertThrows(IllegalStateException.class, response::status);
-                          assertThrows(
-                              IllegalStateException.class, () -> response.header("X-Value"));
-                          assertThrows(
-                              IllegalStateException.class, () -> response.headers("X-Value"));
-                          assertThrows(IllegalStateException.class, response::headerMap);
-                          assertThrows(IllegalStateException.class, response::isCommitted);
-                          assertThrows(
-                              IllegalStateException.class,
-                              () -> response.addHeader("X-Value", "bad"));
-                          assertThrows(
-                              IllegalStateException.class, () -> response.removeHeader("X-Value"));
-                        })
+                    .submit(() -> {
+                      assertThrows(IllegalStateException.class, response::status);
+                      assertThrows(IllegalStateException.class, () -> response.header("X-Value"));
+                      assertThrows(IllegalStateException.class, () -> response.headers("X-Value"));
+                      assertThrows(IllegalStateException.class, response::headerMap);
+                      assertThrows(IllegalStateException.class, response::isCommitted);
+                      assertThrows(
+                          IllegalStateException.class, () -> response.addHeader("X-Value", "bad"));
+                      assertThrows(
+                          IllegalStateException.class, () -> response.removeHeader("X-Value"));
+                    })
                     .get(3, TimeUnit.SECONDS);
               }
 
@@ -362,9 +358,8 @@ class ResponseMetadataTest {
 
   private Future<HttpResponse<String>> submitFutureForStagesRedirectUntilHandlerReturns(
       ExecutorService testRequests, TestServer test) {
-    return testRequests.submit(
-        () ->
-            test.send(request -> request.path("/redirect"), HttpResponse.BodyHandlers.ofString()));
+    return testRequests.submit(() ->
+        test.send(request -> request.path("/redirect"), HttpResponse.BodyHandlers.ofString()));
   }
 
   @Test

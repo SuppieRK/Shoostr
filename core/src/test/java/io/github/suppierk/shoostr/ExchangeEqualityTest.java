@@ -128,18 +128,18 @@ class ExchangeEqualityTest {
           assertNotEquals(events.get(0), events.get(1));
 
           if (typed) {
-            verifier(TypedRequest.class, exchanges, outputs).verify();
-            verifier(TypedResponse.class, exchanges, outputs).verify();
-            verifier(TypedEventStream.class, exchanges, outputs).verify();
+            verifier(Request.Typed.class, exchanges, outputs).verify();
+            verifier(Response.Typed.class, exchanges, outputs).verify();
+            verifier(Response.EventStream.Typed.class, exchanges, outputs).verify();
           } else {
             verifier(Request.class, exchanges, outputs)
-                .withRedefinedSubclass(TypedRequest.class)
+                .withRedefinedSubclass(Request.Typed.class)
                 .verify();
             verifier(Response.class, exchanges, outputs)
-                .withRedefinedSubclass(TypedResponse.class)
+                .withRedefinedSubclass(Response.Typed.class)
                 .verify();
             verifier(Response.EventStream.class, exchanges, outputs)
-                .withRedefinedSubclass(TypedEventStream.class)
+                .withRedefinedSubclass(Response.EventStream.Typed.class)
                 .verify();
           }
 

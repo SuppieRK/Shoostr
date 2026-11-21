@@ -1,5 +1,6 @@
 package io.github.suppierk.shoostr;
 
+import static io.github.suppierk.shoostr.Locks.getUnderLock;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -19,6 +20,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
@@ -26,6 +28,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.Lock;
 import nl.jqno.equalsverifier.EqualsVerifier;
 import nl.jqno.equalsverifier.Warning;
 import nl.jqno.equalsverifier.api.ConfiguredEqualsVerifier;
@@ -41,9 +44,9 @@ import org.junit.jupiter.api.Test;
 class ApplicationOwnerEqualityTest {
   private static Object pendingTask(Shoostr app) throws ReflectiveOperationException {
     var pending = (Set<?>) field(app, "pendingMatches");
-    synchronized (pending) {
-      return pending.iterator().next();
-    }
+    var lock = (Lock) field(app, "pendingMatchesLock");
+
+    return Objects.requireNonNull(getUnderLock(lock, () -> pending.iterator().next()));
   }
 
   private static Object field(Object owner, String name) throws ReflectiveOperationException {
@@ -249,8 +252,8 @@ class ApplicationOwnerEqualityTest {
             Thread.class, new Thread(() -> {}, "first"), new Thread(() -> {}, "second"))
         .withPrefabValues(
             Csrf.class,
-            new Csrf(Set.of("https://first.example")),
-            new Csrf(Set.of("https://second.example")))
+            Csrf.builder().trustedOrigins(Set.of("https://first.example")).build(),
+            Csrf.builder().trustedOrigins(Set.of("https://second.example")).build())
         .withPrefabValues(
             Throwable.class,
             new IllegalStateException("first"),

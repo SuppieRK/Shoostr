@@ -68,18 +68,17 @@ class TypedEventStreamTest {
   private Shoostr createAppForEncodesObjectEventsAlongsideRawMetadataCommentsAndHeartbeats() {
     return new Shoostr()
         .codec(new TextCodec())
-        .routes(
-            routes ->
-                routes.sse(
-                    "/events",
-                    (ignored, response) ->
-                        response
-                            .startEventStream()
-                            .comment("ready")
-                            .sendObject("héllo\nworld")
-                            .send(SseEvent.of("raw").withEvent("notice").withId("1"))
-                            .heartbeat()
-                            .sendObject("done")));
+        .routes(routes ->
+            routes.sse(
+                "/events",
+                (ignored, response) ->
+                    response
+                        .startEventStream()
+                        .comment("ready")
+                        .sendObject("héllo\nworld")
+                        .send(SseEvent.of("raw").withEvent("notice").withId("1"))
+                        .heartbeat()
+                        .sendObject("done")));
   }
 
   @ParameterizedTest
@@ -132,26 +131,25 @@ class TypedEventStreamTest {
       TextCodec codec, int mode, IOException failure) {
     return new Shoostr()
         .codec(codec)
-        .routes(
-            routes ->
-                routes.sse(
-                    "/recover",
-                    (ignoredTypedRequest, response) -> {
-                      var events = response.startEventStream();
-                      events.send("before");
+        .routes(routes ->
+            routes.sse(
+                "/recover",
+                (ignoredTypedRequest, response) -> {
+                  var events = response.startEventStream();
+                  events.send("before");
 
-                      var observed = assertThrows(Exception.class, () -> events.sendObject("bad"));
+                  var observed = assertThrows(Exception.class, () -> events.sendObject("bad"));
 
-                      if (mode == 0) {
-                        assertSame(failure, observed);
-                      } else if (mode == 1) {
-                        assertInstanceOf(CharacterCodingException.class, observed);
-                      } else {
-                        assertInstanceOf(NullPointerException.class, observed);
-                      }
+                  if (mode == 0) {
+                    assertSame(failure, observed);
+                  } else if (mode == 1) {
+                    assertInstanceOf(CharacterCodingException.class, observed);
+                  } else {
+                    assertInstanceOf(NullPointerException.class, observed);
+                  }
 
-                      events.sendObject("after");
-                    }));
+                  events.sendObject("after");
+                }));
   }
 
   @Test
@@ -177,27 +175,24 @@ class TypedEventStreamTest {
       Codec codec, ExecutorService children) {
     return new Shoostr()
         .codec(codec)
-        .routes(
-            routes ->
-                routes.sse(
-                    "/owner",
-                    (ignoredTypedRequest, response) -> {
-                      var events = response.startEventStream();
-                      children
-                          .submit(
-                              () ->
-                                  assertThrows(
-                                      IllegalStateException.class,
-                                      () -> events.sendObject("child")))
-                          .get(3, TimeUnit.SECONDS);
-                      events.send("owner");
-                    }));
+        .routes(routes ->
+            routes.sse(
+                "/owner",
+                (ignoredTypedRequest, response) -> {
+                  var events = response.startEventStream();
+                  children
+                      .submit(() ->
+                          assertThrows(
+                              IllegalStateException.class, () -> events.sendObject("child")))
+                      .get(3, TimeUnit.SECONDS);
+                  events.send("owner");
+                }));
   }
 
   @Test
   void rejectsCompletedOutputOnTheOriginalHandlerThreadBeforeInvokingTheCodec() throws Exception {
     var writes = new AtomicInteger();
-    var stream = new AtomicReference<TypedEventStream>();
+    var stream = new AtomicReference<Response.EventStream.Typed>();
     var owner = new AtomicReference<Thread>();
 
     try (var executor = Executors.newSingleThreadExecutor()) {
@@ -213,15 +208,13 @@ class TypedEventStreamTest {
                 .body());
 
         executor
-            .submit(
-                () -> {
-                  assertSame(owner.get(), Thread.currentThread());
+            .submit(() -> {
+              assertSame(owner.get(), Thread.currentThread());
 
-                  var completedStream = stream.get();
+              var completedStream = stream.get();
 
-                  assertThrows(
-                      IllegalStateException.class, () -> completedStream.sendObject("late"));
-                })
+              assertThrows(IllegalStateException.class, () -> completedStream.sendObject("late"));
+            })
             .get(3, TimeUnit.SECONDS);
 
         assertEquals(0, writes.get());
@@ -234,18 +227,17 @@ class TypedEventStreamTest {
           AtomicInteger writes,
           ExecutorService executor,
           AtomicReference<Thread> owner,
-          AtomicReference<TypedEventStream> stream) {
+          AtomicReference<Response.EventStream.Typed> stream) {
     return new Shoostr()
         .codec(countingCodec(writes))
-        .routes(
-            routes ->
-                routes.sse(
-                    "/retain",
-                    executor,
-                    (ignoredTypedRequest, response) -> {
-                      owner.set(Thread.currentThread());
-                      stream.set(response.startEventStream().send("done"));
-                    }));
+        .routes(routes ->
+            routes.sse(
+                "/retain",
+                executor,
+                (ignoredTypedRequest, response) -> {
+                  owner.set(Thread.currentThread());
+                  stream.set(response.startEventStream().send("done"));
+                }));
   }
 
   @Test
@@ -267,17 +259,16 @@ class TypedEventStreamTest {
   private Shoostr createAppForRejectsNullValuesWithoutInvokingTheCodec(AtomicInteger writes) {
     return new Shoostr()
         .codec(countingCodec(writes))
-        .routes(
-            routes ->
-                routes.sse(
-                    "/null",
-                    (ignoredTypedRequest, response) -> {
-                      var events = response.startEventStream();
+        .routes(routes ->
+            routes.sse(
+                "/null",
+                (ignoredTypedRequest, response) -> {
+                  var events = response.startEventStream();
 
-                      assertThrows(NullPointerException.class, () -> events.sendObject(null));
+                  assertThrows(NullPointerException.class, () -> events.sendObject(null));
 
-                      events.send("valid");
-                    }));
+                  events.send("valid");
+                }));
   }
 
   private static class TextCodec implements Codec {

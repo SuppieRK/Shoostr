@@ -335,26 +335,25 @@ class PortSelectionTest {
       var app = new Shoostr();
 
       try (Closeable appCleanup5 = app::close) {
-        app.modifyServer(
-            server ->
-                server.addEventListener(
-                    new LifeCycle.Listener() {
-                      @Override
-                      public void lifeCycleStarting(LifeCycle event) {
-                        var listener = (ServerConnector) server.getConnectors()[0];
+        app.modifyServer(server ->
+            server.addEventListener(
+                new LifeCycle.Listener() {
+                  @Override
+                  public void lifeCycleStarting(LifeCycle event) {
+                    var listener = (ServerConnector) server.getConnectors()[0];
 
-                        assertEquals(port, listener.getLocalPort());
-                        assertThrows(
-                            BindException.class,
-                            () -> {
-                              try (var ignoredServerSocket = bind(port)) {
-                                // A successful bind makes assertThrows fail after socket cleanup.
-                              }
-                            });
+                    assertEquals(port, listener.getLocalPort());
+                    assertThrows(
+                        BindException.class,
+                        () -> {
+                          try (var ignoredServerSocket = bind(port)) {
+                            // A successful bind makes assertThrows fail after socket cleanup.
+                          }
+                        });
 
-                        throw expected;
-                      }
-                    }));
+                    throw expected;
+                  }
+                }));
 
         assertSame(
             expected,

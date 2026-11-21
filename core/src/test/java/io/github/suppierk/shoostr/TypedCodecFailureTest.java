@@ -118,9 +118,8 @@ class TypedCodecFailureTest {
 
                         response.status(503).text("local");
                       });
-                  routes.get(
-                      (ignoredTypedRequest, response) ->
-                          response.body(MediaType.APPLICATION_JSON, "Alice"));
+                  routes.get((ignoredTypedRequest, response) ->
+                      response.body(MediaType.APPLICATION_JSON, "Alice"));
                 });
 
         try (var test = TestServer.start(app)) {

@@ -322,23 +322,22 @@ class StreamBufferTest {
     var pending = new ArrayBlockingQueue<Callback>(1);
     var outcome = new CompletableFuture<Throwable>();
     Thread.ofVirtual()
-        .start(
-            () -> {
-              try {
-                var response =
-                    sendResponseForDelayedAsynchronousTransportFailureMakesStreamTerminal(
-                        writes, pending);
-                var stream = response.startStream("application/octet-stream");
-                stream.write(new byte[] {1, 2, 3});
+        .start(() -> {
+          try {
+            var response =
+                sendResponseForDelayedAsynchronousTransportFailureMakesStreamTerminal(
+                    writes, pending);
+            var stream = response.startStream("application/octet-stream");
+            stream.write(new byte[] {1, 2, 3});
 
-                var failure = assertThrows(IOException.class, stream::flush);
-                assertThrows(IllegalStateException.class, () -> stream.write(new byte[] {4}));
+            var failure = assertThrows(IOException.class, stream::flush);
+            assertThrows(IllegalStateException.class, () -> stream.write(new byte[] {4}));
 
-                outcome.complete(failure);
-              } catch (Throwable failure) {
-                outcome.complete(failure);
-              }
-            });
+            outcome.complete(failure);
+          } catch (Throwable failure) {
+            outcome.complete(failure);
+          }
+        });
 
     var callback = pending.poll(3, TimeUnit.SECONDS);
 
@@ -414,21 +413,20 @@ class StreamBufferTest {
       ArrayBlockingQueue<Callback> pending,
       CompletableFuture<Throwable> outcome) {
     return Thread.ofVirtual()
-        .start(
-            () -> {
-              try {
-                var response = sendResponseForInterruptedTransport(writes, submitted, pending);
-                var stream = response.startStream("application/octet-stream");
-                stream.write(new byte[] {1, 2, 3});
+        .start(() -> {
+          try {
+            var response = sendResponseForInterruptedTransport(writes, submitted, pending);
+            var stream = response.startStream("application/octet-stream");
+            stream.write(new byte[] {1, 2, 3});
 
-                var failure = assertThrows(IOException.class, stream::flush);
-                assertThrows(IllegalStateException.class, () -> stream.write(new byte[] {4}));
+            var failure = assertThrows(IOException.class, stream::flush);
+            assertThrows(IllegalStateException.class, () -> stream.write(new byte[] {4}));
 
-                outcome.complete(failure);
-              } catch (Throwable failure) {
-                outcome.complete(failure);
-              }
-            });
+            outcome.complete(failure);
+          } catch (Throwable failure) {
+            outcome.complete(failure);
+          }
+        });
   }
 
   private Response sendResponseForInterruptedTransport(
@@ -454,21 +452,20 @@ class StreamBufferTest {
     var pending = new ArrayBlockingQueue<Callback>(1);
     var completed = new CompletableFuture<Void>();
     Thread.ofVirtual()
-        .start(
-            () -> {
-              try {
-                var response = sendResponseForDelayedFlush(writes, pending);
-                response.flushHooks(() -> calls.add("before"), () -> calls.add("after"));
-                var stream = response.startStream("application/octet-stream");
-                stream.write(new byte[] {1, 2, 3});
-                stream.flush();
-                stream.write(new byte[] {4});
-                response.complete();
-                completed.complete(null);
-              } catch (Exception failure) {
-                completed.completeExceptionally(failure);
-              }
-            });
+        .start(() -> {
+          try {
+            var response = sendResponseForDelayedFlush(writes, pending);
+            response.flushHooks(() -> calls.add("before"), () -> calls.add("after"));
+            var stream = response.startStream("application/octet-stream");
+            stream.write(new byte[] {1, 2, 3});
+            stream.flush();
+            stream.write(new byte[] {4});
+            response.complete();
+            completed.complete(null);
+          } catch (Exception failure) {
+            completed.completeExceptionally(failure);
+          }
+        });
 
     var callback = pending.poll(3, TimeUnit.SECONDS);
 
@@ -542,7 +539,7 @@ class StreamBufferTest {
     options.setMaxResponseBytes(defaults.getMaxResponseBytes());
     options.setStreamBufferBytes(capacity);
     options.setMaxParameters(1000);
-    options.setMultipart(MultipartOptions.defaults());
+    options.setMultipart(new MultipartOptions());
     var nativeRequest = createNativeRequestForResponse();
 
     return io.github.suppierk.shoostr.Request.create(

@@ -96,13 +96,13 @@ public final class Pac4j extends AuthenticationExtension {
       throw new AuthenticationRequiredException(challenge);
     }
 
-    var context =
+    final var context =
         new CallContext(new Pac4jContext(request, response), StatelessSessionStore.INSTANCE);
 
-    var credentials =
+    final var credentials =
         client.getCredentials(context).flatMap(value -> client.validateCredentials(context, value));
 
-    var profile =
+    final var profile =
         credentials
             .flatMap(value -> client.getUserProfile(context, value))
             .filter(value -> !value.isExpired())

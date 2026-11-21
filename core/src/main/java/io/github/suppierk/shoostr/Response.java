@@ -1,5 +1,7 @@
 package io.github.suppierk.shoostr;
 
+import static io.github.suppierk.shoostr.Locks.runUnderLock;
+
 import io.github.suppierk.shoostr.http.Cookie;
 import io.github.suppierk.shoostr.http.HttpCharacters;
 import io.github.suppierk.shoostr.http.HttpHeaders;
@@ -28,6 +30,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.TreeMap;
 import java.util.TreeSet;
+import java.util.concurrent.locks.ReentrantLock;
 import org.eclipse.jetty.compression.Compression;
 import org.eclipse.jetty.compression.server.CompressionConfig;
 import org.eclipse.jetty.compression.server.CompressionHandler;
@@ -54,8 +57,9 @@ import org.eclipse.jetty.util.resource.ResourceFactory;
 import org.jspecify.annotations.Nullable;
 
 /** Finite output is staged until handler return. The framework owns close(). */
-public sealed class Response implements AutoCloseable permits TypedResponse {
+public sealed class Response implements AutoCloseable {
   static final String EVENT_STREAM_CONTENT_TYPE = "text/event-stream; charset=utf-8";
+
   private static final byte[] EMPTY = new byte[0];
   private static final List<HttpHeaders> CORS_RESPONSE_HEADERS =
       List.of(
@@ -64,19 +68,27 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
           HttpHeaders.ACCESS_CONTROL_EXPOSE_HEADERS, HttpHeaders.ACCESS_CONTROL_MAX_AGE);
   private static final ByteRange UNSATISFIABLE_RANGE = new ByteRange(-1, -1);
   private static final SetCookieParser COOKIE_PARSER = SetCookieParser.newInstance();
+
+  private static final String WEAK_ENTITY_TAG_PREFIX = "W/";
   private static final String TEXT_CONTENT_TYPE = "text/plain; charset=utf-8";
   private static final String IDENTITY_ENCODING = "identity";
+  private static final String CHUNKED_ENCODING = "chunked";
+  private static final String CLOSE_CONNECTION = "close";
+  private static final String BYTES_RANGES = "bytes";
+
   private static final HttpField TEXT =
       new PreEncodedHttpField(HttpHeaders.CONTENT_TYPE.value(), TEXT_CONTENT_TYPE);
   private static final HttpField COMPACT_TEXT =
       new PreEncodedHttpField(HttpHeaders.CONTENT_TYPE.value(), "text/plain;charset=utf-8");
   private static final HttpField JSON =
       new PreEncodedHttpField(HttpHeaders.CONTENT_TYPE.value(), "application/json");
+
   private final org.eclipse.jetty.server.Response delegate;
   private final Options options;
   private final Callback completion;
   private final boolean head;
   private final Request request;
+
   private @Nullable Runnable beforeFlush;
   private @Nullable Runnable afterFlush;
   private State state;
@@ -89,7 +101,6 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
   private boolean gating;
   private boolean eventStreamOnly;
   private boolean negotiatedByAccept;
-  private boolean compressionEnabled;
   private @Nullable CompressionHandler compressionHandler;
   private boolean gzipExcludedByAccept;
   private boolean identityUnacceptable;
@@ -147,20 +158,20 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
    */
   private static @Nullable Compression selectedCompressor(
       CompressionHandler handler, CompressionConfig config, List<String> acceptEncoding) {
-    var encoders = new TreeMap<String, Compression>(String.CASE_INSENSITIVE_ORDER);
-    for (var encoder : handler.getBeans(Compression.class)) {
+    final var encoders = new TreeMap<String, Compression>(String.CASE_INSENSITIVE_ORDER);
+    for (final var encoder : handler.getBeans(Compression.class)) {
       encoders.put(encoder.getEncodingName(), encoder);
     }
 
-    var parser = new QuotedQualityCSV();
-    for (var value : acceptEncoding) {
+    final var parser = new QuotedQualityCSV();
+    for (final var value : acceptEncoding) {
       parser.addValue(value);
     }
 
-    var matches = new ArrayList<String>();
-    boolean wildcardAccepted = false;
-    for (var value : parser.getQualityValues()) {
-      var encoding = value.getValue();
+    final var matches = new ArrayList<String>();
+    var wildcardAccepted = false;
+    for (final var value : parser.getQualityValues()) {
+      final var encoding = value.getValue();
       if (HttpCharacters.ASTERISK_STRING.equals(encoding)) {
         wildcardAccepted = value.isAcceptable();
       } else if (value.isAcceptable()
@@ -174,8 +185,8 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
       return wildcardCompressor(config, encoders, wildcardAccepted);
     }
 
-    var preferred = config.getCompressPreferredEncodings();
-    var selected =
+    final var preferred = config.getCompressPreferredEncodings();
+    final var selected =
         preferred.stream().filter(matches::contains).findFirst().orElse(matches.getFirst());
 
     return encoders.get(selected);
@@ -195,7 +206,7 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
       return null;
     }
 
-    var preferred = config.getCompressPreferredEncodings();
+    final var preferred = config.getCompressPreferredEncodings();
     String candidate;
     if (preferred.isEmpty()) {
       candidate = encoders.isEmpty() ? null : encoders.keySet().iterator().next();
@@ -229,23 +240,23 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
    * @throws IllegalArgumentException if the filename is empty or unsafe
    */
   private static String attachmentDisposition(String filename) {
-    var value = Objects.requireNonNull(filename);
+    final var value = Objects.requireNonNull(filename);
     if (value.isEmpty()) {
       throw new IllegalArgumentException("Attachment filename cannot be empty");
     }
 
-    var fallback = new StringBuilder(value.length());
-    for (int index = 0; index < value.length(); index++) {
-      var character = value.charAt(index);
-      if (character < 0x20
-          || character == 0x7f
+    final var fallback = new StringBuilder(value.length());
+    for (var index = 0; index < value.length(); index++) {
+      final var character = value.charAt(index);
+      if (character < HttpCharacters.SPACE
+          || character == HttpCharacters.DELETE_CONTROL
           || character == HttpCharacters.PATH_SEPARATOR
           || character == HttpCharacters.BACKSLASH) {
         throw new IllegalArgumentException("Attachment filename contains an unsafe character");
       }
 
       fallback.append(
-          character <= 0x7e && character != HttpCharacters.DOUBLE_QUOTE
+          character <= HttpCharacters.TILDE && character != HttpCharacters.DOUBLE_QUOTE
               ? character
               : HttpCharacters.UNDERSCORE);
     }
@@ -260,19 +271,20 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
    * @return RFC 8187 encoded filename value
    */
   private static String encodedFilename(String filename) {
-    var encoded = new StringBuilder();
-    for (var value : filename.getBytes(StandardCharsets.UTF_8)) {
-      var octet = Byte.toUnsignedInt(value);
-      if ((octet >= 'a' && octet <= 'z')
-          || (octet >= 'A' && octet <= 'Z')
-          || (octet >= '0' && octet <= '9')
-          || "!#$&+-.^_`|~".indexOf(octet) >= 0) {
-        encoded.append((char) octet);
+    final var encoded = new StringBuilder();
+    for (final var value : filename.getBytes(StandardCharsets.UTF_8)) {
+      final var octet = (char) Byte.toUnsignedInt(value);
+      if (HttpCharacters.isValidHttpToken(octet)
+          && octet != HttpCharacters.PERCENT_SIGN
+          && octet != '\''
+          && octet != HttpCharacters.ASTERISK) {
+        encoded.append(octet);
       } else {
         encoded
             .append(HttpCharacters.PERCENT_SIGN)
             .append(Character.toUpperCase(Character.forDigit(octet >>> 4, 16)));
-        encoded.append(Character.toUpperCase(Character.forDigit(octet & 0xf, 16)));
+        encoded.append(
+            Character.toUpperCase(Character.forDigit(octet & HttpCharacters.SHIFT_IN_CONTROL, 16)));
       }
     }
 
@@ -304,7 +316,8 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
    * @return valid weak entity tag
    */
   private static String resourceTag(long length, Instant lastModified) {
-    return "W/\""
+    return WEAK_ENTITY_TAG_PREFIX
+        + HttpCharacters.DOUBLE_QUOTE_STRING
         + length
         + HttpCharacters.DASH_STRING
         + lastModified.toEpochMilli()
@@ -318,7 +331,7 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
    * @return opaque-tag representation
    */
   private static String weakTag(String value) {
-    return value.startsWith("W/") ? value.substring(2) : value;
+    return value.startsWith(WEAK_ENTITY_TAG_PREFIX) ? value.substring(2) : value;
   }
 
   /**
@@ -328,19 +341,19 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
    * @return whether the value is a strong or weak quoted entity tag
    */
   private static boolean entityTag(String value) {
-    var start = value.startsWith("W/") ? 2 : 0;
+    final var start = value.startsWith(WEAK_ENTITY_TAG_PREFIX) ? 2 : 0;
     if (value.length() <= start + 1
         || value.charAt(start) != HttpCharacters.DOUBLE_QUOTE
         || value.charAt(value.length() - 1) != HttpCharacters.DOUBLE_QUOTE) {
       return false;
     }
 
-    for (int index = start + 1; index < value.length() - 1; index++) {
-      var character = value.charAt(index);
+    for (var index = start + 1; index < value.length() - 1; index++) {
+      final var character = value.charAt(index);
       if (character == HttpCharacters.DOUBLE_QUOTE
-          || character < 0x21
-          || character == 0x7f
-          || character > 0xff) {
+          || character < HttpCharacters.EXCLAMATION_MARK
+          || character == HttpCharacters.DELETE_CONTROL
+          || character > HttpCharacters.MAX_UNSIGNED_BYTE_VALUE) {
         return false;
       }
     }
@@ -355,12 +368,12 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
    * @return parsed list members
    */
   private static List<String> entityTags(List<String> values) {
-    var tags = new ArrayList<String>();
-    var current = new StringBuilder();
+    final var tags = new ArrayList<String>();
+    final var current = new StringBuilder();
     var quoted = false;
-    for (var value : values) {
-      for (int index = 0; index < value.length(); index++) {
-        var character = value.charAt(index);
+    for (final var value : values) {
+      for (var index = 0; index < value.length(); index++) {
+        final var character = value.charAt(index);
         if (character == HttpCharacters.DOUBLE_QUOTE) {
           quoted = !quoted;
         }
@@ -394,7 +407,7 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
       return null;
     }
 
-    var suffix = Long.parseLong(suffixText);
+    final var suffix = Long.parseLong(suffixText);
     if (suffix <= 0 || length == 0) {
       return UNSATISFIABLE_RANGE;
     }
@@ -415,13 +428,9 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
       return null;
     }
 
-    var first = Long.parseLong(firstText);
-    if (lastText.isEmpty() && first >= length) {
-      return UNSATISFIABLE_RANGE;
-    }
-
-    var last = lastText.isEmpty() ? length - 1 : Long.parseLong(lastText);
-    if (last < first) {
+    final var first = Long.parseLong(firstText);
+    final var requestedLast = lastText.isEmpty() ? Long.MAX_VALUE : Long.parseLong(lastText);
+    if (requestedLast < first) {
       return null;
     }
 
@@ -429,7 +438,7 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
       return UNSATISFIABLE_RANGE;
     }
 
-    return new ByteRange(first, Math.min(last, length - 1));
+    return new ByteRange(first, Math.min(requestedLast, length - 1));
   }
 
   /**
@@ -443,7 +452,7 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
       return false;
     }
 
-    for (int index = 0; index < value.length(); index++) {
+    for (var index = 0; index < value.length(); index++) {
       if (value.charAt(index) < '0' || value.charAt(index) > '9') {
         return false;
       }
@@ -478,9 +487,10 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
    */
   private static void validateHeaderValue(String value) {
     Objects.requireNonNull(value);
-    for (int index = 0; index < value.length(); index++) {
-      char character = value.charAt(index);
-      if ((character < 0x20 && character != HttpCharacters.TAB) || character == 0x7f) {
+    for (var index = 0; index < value.length(); index++) {
+      final var character = value.charAt(index);
+      if ((character < HttpCharacters.SPACE && character != HttpCharacters.TAB)
+          || character == HttpCharacters.DELETE_CONTROL) {
         throw new IllegalArgumentException("Invalid header");
       }
     }
@@ -494,7 +504,7 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
    * @return whether the existing field has the same case-sensitive name/path and canonical domain
    */
   private static boolean matchesCookie(HttpField field, Cookie cookie) {
-    var previous = COOKIE_PARSER.parse(field.getValue());
+    final var previous = COOKIE_PARSER.parse(field.getValue());
     if (previous == null) {
       return false;
     }
@@ -564,14 +574,14 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
       }
     }
 
-    if (compressionEnabled
+    if (compressionHandler != null
         && delegate.getStatus() == HttpStatusCodes.PARTIAL_CONTENT.value()
         && delegate.getHeaders().contains(HttpHeaders.CONTENT_RANGE.value())
         && !delegate.getHeaders().contains(HttpHeaders.CONTENT_ENCODING.value())) {
       delegate.getHeaders().put(HttpHeaders.CONTENT_ENCODING.value(), IDENTITY_ENCODING);
     }
 
-    var contentEncoding = delegate.getHeaders().get(HttpHeaders.CONTENT_ENCODING.value());
+    final var contentEncoding = delegate.getHeaders().get(HttpHeaders.CONTENT_ENCODING.value());
     rejectNativeIdentity(last, length, contentEncoding);
     if (((encodingUnacceptable && contentEncoding == null)
             || (identityUnacceptable && IDENTITY_ENCODING.equalsIgnoreCase(contentEncoding)))
@@ -624,7 +634,6 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
    * @param handler Jetty compressor installed around application dispatch
    */
   void compression(CompressionHandler handler) {
-    compressionEnabled = true;
     compressionHandler = Objects.requireNonNull(handler);
   }
 
@@ -689,14 +698,14 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
 
   /** Adjusts HEAD framing when native compression may change the representation length. */
   private void configureHeadCompression() {
-    if (!compressionEnabled || !head) {
+    if (compressionHandler == null || !head) {
       return;
     }
 
     delegate.getHeaders().remove(HttpHeaders.CONTENT_LENGTH.value());
     vary(HttpHeaders.ACCEPT_ENCODING);
     if (nativeRequest().getConnectionMetaData().getHttpVersion() == HttpVersion.HTTP_1_1) {
-      delegate.getHeaders().put(HttpHeader.TRANSFER_ENCODING, "chunked");
+      delegate.getHeaders().put(HttpHeader.TRANSFER_ENCODING, CHUNKED_ENCODING);
     }
   }
 
@@ -709,7 +718,8 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
    * @throws NotAcceptableException if Jetty would emit explicitly rejected identity bytes
    */
   private void rejectNativeIdentity(boolean last, long length, @Nullable String contentEncoding) {
-    if (!compressionEnabled
+    final var handler = compressionHandler;
+    if (handler == null
         || !identityUnacceptable
         || head
         || contentEncoding != null
@@ -720,9 +730,8 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
       return;
     }
 
-    var handler = Objects.requireNonNull(compressionHandler);
     // Jetty returns null for an absent wrapper; declare that contract for the generic result.
-    var selected =
+    final var selected =
         org.eclipse.jetty.server.Response.<@Nullable CompressionResponse>as(
             delegate, CompressionResponse.class);
     if (selected == null) {
@@ -730,12 +739,12 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
       throw new NotAcceptableException();
     }
 
-    var mappings = handler.getBean(PathMappings.class);
-    var match =
+    final var mappings = handler.getBean(PathMappings.class);
+    final var match =
         Objects.requireNonNull(mappings)
             .getMatched(org.eclipse.jetty.server.Request.getPathInContext(selected.getRequest()));
-    var config = (CompressionConfig) Objects.requireNonNull(match).getResource();
-    var contentType = delegate.getHeaders().get(HttpHeaders.CONTENT_TYPE.value());
+    final var config = (CompressionConfig) Objects.requireNonNull(match).getResource();
+    final var contentType = delegate.getHeaders().get(HttpHeaders.CONTENT_TYPE.value());
     if (contentType != null
         && !config.isCompressMimeTypeSupported(
             MimeTypes.getContentTypeWithoutCharset(contentType))) {
@@ -743,13 +752,13 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
       throw new NotAcceptableException();
     }
 
-    long contentLength = delegate.getHeaders().getLongField(HttpHeader.CONTENT_LENGTH);
+    var contentLength = delegate.getHeaders().getLongField(HttpHeader.CONTENT_LENGTH);
     if (contentLength < 0 && last) {
       contentLength = length;
     }
 
     if (contentLength >= 0) {
-      var encoder =
+      final var encoder =
           selectedCompressor(
               handler,
               config,
@@ -817,11 +826,11 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
    * @param fields immutable CORS decision for this invocation
    */
   private void protectCorsHeaders(Map<String, String> fields) {
-    for (var header : CORS_RESPONSE_HEADERS) {
+    for (final var header : CORS_RESPONSE_HEADERS) {
       delegate.getHeaders().remove(header.value());
     }
 
-    for (var entry : fields.entrySet()) {
+    for (final var entry : fields.entrySet()) {
       if (HttpHeaders.VARY.equalsIgnoreCase(entry.getKey())) {
         mergeVary(entry.getValue());
       } else {
@@ -836,9 +845,9 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
    * @param required comma-separated field names selected by policy
    */
   private void mergeVary(String required) {
-    var existing = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
-    for (var value : delegate.getHeaders().getValuesList(HttpHeaders.VARY.value())) {
-      for (var token : value.split(HttpCharacters.COMMA_SIGN_STRING, -1)) {
+    final var existing = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
+    for (final var value : delegate.getHeaders().getValuesList(HttpHeaders.VARY.value())) {
+      for (final var token : value.split(HttpCharacters.COMMA_SIGN_STRING, -1)) {
         existing.add(token.trim());
       }
     }
@@ -847,8 +856,8 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
       return;
     }
 
-    for (var token : required.split(HttpCharacters.COMMA_SIGN_STRING, -1)) {
-      var name = token.trim();
+    for (final var token : required.split(HttpCharacters.COMMA_SIGN_STRING, -1)) {
+      final var name = token.trim();
       if (existing.add(name)) {
         delegate.getHeaders().add(HttpHeaders.VARY.value(), name);
       }
@@ -884,7 +893,7 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
   public Response text(String value, Charset charset) {
     Objects.requireNonNull(value);
     Objects.requireNonNull(charset);
-    var contentType =
+    final var contentType =
         StandardCharsets.UTF_8.equals(charset)
             ? TEXT_CONTENT_TYPE
             : MediaType.TEXT_PLAIN.withCharset(charset).value();
@@ -911,19 +920,19 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
     require(State.OPEN);
     Objects.requireNonNull(first);
     if (additional != null) {
-      for (var candidate : additional) {
+      for (final var candidate : additional) {
         Objects.requireNonNull(candidate);
       }
     }
 
-    var fields = request.headers(HttpHeaders.ACCEPT.value());
+    final var fields = request.headers(HttpHeaders.ACCEPT.value());
     if (fields.isEmpty()) {
       variedByAccept();
 
       return first;
     }
 
-    var selected = AcceptNegotiation.select(fields, first, additional);
+    final var selected = AcceptNegotiation.select(fields, first, additional);
     variedByAccept();
     if (selected != null) {
       return selected;
@@ -949,9 +958,9 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
    * @param header request field controlling the selected response representation
    */
   private void vary(HttpHeaders header) {
-    for (var value : delegate.getHeaders().getValuesList(HttpHeaders.VARY.value())) {
-      for (var token : value.split(HttpCharacters.COMMA_SIGN_STRING, -1)) {
-        var field = token.trim();
+    for (final var value : delegate.getHeaders().getValuesList(HttpHeaders.VARY.value())) {
+      for (final var token : value.split(HttpCharacters.COMMA_SIGN_STRING, -1)) {
+        final var field = token.trim();
         if (HttpCharacters.ASTERISK_STRING.equals(field) || header.equalsIgnoreCase(field)) {
           return;
         }
@@ -971,10 +980,7 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
    * @throws IllegalStateException if file output is already selected
    */
   public Response body(String contentType, byte[] value) {
-    require(State.OPEN);
-    if (fileSelected) {
-      throw new IllegalStateException("Response already has file output");
-    }
+    requireBodySelection();
 
     Objects.requireNonNull(value);
     if (value.length > options.getMaxResponseBytes()) {
@@ -1008,10 +1014,7 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
    * @throws IllegalStateException if the phase, thread or selected file prohibits finite output
    */
   final void requireEncodedBody(String contentType) {
-    require(State.OPEN);
-    if (fileSelected) {
-      throw new IllegalStateException("Response already has file output");
-    }
+    requireBodySelection();
 
     validateHeaderValue(contentType);
   }
@@ -1030,10 +1033,7 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
     Objects.requireNonNull(source);
 
     try (source) {
-      require(State.OPEN);
-      if (fileSelected) {
-        throw new IllegalStateException("Response already has file output");
-      }
+      requireBodySelection();
 
       if (!permitsBody()) {
         return this;
@@ -1045,15 +1045,27 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
         return this;
       }
 
-      var output = startStream(contentType);
-      var buffer = new byte[options.getStreamBufferBytes()];
-      for (int read; (read = source.read(buffer)) >= 0; ) {
+      final var output = startStream(contentType);
+      final var buffer = new byte[options.getStreamBufferBytes()];
+      for (var read = 0; (read = source.read(buffer)) >= 0; ) {
         if (read > 0) {
           output.write(read == buffer.length ? buffer : Arrays.copyOf(buffer, read));
         }
       }
 
       return this;
+    }
+  }
+
+  /**
+   * Requires an open response with no selected file before accepting body output.
+   *
+   * @throws IllegalStateException if the phase, thread or selected file prohibits output
+   */
+  private void requireBodySelection() {
+    require(State.OPEN);
+    if (fileSelected) {
+      throw new IllegalStateException("Response already has file output");
     }
   }
 
@@ -1070,11 +1082,8 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
    * @throws IllegalStateException if finite, resource, or gate output is already pending
    */
   public Response file(Path source, String contentType) throws IOException {
-    var resource = Objects.requireNonNull(source);
-    require(State.OPEN);
-    if (gating || body.length != 0 || fileSelected) {
-      throw new IllegalStateException("Response cannot become a file");
-    }
+    final var resource = Objects.requireNonNull(source);
+    requireFileSelection();
 
     if (!Files.isRegularFile(resource) || !Files.isReadable(resource)) {
       throw new IOException("Expected a readable regular file");
@@ -1099,7 +1108,7 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
    * @throws IllegalStateException if finite, resource, or gate output is already pending
    */
   public Response attachment(Path source, String contentType, String filename) throws IOException {
-    var disposition = attachmentDisposition(filename);
+    final var disposition = attachmentDisposition(filename);
     file(source, contentType);
 
     return setHeader(HttpHeaders.CONTENT_DISPOSITION.value(), disposition);
@@ -1117,24 +1126,22 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
    */
   Response resource(Resource resource, String contentType) throws IOException {
     Objects.requireNonNull(resource);
-    require(State.OPEN);
-    if (gating || body.length != 0 || fileSelected) {
-      throw new IllegalStateException("Response cannot become a file");
-    }
+    requireFileSelection();
 
     fileSelected = true;
-    var content = new ResourceHttpContent(resource, contentType);
-    var length = content.getContentLengthValue();
+    final var content = new ResourceHttpContent(resource, contentType);
+    final var length = content.getContentLengthValue();
     if (length < 0) {
       throw new IOException("File length is unavailable");
     }
 
     contentType(contentType);
-    var lastModified = effectiveLastModified(content.getLastModifiedInstant(), responseDate());
+    final var lastModified =
+        effectiveLastModified(content.getLastModifiedInstant(), responseDate());
     resourceHeaders(content, lastModified);
-    delegate.getHeaders().put(HttpHeaders.ACCEPT_RANGES.value(), "bytes");
+    delegate.getHeaders().put(HttpHeaders.ACCEPT_RANGES.value(), BYTES_RANGES);
     delegate.getHeaders().put(HttpHeader.CONTENT_LENGTH, length);
-    var tag = delegate.getHeaders().get(HttpHeaders.ETAG.value());
+    final var tag = delegate.getHeaders().get(HttpHeaders.ETAG.value());
     if (tag != null && !entityTag(tag)) {
       throw new IllegalArgumentException("Invalid entity tag");
     }
@@ -1162,10 +1169,7 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
       throws IOException {
     Objects.requireNonNull(channel);
     Objects.requireNonNull(lastModified);
-    require(State.OPEN);
-    if (gating || body.length != 0 || fileSelected) {
-      throw new IllegalStateException("Response cannot become a file");
-    }
+    requireFileSelection();
 
     if (length < 0) {
       throw new IOException("File length is unavailable");
@@ -1174,18 +1178,30 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
     fileSelected = true;
     resourceChannel = channel;
     contentType(contentType);
-    var effectiveLastModified =
+    final var effectiveLastModified =
         Objects.requireNonNull(effectiveLastModified(lastModified, responseDate()));
-    var tag = resourceTag(length, lastModified);
+    final var tag = resourceTag(length, lastModified);
     delegate.getHeaders().put(HttpHeaders.ETAG.value(), tag);
     delegate
         .getHeaders()
         .put(HttpHeaders.LAST_MODIFIED.value(), HttpDateTime.format(effectiveLastModified));
-    delegate.getHeaders().put(HttpHeaders.ACCEPT_RANGES.value(), "bytes");
+    delegate.getHeaders().put(HttpHeaders.ACCEPT_RANGES.value(), BYTES_RANGES);
     delegate.getHeaders().put(HttpHeader.CONTENT_LENGTH, length);
 
     selectResourceInterval(length, tag, effectiveLastModified);
     return this;
+  }
+
+  /**
+   * Requires an open response with no gate, finite body or file output pending.
+   *
+   * @throws IllegalStateException if the phase, thread or pending output prohibits file selection
+   */
+  private void requireFileSelection() {
+    require(State.OPEN);
+    if (gating || body.length != 0 || fileSelected) {
+      throw new IllegalStateException("Response cannot become a file");
+    }
   }
 
   /**
@@ -1198,7 +1214,7 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
    */
   private boolean selectResourceInterval(
       long length, @Nullable String tag, @Nullable Instant lastModified) {
-    int conditional = conditionalResourceStatus(tag, lastModified);
+    final var conditional = conditionalResourceStatus(tag, lastModified);
     if (conditional != 0) {
       status(conditional);
       delegate.getHeaders().remove(HttpHeader.CONTENT_LENGTH);
@@ -1207,7 +1223,7 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
       return false;
     }
 
-    var range = range(length, tag);
+    final var range = range(length, tag);
     if (UNSATISFIABLE_RANGE.equals(range)) {
       status(HttpStatusCodes.RANGE_NOT_SATISFIABLE.value());
       delegate.getHeaders().put(HttpHeaders.CONTENT_RANGE.value(), "bytes */" + length);
@@ -1297,13 +1313,13 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
    * @return response origination date
    */
   private Instant responseDate() {
-    var value = delegate.getHeaders().get(HttpHeaders.DATE.value());
-    var epoch = value == null ? -1 : HttpDateTime.parseToEpoch(value);
+    final var value = delegate.getHeaders().get(HttpHeaders.DATE.value());
+    final var epoch = value == null ? -1 : HttpDateTime.parseToEpoch(value);
     if (epoch >= 0) {
       return Instant.ofEpochMilli(epoch);
     }
 
-    var date = Instant.now();
+    final var date = Instant.now();
     delegate.getHeaders().put(HttpHeaders.DATE.value(), HttpDateTime.format(date));
 
     return date;
@@ -1316,26 +1332,21 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
    * @return whether the request passes the precondition
    */
   private boolean matchesIfMatch(@Nullable String tag) {
-    var values = nativeRequest().getHeaders().getValuesList(HttpHeaders.IF_MATCH.value());
+    final var values = nativeRequest().getHeaders().getValuesList(HttpHeaders.IF_MATCH.value());
     if (values.isEmpty()) {
       return true;
     }
 
-    if (entityTags(values).contains(HttpCharacters.ASTERISK_STRING)) {
+    final var candidates = entityTags(values);
+    if (candidates.contains(HttpCharacters.ASTERISK_STRING)) {
       return true;
     }
 
-    if (tag == null || tag.startsWith("W/")) {
+    if (tag == null || tag.startsWith(WEAK_ENTITY_TAG_PREFIX)) {
       return false;
     }
 
-    for (var candidate : entityTags(values)) {
-      if (!candidate.startsWith("W/") && candidate.equals(tag)) {
-        return true;
-      }
-    }
-
-    return false;
+    return candidates.contains(tag);
   }
 
   /**
@@ -1350,13 +1361,13 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
       return true;
     }
 
-    var values =
+    final var values =
         nativeRequest().getHeaders().getValuesList(HttpHeaders.IF_UNMODIFIED_SINCE.value());
     if (values.size() != 1) {
       return true;
     }
 
-    var date = HttpDateTime.parseToEpoch(values.getFirst());
+    final var date = HttpDateTime.parseToEpoch(values.getFirst());
 
     return date < 0 || lastModified.getEpochSecond() <= date / 1000;
   }
@@ -1372,7 +1383,7 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
       return false;
     }
 
-    for (var candidate :
+    for (final var candidate :
         entityTags(nativeRequest().getHeaders().getValuesList(HttpHeaders.IF_NONE_MATCH.value()))) {
       if (HttpCharacters.ASTERISK_STRING.equals(candidate)
           || weakTag(candidate).equals(weakTag(tag))) {
@@ -1397,12 +1408,13 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
       return false;
     }
 
-    var values = nativeRequest().getHeaders().getValuesList(HttpHeaders.IF_MODIFIED_SINCE.value());
+    final var values =
+        nativeRequest().getHeaders().getValuesList(HttpHeaders.IF_MODIFIED_SINCE.value());
     if (values.size() != 1) {
       return false;
     }
 
-    var date = HttpDateTime.parseToEpoch(values.getFirst());
+    final var date = HttpDateTime.parseToEpoch(values.getFirst());
 
     return date >= 0 && lastModified.getEpochSecond() <= date / 1000;
   }
@@ -1425,15 +1437,15 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
       return null;
     }
 
-    var values = nativeRequest().getHeaders().getValuesList(HttpHeaders.RANGE.value());
+    final var values = nativeRequest().getHeaders().getValuesList(HttpHeaders.RANGE.value());
     if (values.size() != 1
         || !values.getFirst().startsWith("bytes=")
         || values.getFirst().contains(HttpCharacters.COMMA_SIGN_STRING)) {
       return null;
     }
 
-    var value = values.getFirst().substring("bytes=".length());
-    var separator = value.indexOf(HttpCharacters.DASH);
+    final var value = values.getFirst().substring("bytes=".length());
+    final var separator = value.indexOf(HttpCharacters.DASH);
     if (separator < 0 || separator != value.lastIndexOf(HttpCharacters.DASH)) {
       return null;
     }
@@ -1456,7 +1468,7 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
    * @return whether Range can select a partial representation
    */
   private boolean ifRangeMatches(@Nullable String tag) {
-    var values = nativeRequest().getHeaders().getValuesList(HttpHeaders.IF_RANGE.value());
+    final var values = nativeRequest().getHeaders().getValuesList(HttpHeaders.IF_RANGE.value());
     if (values.isEmpty()) {
       return true;
     }
@@ -1465,9 +1477,9 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
       return false;
     }
 
-    var validator = values.getFirst();
+    final var validator = values.getFirst();
 
-    return tag != null && !tag.startsWith("W/") && validator.equals(tag);
+    return tag != null && !tag.startsWith(WEAK_ENTITY_TAG_PREFIX) && validator.equals(tag);
   }
 
   /**
@@ -1563,7 +1575,7 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
    */
   public int status() {
     checkReadable();
-    int code = delegate.getStatus();
+    final var code = delegate.getStatus();
 
     return code == 0 ? HttpStatusCodes.OK.value() : code;
   }
@@ -1620,8 +1632,8 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
    */
   public Map<String, List<String>> headerMap() {
     checkReadable();
-    Map<String, List<String>> fields = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
-    for (var field : delegate.getHeaders()) {
+    final var fields = new TreeMap<String, List<String>>(String.CASE_INSENSITIVE_ORDER);
+    for (final var field : delegate.getHeaders()) {
       fields.computeIfAbsent(field.getName(), ignored -> new ArrayList<>()).add(field.getValue());
     }
     fields.replaceAll((ignoredString, values) -> List.copyOf(values));
@@ -1709,10 +1721,10 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
    * @param cookie validated cookie
    */
   private void putCookie(Cookie cookie) {
-    var value = Objects.requireNonNull(cookie).headerValue();
-    var fields = delegate.getHeaders().listIterator();
+    final var value = Objects.requireNonNull(cookie).headerValue();
+    final var fields = delegate.getHeaders().listIterator();
     while (fields.hasNext()) {
-      var field = fields.next();
+      final var field = fields.next();
       if (HttpHeaders.SET_COOKIE.equalsIgnoreCase(field.getName())
           && matchesCookie(field, cookie)) {
         fields.remove();
@@ -1781,13 +1793,13 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
    * @return session cookie values already set by Jetty
    */
   private List<String> sessionCookies() {
-    var session = nativeRequest().getSession(false);
+    final var session = nativeRequest().getSession(false);
     if (!(session instanceof ManagedSession managed)
         || !(managed.getSessionManager() instanceof AbstractSessionManager manager)) {
       return List.of();
     }
 
-    var name = manager.getSessionCookie() + HttpCharacters.EQUALS_SIGN_STRING;
+    final var name = manager.getSessionCookie() + HttpCharacters.EQUALS_SIGN_STRING;
 
     return delegate.getHeaders().getValuesList(HttpHeaders.SET_COOKIE.value()).stream()
         .filter(value -> value.startsWith(name))
@@ -1831,10 +1843,9 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
       }
       default -> throw new IllegalArgumentException("Expected navigation redirect status");
     }
-    var destination = URI.create(Objects.requireNonNull(location));
-    boolean http =
-        "http".equalsIgnoreCase(destination.getScheme())
-            || "https".equalsIgnoreCase(destination.getScheme());
+
+    final var destination = URI.create(Objects.requireNonNull(location));
+    final var http = Origins.isHttpScheme(destination.getScheme());
     if (location.isEmpty()
         || ((http || destination.getRawAuthority() != null)
             && (destination.getHost() == null
@@ -1845,10 +1856,9 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
 
     setHeader(HttpHeaders.LOCATION.value(), destination.toASCIIString());
     status(code.value());
+
     if (fileSelected) {
-      resourceContent = null;
-      closeResourceChannel();
-      fileSelected = false;
+      discardResource();
       headContentLength = -1;
       delegate.getHeaders().remove(HttpHeaders.ETAG.value());
       delegate.getHeaders().remove(HttpHeaders.LAST_MODIFIED.value());
@@ -1891,7 +1901,7 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
   void error(HttpStatusCodes status) throws IOException {
     reset(status);
     delegate.getHeaders().put(TEXT);
-    var message = status.reasonPhrase().getBytes(StandardCharsets.UTF_8);
+    final var message = status.reasonPhrase().getBytes(StandardCharsets.UTF_8);
     body = message.length <= options.getMaxResponseBytes() ? message : EMPTY;
     complete();
   }
@@ -1903,16 +1913,16 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
    * @param status initial error status, overridable by the application callback
    */
   void reset(HttpStatusCodes status) {
-    var vary =
-        (negotiatedByAccept || requiredCorsHeaders != null || compressionEnabled)
+    final var vary =
+        (negotiatedByAccept || requiredCorsHeaders != null || compressionHandler != null)
             ? List.copyOf(delegate.getHeaders().getValuesList(HttpHeaders.VARY.value()))
             : List.<String>of();
-    var sessionCookies = sessionCookies();
+    final var sessionCookies = sessionCookies();
     delegate.getHeaders().clear();
-    for (var value : vary) {
+    for (final var value : vary) {
       delegate.getHeaders().add(HttpHeaders.VARY.value(), value);
     }
-    for (var value : sessionCookies) {
+    for (final var value : sessionCookies) {
       delegate.getHeaders().add(HttpHeaders.SET_COOKIE.value(), value);
     }
 
@@ -1920,9 +1930,7 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
     body = EMPTY;
     stream = null;
     eventStreamOnly = false;
-    resourceContent = null;
-    closeResourceChannel();
-    fileSelected = false;
+    discardResource();
     requiredAllow = null;
     afterFlushFailure = null;
     headContentLength = -1;
@@ -1936,14 +1944,19 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
   void preflight() {
     require(State.OPEN);
     body = EMPTY;
-    resourceContent = null;
-    closeResourceChannel();
-    fileSelected = false;
+    discardResource();
     headContentLength = -1;
     delegate.getHeaders().remove(HttpHeaders.CONTENT_TYPE.value());
     delegate.getHeaders().remove(HttpHeaders.CONTENT_LENGTH.value());
     delegate.getHeaders().remove(HttpHeaders.CONTENT_RANGE.value());
     status(HttpStatusCodes.NO_CONTENT.value());
+  }
+
+  /** Drops resource metadata, closes its unsubmitted channel and clears selection. */
+  private void discardResource() {
+    resourceContent = null;
+    closeResourceChannel();
+    fileSelected = false;
   }
 
   /**
@@ -2008,16 +2021,16 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
     // End application access before handing the buffer to a potentially asynchronous write.
     state = State.CLOSED;
     protectRequiredHeaders();
-    var bytes = ByteBuffer.wrap(body);
+    final var bytes = ByteBuffer.wrap(body);
     body = EMPTY;
-    if (head && compressionEnabled && permitsBody()) {
+    if (head && compressionHandler != null && permitsBody()) {
       Content.Sink.write(delegate, false, ByteBuffer.wrap(EMPTY));
     }
 
     if (afterFlush == null) {
       delegate.write(true, bytes, completion);
     } else {
-      var flushing = new FlushCompletion();
+      final var flushing = new FlushCompletion();
 
       delegate.write(true, bytes, flushing);
       flushing.afterFlush();
@@ -2030,7 +2043,7 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
    * @throws IOException if the final transport write fails
    */
   private void completeStreaming() throws IOException {
-    var activeStream = Objects.requireNonNull(stream);
+    final var activeStream = Objects.requireNonNull(stream);
 
     write(true, activeStream.used);
     activeStream.used = 0;
@@ -2049,10 +2062,11 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
     notifyBeforeFlush(true, resourceLength);
     state = State.CLOSED;
     protectRequiredHeaders();
-    var flushing = new FlushCompletion();
+    final var flushing = new FlushCompletion();
+
     if (head || !permitsBody()) {
       closeResourceChannel();
-      if (head && compressionEnabled && permitsBody()) {
+      if (head && compressionHandler != null && permitsBody()) {
         Content.Sink.write(delegate, false, ByteBuffer.wrap(EMPTY));
       }
 
@@ -2061,7 +2075,7 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
       return;
     }
 
-    var channel = resourceChannel;
+    final var channel = resourceChannel;
     if (channel != null) {
       Content.Source source;
 
@@ -2076,7 +2090,7 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
       resourceChannel = null;
       Content.copy(source, delegate, flushing);
     } else {
-      var content = Objects.requireNonNull(resourceContent);
+      final var content = Objects.requireNonNull(resourceContent);
       if (!content.getResource().exists() || !content.getResource().isReadable()) {
         completion.failed(new IOException("Selected file is no longer readable"));
         return;
@@ -2090,7 +2104,7 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
 
   /** Closes an unsubmitted filesystem descriptor without masking response cleanup. */
   private void closeResourceChannel() {
-    var channel = resourceChannel;
+    final var channel = resourceChannel;
     resourceChannel = null;
     if (channel != null) {
       try {
@@ -2156,7 +2170,7 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
    */
   private void contentType(String value) {
     validateHeaderValue(value);
-    var field = contentTypeField(value);
+    final var field = contentTypeField(value);
     delegate.getHeaders().put(field);
   }
 
@@ -2182,9 +2196,9 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
    * @return false for 204, 205, or 304 responses
    */
   private boolean permitsBody() {
-    return delegate.getStatus() != 204
-        && delegate.getStatus() != 205
-        && delegate.getStatus() != 304;
+    return delegate.getStatus() != HttpStatusCodes.NO_CONTENT.value()
+        && delegate.getStatus() != HttpStatusCodes.RESET_CONTENT.value()
+        && delegate.getStatus() != HttpStatusCodes.NOT_MODIFIED.value();
   }
 
   /**
@@ -2217,7 +2231,7 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
    * @throws IOException if the transport cannot complete the write
    */
   private void write(boolean last, int length) throws IOException {
-    var activeStream = Objects.requireNonNull(stream);
+    final var activeStream = Objects.requireNonNull(stream);
     notifyBeforeFlush(last, length);
 
     try {
@@ -2244,17 +2258,17 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
 
   /** Advertises finite HTTP/1 closure while leaving input available to post-flush callbacks. */
   private void advertiseUnreadInputClosure() {
-    var transportRequest = org.eclipse.jetty.server.Request.unWrap(nativeRequest());
-    var length = transportRequest.getLength();
-    boolean unread =
+    final var transportRequest = org.eclipse.jetty.server.Request.unWrap(nativeRequest());
+    final var length = transportRequest.getLength();
+    final var unread =
         length > 0
             && org.eclipse.jetty.server.Request.getContentBytesRead(transportRequest) < length;
-    boolean chunked =
+    final var chunked =
         length < 0 && transportRequest.getHeaders().contains(HttpHeader.TRANSFER_ENCODING);
     if (unread || chunked) {
-      var version = transportRequest.getConnectionMetaData().getHttpVersion();
+      final var version = transportRequest.getConnectionMetaData().getHttpVersion();
       if (version == HttpVersion.HTTP_1_0 || version == HttpVersion.HTTP_1_1) {
-        delegate.getHeaders().put(HttpHeader.CONNECTION, "close");
+        delegate.getHeaders().put(HttpHeader.CONNECTION, CLOSE_CONNECTION);
       }
     }
   }
@@ -2293,7 +2307,7 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
   }
 
   /** Writes complete server-sent event frames through the response's bounded stream. */
-  public static sealed class EventStream permits TypedEventStream {
+  public static sealed class EventStream {
     private static final byte[] DATA_PREFIX = "data: ".getBytes(StandardCharsets.UTF_8);
     private static final byte[] EVENT_TERMINATOR = "\n\n".getBytes(StandardCharsets.UTF_8);
     private final Stream output;
@@ -2407,8 +2421,8 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
      * @throws IOException if the transport write fails
      */
     private void writeLines(String value, String prefix) throws IOException {
-      var normalized = value.replace("\r\n", "\n").replace('\r', '\n');
-      int start = 0;
+      final var normalized = value.replace("\r\n", "\n").replace('\r', '\n');
+      var start = 0;
       int end;
       while ((end = normalized.indexOf('\n', start)) >= 0) {
         output.write(prefix);
@@ -2421,21 +2435,93 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
       output.write(normalized.substring(start));
       output.write("\n");
     }
+
+    /** Codec-backed SSE output over the response's single handler-owned stream. */
+    public static final class Typed extends EventStream {
+      private final Codec codec;
+
+      /**
+       * Shares ordinary event framing and stream ownership.
+       *
+       * @param output existing response stream
+       * @param codec shared application conversion
+       */
+      Typed(Stream output, Codec codec) {
+        super(output);
+        this.codec = Objects.requireNonNull(codec);
+      }
+
+      /**
+       * Encodes one object as UTF-8 text event data and flushes the event. The codec must produce a
+       * UTF-8 textual representation. Malformed UTF-8 and conversion failures write no part of this
+       * event, but headers and earlier events are already committed. Validates stream ownership and
+       * lifetime before invoking the codec; does not bound codec allocations.
+       *
+       * @param value nonnull application representation
+       * @return this event stream
+       * @throws Exception if conversion, strict UTF-8 decoding or transport output fails
+       */
+      @SuppressWarnings("java:S112")
+      public Response.EventStream.Typed sendObject(Object value) throws Exception {
+        requireWritable();
+        Objects.requireNonNull(value);
+
+        final var bytes = Objects.requireNonNull(codec.write(value), "Codec returned null bytes");
+        // Reporting decoding rejects malformed output before even a data prefix is written.
+        final var text =
+            StandardCharsets.UTF_8.newDecoder().decode(ByteBuffer.wrap(bytes)).toString();
+
+        super.send(text);
+        return this;
+      }
+
+      /** {@inheritDoc} */
+      @Override
+      public Response.EventStream.Typed send(String data) throws IOException {
+        super.send(data);
+        return this;
+      }
+
+      /** {@inheritDoc} */
+      @Override
+      public Response.EventStream.Typed send(SseEvent event) throws IOException {
+        super.send(event);
+        return this;
+      }
+
+      /** {@inheritDoc} */
+      @Override
+      public Response.EventStream.Typed comment(String value) throws IOException {
+        super.comment(value);
+        return this;
+      }
+
+      /** {@inheritDoc} */
+      @Override
+      public Response.EventStream.Typed heartbeat() throws IOException {
+        super.heartbeat();
+        return this;
+      }
+    }
   }
 
   /** Coordinates transport completion with the post-flush callback exactly once. */
   private final class FlushCompletion implements Callback {
-    private boolean afterFinished;
+    private final ReentrantLock completionLock;
+    private CompletionProgress progress;
     private @Nullable Throwable afterFailure;
-    private boolean transportFinished;
     private @Nullable Throwable transportFailure;
-    private boolean completed;
+
+    /** Creates an independent lock for this submission's completion state. */
+    private FlushCompletion() {
+      this.completionLock = new ReentrantLock();
+      this.progress = CompletionProgress.WAITING_FOR_BOTH;
+    }
 
     /** Marks the response submission as successful from the transport's perspective. */
     @Override
-    public synchronized void succeeded() {
-      transportFinished = true;
-      complete();
+    public void succeeded() {
+      runUnderLock(completionLock, () -> complete(CompletionProgress.WAITING_FOR_AFTER_FLUSH));
     }
 
     /**
@@ -2444,32 +2530,47 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
      * @param failure transport failure
      */
     @Override
-    public synchronized void failed(Throwable failure) {
-      transportFinished = true;
-      transportFailure = failure;
-      complete();
+    public void failed(Throwable failure) {
+      runUnderLock(
+          completionLock,
+          () -> {
+            transportFailure = failure;
+            complete(CompletionProgress.WAITING_FOR_AFTER_FLUSH);
+          });
     }
 
     /** Runs post-flush observation and releases the terminal callback once both sides finish. */
-    private synchronized void afterFlush() {
-      try {
-        notifyAfterFlush();
-      } catch (RuntimeException failure) {
-        afterFailure = failure;
-        afterFlushFailure = failure;
-      }
+    private void afterFlush() {
+      runUnderLock(
+          completionLock,
+          () -> {
+            try {
+              notifyAfterFlush();
+            } catch (RuntimeException failure) {
+              afterFailure = failure;
+              afterFlushFailure = failure;
+            }
 
-      afterFinished = true;
-      complete();
+            complete(CompletionProgress.WAITING_FOR_TRANSPORT);
+          });
     }
 
-    /** Completes the original callback only when submission and observation have both ended. */
-    private void complete() {
-      if (completed || !afterFinished || !transportFinished) {
+    /**
+     * Records an arrival and completes when the other event has already finished.
+     *
+     * @param waitingFor remaining event after this arrival
+     */
+    private void complete(CompletionProgress waitingFor) {
+      if (progress == CompletionProgress.COMPLETED || progress == waitingFor) {
         return;
       }
 
-      completed = true;
+      if (progress == CompletionProgress.WAITING_FOR_BOTH) {
+        progress = waitingFor;
+        return;
+      }
+
+      progress = CompletionProgress.COMPLETED;
 
       if (transportFailure != null) {
         completion.failed(transportFailure);
@@ -2478,6 +2579,14 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
       } else {
         completion.succeeded();
       }
+    }
+
+    /** Tracks the two independent arrivals and the terminal callback claim. */
+    private enum CompletionProgress {
+      WAITING_FOR_BOTH,
+      WAITING_FOR_TRANSPORT,
+      WAITING_FOR_AFTER_FLUSH,
+      COMPLETED
     }
   }
 
@@ -2519,9 +2628,9 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
     public Stream write(byte[] bytes) throws IOException {
       require(State.STREAMING);
       Objects.requireNonNull(bytes);
-      int offset = 0;
+      var offset = 0;
       while (offset < bytes.length) {
-        int count = Math.min(options.getStreamBufferBytes() - used, bytes.length - offset);
+        final var count = Math.min(options.getStreamBufferBytes() - used, bytes.length - offset);
         ensureStorage(used + count);
         System.arraycopy(bytes, offset, buffer, used, count);
         used += count;
@@ -2577,13 +2686,218 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
         return;
       }
 
-      int limit = options.getStreamBufferBytes();
-      int doubled = buffer.length > limit / 2 ? limit : buffer.length * 2;
-      int capacity = Math.clamp(Math.max(INITIAL_BUFFER_BYTES, doubled), required, limit);
+      final var limit = (int) options.getStreamBufferBytes();
+      final var doubled = buffer.length > limit / 2 ? limit : buffer.length * 2;
+      final var capacity = Math.clamp(Math.max(INITIAL_BUFFER_BYTES, doubled), required, limit);
       var grown = new byte[capacity];
       System.arraycopy(buffer, 0, grown, 0, used);
       buffer = grown;
       view = null;
+    }
+  }
+
+  /** Codec-enabled response; inherited byte arrays and text never invoke the codec. */
+  public static final class Typed extends Response {
+    private final Codec codec;
+
+    /**
+     * Initializes the response paired with its one request, using the ordinary response state.
+     *
+     * @param delegate native output
+     * @param options exchange limits
+     * @param completion transport completion
+     * @param head whether only representation metadata is sent
+     * @param request paired request
+     * @param codec shared application conversion
+     */
+    Typed(
+        org.eclipse.jetty.server.Response delegate,
+        Options options,
+        Callback completion,
+        boolean head,
+        Request request,
+        Codec codec) {
+      super(delegate, options, completion, head, request);
+      this.codec = Objects.requireNonNull(codec);
+    }
+
+    /**
+     * Stages finite codec output with explicit media metadata. Validates writable state before
+     * invoking the codec; conversion failure leaves the previous staged representation untouched.
+     *
+     * @param contentType response media type, including any explicit charset
+     * @param value nonnull application representation
+     * @return this response
+     * @throws Exception if conversion fails; response limits and state rules remain unchanged
+     */
+    @SuppressWarnings("java:S112") // User codecs share Handler's checked exception contract.
+    public Response.Typed body(String contentType, Object value) throws Exception {
+      requireEncodedBody(contentType);
+      Objects.requireNonNull(value);
+
+      super.body(
+          contentType, Objects.requireNonNull(codec.write(value), "Codec returned null bytes"));
+      return this;
+    }
+
+    /**
+     * Stages finite codec output without interpreting the selected media type or transcoding bytes.
+     *
+     * @param contentType response media metadata
+     * @param value nonnull application representation
+     * @return this response
+     * @throws Exception if conversion fails
+     */
+    @SuppressWarnings("java:S112") // User codecs share Handler's checked exception contract.
+    public Response.Typed body(MediaType contentType, Object value) throws Exception {
+      return body(Objects.requireNonNull(contentType).value(), value);
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public Response.Typed body(String contentType, byte[] value) {
+      super.body(contentType, value);
+      return this;
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public Response.Typed body(MediaType contentType, byte[] value) {
+      super.body(contentType, value);
+      return this;
+    }
+
+    /**
+     * Starts handler-owned SSE output with codec-backed object sends. Starting commits HTTP headers
+     * immediately; object conversion cannot replace that committed response.
+     *
+     * @return event writer using this response's existing stream lifecycle
+     * @throws IOException if initial output fails
+     * @throws IllegalStateException if the response cannot become a stream
+     */
+    @Override
+    public EventStream.Typed startEventStream() throws IOException {
+      return new EventStream.Typed(startStream(EVENT_STREAM_CONTENT_TYPE), codec);
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public Response.Typed status(int code) {
+      super.status(code);
+      return this;
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public Response.Typed setHeader(String name, String value) {
+      super.setHeader(name, value);
+      return this;
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public Response.Typed addHeader(String name, String value) {
+      super.addHeader(name, value);
+      return this;
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public Response.Typed removeHeader(String name) {
+      super.removeHeader(name);
+      return this;
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public Response.Typed text(String value) {
+      super.text(value);
+      return this;
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public Response.Typed text(String value, Charset charset) {
+      super.text(value, charset);
+      return this;
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public Response.Typed input(InputStream source, String contentType) throws IOException {
+      super.input(source, contentType);
+      return this;
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public Response.Typed file(Path source, String contentType) throws IOException {
+      super.file(source, contentType);
+      return this;
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public Response.Typed attachment(Path source, String contentType, String filename)
+        throws IOException {
+      super.attachment(source, contentType, filename);
+      return this;
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public Response.Typed disableCompression() {
+      super.disableCompression();
+      return this;
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public Response.Typed cookie(String name, String value) {
+      super.cookie(name, value);
+      return this;
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public Response.Typed cookie(Cookie cookie) {
+      super.cookie(cookie);
+      return this;
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public Response.Typed removeCookie(String name) {
+      super.removeCookie(name);
+      return this;
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public Response.Typed removeCookie(String name, String path, @Nullable String domain) {
+      super.removeCookie(name, path, domain);
+      return this;
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public Response.Typed removeCookie(Cookie cookie) {
+      super.removeCookie(cookie);
+      return this;
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public Response.Typed redirect(String location) {
+      super.redirect(location);
+      return this;
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public Response.Typed redirect(String location, HttpStatusCodes code) {
+      super.redirect(location, code);
+      return this;
     }
   }
 }

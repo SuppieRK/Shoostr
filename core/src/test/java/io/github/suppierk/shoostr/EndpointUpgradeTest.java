@@ -48,9 +48,8 @@ class EndpointUpgradeTest {
             };
         Consumer<Lifecycle> configuration =
             extensions ->
-                extensions.beforeRouteHandler(
-                    (ignoredRequest, ignoredResponse) ->
-                        configuredThread.complete(Thread.currentThread()));
+                extensions.beforeRouteHandler((ignoredRequest, ignoredResponse) ->
+                    configuredThread.complete(Thread.currentThread()));
         if (pathless) {
           app.routes()
               .path(

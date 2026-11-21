@@ -127,13 +127,12 @@ class WebSocketEqualityTest {
                 "/socket",
                 socket ->
                     socket
-                        .onOpen(
-                            connection -> {
-                              hashes.put(connection, connection.hashCode());
-                              var listener = listener(connection);
-                              hashes.put(listener, listener.hashCode());
-                              opened.add(connection);
-                            })
+                        .onOpen(connection -> {
+                          hashes.put(connection, connection.hashCode());
+                          var listener = listener(connection);
+                          hashes.put(listener, listener.hashCode());
+                          opened.add(connection);
+                        })
                         .onText((connection, text) -> connection.send("echo:" + text))
                         .onClose((connection, code, reason) -> closed.add(connection)));
 
@@ -156,11 +155,11 @@ class WebSocketEqualityTest {
             assertNotEquals(connections.get(0), connections.get(1));
 
             if (typed) {
-              verifier(TypedWebSocketConnection.class, connections, firstExecutor, secondExecutor)
+              verifier(WebSocketConnection.Typed.class, connections, firstExecutor, secondExecutor)
                   .verify();
             } else {
               verifier(WebSocketConnection.class, connections, firstExecutor, secondExecutor)
-                  .withRedefinedSubclass(TypedWebSocketConnection.class)
+                  .withRedefinedSubclass(WebSocketConnection.Typed.class)
                   .verify();
             }
 

@@ -1,5 +1,6 @@
 package io.github.suppierk.shoostr;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertSame;
@@ -48,9 +49,8 @@ class RouteCompositionTest {
         "/{id}",
         order -> {
           order.get((request, response) -> response.text(request.pathParam("id").orElseThrow()));
-          order.patch(
-              (request, response) ->
-                  response.text("update:" + request.pathParam("id").orElseThrow()));
+          order.patch((request, response) ->
+              response.text("update:" + request.pathParam("id").orElseThrow()));
           order.delete((ignoredRequest, response) -> response.status(204));
         });
   }
@@ -62,22 +62,20 @@ class RouteCompositionTest {
     configuredOptions.setMaxResponseBytes(1024);
     configuredOptions.setStreamBufferBytes(128);
     configuredOptions.setMaxParameters(1000);
-    configuredOptions.setMultipart(MultipartOptions.defaults());
+    configuredOptions.setMultipart(new MultipartOptions());
 
     app =
         new Shoostr(configuredOptions)
-            .modifyServer(
-                nativeServer -> {
-                  var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
-                  nativeConnector.setHost("127.0.0.1");
-                  nativeConnector.setPort(0);
-                  nativeConnector.setIdleTimeout(5000);
-                });
-    app.onRequestHeaders(
-        (request, ignored) -> {
-          assertTrue(request.pathParam("id").isEmpty());
-          assertTrue(request.routePattern().isEmpty());
-        });
+            .modifyServer(nativeServer -> {
+              var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
+              nativeConnector.setHost("127.0.0.1");
+              nativeConnector.setPort(0);
+              nativeConnector.setIdleTimeout(5000);
+            });
+    app.onRequestHeaders((request, ignored) -> {
+      assertTrue(request.pathParam("id").isEmpty());
+      assertTrue(request.routePattern().isEmpty());
+    });
     app.routes()
         .path(
             "/api",
@@ -90,14 +88,13 @@ class RouteCompositionTest {
                       account.path(
                           "orders/{id}",
                           order ->
-                              order.get(
-                                  (routeRequest, response) -> {
-                                    retainedRequest.set(routeRequest);
-                                    response.text(
-                                        routeRequest.pathParam("accountId").orElseThrow()
-                                            + ":"
-                                            + routeRequest.pathParam("id").orElseThrow());
-                                  })));
+                              order.get((routeRequest, response) -> {
+                                retainedRequest.set(routeRequest);
+                                response.text(
+                                    routeRequest.pathParam("accountId").orElseThrow()
+                                        + ":"
+                                        + routeRequest.pathParam("id").orElseThrow());
+                              })));
             });
     app.routes().path("v2/orders/", RouteCompositionTest::orders);
     app.routes()
@@ -387,22 +384,20 @@ class RouteCompositionTest {
       try (Closeable candidateCleanup = candidate::close) {
         assertSame(
             candidate,
-            candidate.routes(
-                routes -> {
-                  assertSame(candidate.routes(), routes);
+            candidate.routes(routes -> {
+              assertSame(candidate.routes(), routes);
 
-                  routes.get("/health", (ignoredRequest, response) -> response.text("ok"));
-                  routes.path(
-                      "/orders",
-                      orders -> {
-                        orders.get(
-                            "/{id}",
-                            (request, response) ->
-                                response.text("order:" + request.pathParam("id").orElseThrow()));
-                        orders.get(
-                            "/latest", (ignoredRequest, response) -> response.text("latest"));
-                      });
-                }));
+              routes.get("/health", (ignoredRequest, response) -> response.text("ok"));
+              routes.path(
+                  "/orders",
+                  orders -> {
+                    orders.get(
+                        "/{id}",
+                        (request, response) ->
+                            response.text("order:" + request.pathParam("id").orElseThrow()));
+                    orders.get("/latest", (ignoredRequest, response) -> response.text("latest"));
+                  });
+            }));
 
         try (var fixture = TestServer.start(candidate)) {
           assertEquals(
@@ -440,18 +435,15 @@ class RouteCompositionTest {
             assertThrows(
                 IllegalArgumentException.class,
                 () ->
-                    candidate.routes(
-                        routes -> {
-                          routes.get(
-                              "/before", (ignoredRequest, response) -> response.text("before"));
-                          throw failure;
-                        })));
+                    candidate.routes(routes -> {
+                      routes.get("/before", (ignoredRequest, response) -> response.text("before"));
+                      throw failure;
+                    })));
 
         assertSame(
             candidate,
-            candidate.routes(
-                routes ->
-                    routes.get("/after", (ignoredRequest, response) -> response.text("after"))));
+            candidate.routes(routes ->
+                routes.get("/after", (ignoredRequest, response) -> response.text("after"))));
 
         try (var fixture = TestServer.start(candidate)) {
           assertEquals(
@@ -471,8 +463,20 @@ class RouteCompositionTest {
   }
 
   @ParameterizedTest
-  @ValueSource(strings = {"/}id", "/<id", "/>id"})
-  void rejectsIsolatedUnsupportedSymbolsDuringRouteRegistration(String pattern) throws Exception {
+  @ValueSource(
+      strings = {
+        "/}id",
+        "/<id",
+        "/>id",
+        "/before{after",
+        "/before}after",
+        "/before*after",
+        "/before<after",
+        "/before>after",
+        "/before?after",
+        "/before#after"
+      })
+  void rejectsReservedSymbolsDuringRouteRegistration(String pattern) throws Exception {
     {
       var candidate = new Shoostr();
 
@@ -483,6 +487,90 @@ class RouteCompositionTest {
             IllegalArgumentException.class,
             () -> routes.get(pattern, (ignoredRequest, ignoredResponse) -> {}));
       }
+    }
+  }
+
+  @Test
+  void rejectsEveryAsciiControlCharacterEmbeddedInLiteralSegments() throws Exception {
+    var candidate = new Shoostr();
+
+    try (Closeable candidateCleanup = candidate::close) {
+      var routes = candidate.routes();
+      for (var character = 0; character < 32; character++) {
+        var pattern = "/before" + (char) character + "after";
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> routes.get(pattern, (request, response) -> {}),
+            "ASCII character " + character);
+      }
+
+      assertThrows(
+          IllegalArgumentException.class,
+          () -> routes.get("/before\u007fafter", (request, response) -> {}));
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "/before after", "/before~after", "/before\u0080after", "/before\u009fafter",
+        "/before\u00a0after", "/beforeéafter", "/before%7Bafter", "/before%00after",
+        "/before%7Fafter"
+      })
+  void acceptsLiteralCharactersOutsideTheAsciiControlAndReservedSets(String pattern)
+      throws Exception {
+    var candidate = new Shoostr();
+
+    try (Closeable candidateCleanup = candidate::close) {
+      assertDoesNotThrow(() -> candidate.routes().get(pattern, (request, response) -> {}));
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"a", "_", "a0_-"})
+  void acceptsAndCapturesAsciiParameterNamesInPlainAndConstrainedRoutes(String name)
+      throws Exception {
+    var candidate = new Shoostr();
+
+    try (Closeable candidateCleanup = candidate::close) {
+      candidate
+          .routes()
+          .get(
+              "/plain/{" + name + "}",
+              (request, response) -> response.text(request.pathParam(name).orElseThrow()))
+          .get(
+              "/constrained/{" + name + ":[0-9]+}",
+              (request, response) -> response.text(request.pathParam(name).orElseThrow()));
+
+      try (var fixture = TestServer.start(candidate)) {
+        assertEquals(
+            "7",
+            fixture
+                .send(request -> request.path("/plain/7"), HttpResponse.BodyHandlers.ofString())
+                .body());
+        assertEquals(
+            "7",
+            fixture
+                .send(
+                    request -> request.path("/constrained/7"), HttpResponse.BodyHandlers.ofString())
+                .body());
+      }
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"", "0a", "-a", "a.b", "é"})
+  void rejectsInvalidParameterNamesInPlainAndConstrainedRoutes(String name) throws Exception {
+    var candidate = new Shoostr();
+
+    try (Closeable candidateCleanup = candidate::close) {
+      var routes = candidate.routes();
+      assertThrows(
+          IllegalArgumentException.class,
+          () -> routes.get("/plain/{" + name + "}", (request, response) -> {}));
+      assertThrows(
+          IllegalArgumentException.class,
+          () -> routes.get("/constrained/{" + name + ":[0-9]+}", (request, response) -> {}));
     }
   }
 
@@ -574,7 +662,7 @@ class RouteCompositionTest {
     configuredOptions.setMaxResponseBytes(1024);
     configuredOptions.setStreamBufferBytes(128);
     configuredOptions.setMaxParameters(1000);
-    configuredOptions.setMultipart(MultipartOptions.defaults());
+    configuredOptions.setMultipart(new MultipartOptions());
 
     {
       var candidate =
@@ -612,24 +700,22 @@ class RouteCompositionTest {
   private Shoostr createCandidateForRejectsPathParameterAccessFromAnotherThread(
       Options configuredOptions) {
     return new Shoostr(configuredOptions)
-        .modifyServer(
-            nativeServer -> {
-              var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
-              nativeConnector.setHost("127.0.0.1");
-              nativeConnector.setPort(0);
-              nativeConnector.setIdleTimeout(5000);
-            });
+        .modifyServer(nativeServer -> {
+          var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
+          nativeConnector.setHost("127.0.0.1");
+          nativeConnector.setPort(0);
+          nativeConnector.setIdleTimeout(5000);
+        });
   }
 
   private Thread createThreadForRejectsPathParameterAccessFromAnotherThread(
       Request request, AtomicReference<Throwable> failure) {
-    return Thread.startVirtualThread(
-        () -> {
-          try {
-            request.pathParam("id");
-          } catch (Throwable error) {
-            failure.set(error);
-          }
-        });
+    return Thread.startVirtualThread(() -> {
+      try {
+        request.pathParam("id");
+      } catch (Throwable error) {
+        failure.set(error);
+      }
+    });
   }
 }

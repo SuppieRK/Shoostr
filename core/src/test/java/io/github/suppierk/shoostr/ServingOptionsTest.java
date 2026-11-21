@@ -19,16 +19,17 @@ import java.util.concurrent.atomic.AtomicInteger;
 import org.eclipse.jetty.server.ServerConnector;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 @Timeout(20)
 class ServingOptionsTest {
   private static Shoostr application(Options options) {
     return new Shoostr(options)
-        .routes(
-            routes ->
-                routes
-                    .get("/health", (request, response) -> response.text("ready"))
-                    .post("/echo", (request, response) -> response.text(request.bodyText())));
+        .routes(routes ->
+            routes
+                .get("/health", (request, response) -> response.text("ready"))
+                .post("/echo", (request, response) -> response.text(request.bodyText())));
   }
 
   private static HttpResponse<String> get(HttpClient client, int port, String header)
@@ -64,6 +65,32 @@ class ServingOptionsTest {
 
         assertEquals(port, app.port());
         assertEquals("ready", get(client, app.port(), "").body());
+      }
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void capturesVirtualExecutionSelectionAtApplicationConstruction(boolean virtual)
+      throws Exception {
+    var options = new Options();
+    options.setVirtualThreads(virtual);
+    var app = application(options);
+
+    try (Closeable appCleanup = app::close) {
+      app.routes()
+          .get(
+              "/execution",
+              (ignoredRequest, response) ->
+                  response.text(Boolean.toString(Thread.currentThread().isVirtual())));
+      options.setVirtualThreads(!virtual);
+
+      try (var test = TestServer.start(app)) {
+        var result =
+            test.send(request -> request.path("/execution"), HttpResponse.BodyHandlers.ofString());
+
+        assertEquals(200, result.statusCode());
+        assertEquals(Boolean.toString(virtual), result.body());
       }
     }
   }
@@ -190,33 +217,30 @@ class ServingOptionsTest {
 
       try (Closeable appCleanup2 = app::close;
           var client = HttpClient.newHttpClient()) {
-        app.modifyHttpConfiguration(
-            http -> {
-              assertEquals(256, http.getRequestHeaderSize());
+        app.modifyHttpConfiguration(http -> {
+          assertEquals(256, http.getRequestHeaderSize());
 
-              http.setRequestHeaderSize(4096);
-            });
-        app.modifyServer(
-            server -> {
-              var connector = (ServerConnector) server.getConnectors()[0];
+          http.setRequestHeaderSize(4096);
+        });
+        app.modifyServer(server -> {
+          var connector = (ServerConnector) server.getConnectors()[0];
 
-              assertEquals("localhost", connector.getHost());
-              assertEquals(9090, connector.getPort());
-              assertEquals(12_000, connector.getIdleTimeout());
-              assertEquals(2000, server.getStopTimeout());
+          assertEquals("localhost", connector.getHost());
+          assertEquals(9090, connector.getPort());
+          assertEquals(12_000, connector.getIdleTimeout());
+          assertEquals(2000, server.getStopTimeout());
 
-              connector.setHost("127.0.0.1");
-              connector.setPort(0);
-              connector.setIdleTimeout(15_000);
-              server.setStopTimeout(3000);
-            });
-        app.modifyServer(
-            server -> {
-              var connector = (ServerConnector) server.getConnectors()[0];
+          connector.setHost("127.0.0.1");
+          connector.setPort(0);
+          connector.setIdleTimeout(15_000);
+          server.setStopTimeout(3000);
+        });
+        app.modifyServer(server -> {
+          var connector = (ServerConnector) server.getConnectors()[0];
 
-              assertEquals(15_000, connector.getIdleTimeout());
-              assertEquals(3000, server.getStopTimeout());
-            });
+          assertEquals(15_000, connector.getIdleTimeout());
+          assertEquals(3000, server.getStopTimeout());
+        });
         app.start();
 
         assertEquals(200, get(client, app.port(), "x".repeat(1024)).statusCode());

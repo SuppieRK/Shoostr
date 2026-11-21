@@ -21,6 +21,7 @@ import java.time.Instant;
 import java.util.Map;
 import java.util.Objects;
 import java.util.function.Function;
+import java.util.function.Supplier;
 import org.eclipse.jetty.util.URIUtil;
 import org.eclipse.jetty.util.resource.Resource;
 import org.eclipse.jetty.util.resource.ResourceFactory;
@@ -34,6 +35,7 @@ import org.jspecify.annotations.Nullable;
  */
 final class StaticFiles implements Closeable {
   private static final String BINARY_CONTENT_TYPE = "application/octet-stream";
+
   private final String mount;
   private final StaticOptions options;
   private final boolean filesystem;
@@ -63,6 +65,22 @@ final class StaticFiles implements Closeable {
    */
   StaticFiles(String mount, Path directory, StaticOptions options) {
     this(mount, options, true, factory -> factory.newResource(realDirectory(directory)));
+  }
+
+  /**
+   * Creates a filesystem mount, acquiring a fresh factory after mount and options null checks.
+   *
+   * @param mount mounted request path
+   * @param directory source directory
+   * @param options welcome-file and SPA fallback options
+   * @param resources supplies one fresh native factory whose ownership passes to this mount
+   */
+  StaticFiles(
+      String mount,
+      Path directory,
+      StaticOptions options,
+      Supplier<ResourceFactory.Closeable> resources) {
+    this(mount, options, true, factory -> factory.newResource(realDirectory(directory)), resources);
   }
 
   /**
@@ -100,20 +118,38 @@ final class StaticFiles implements Closeable {
    * @param filesystem whether response selection opens a native filesystem channel
    * @param resolve factory operation that locates the root directory
    */
+  private StaticFiles(
+      String mount,
+      StaticOptions options,
+      boolean filesystem,
+      Function<ResourceFactory.Closeable, @Nullable Resource> resolve) {
+    this(mount, options, filesystem, resolve, ResourceFactory::closeable);
+  }
+
+  /**
+   * Acquires and validates a source, releasing its factory if resolution fails.
+   *
+   * @param mount mounted request path
+   * @param options welcome-file and fallback options
+   * @param filesystem whether response selection opens a native filesystem channel
+   * @param resolve factory operation that locates the root directory
+   * @param resources supplies one fresh owned native factory
+   */
   @SuppressWarnings(
       "java:S1181") // Release native resources even when initialization fails fatally.
   private StaticFiles(
       String mount,
       StaticOptions options,
       boolean filesystem,
-      Function<ResourceFactory.Closeable, @Nullable Resource> resolve) {
+      Function<ResourceFactory.Closeable, @Nullable Resource> resolve,
+      Supplier<ResourceFactory.Closeable> resources) {
     this.mount = Objects.requireNonNull(mount);
     this.options = Objects.requireNonNull(options);
     this.filesystem = filesystem;
-    this.resourceFactory = ResourceFactory.closeable();
+    this.resourceFactory = Objects.requireNonNull(resources.get());
 
     try {
-      var resolved = resolve.apply(resourceFactory);
+      final var resolved = resolve.apply(resourceFactory);
       if (resolved == null
           || !resolved.exists()
           || !resolved.isDirectory()
@@ -172,7 +208,7 @@ final class StaticFiles implements Closeable {
       return false;
     }
 
-    for (var segment : path.split(HttpCharacters.PATH_SEPARATOR_STRING, -1)) {
+    for (final var segment : path.split(HttpCharacters.PATH_SEPARATOR_STRING, -1)) {
       if (segment.isEmpty()
           || HttpCharacters.DOT_STRING.equals(segment)
           || HttpCharacters.PARENT_DIRECTORY.equals(segment)) {
@@ -216,7 +252,7 @@ final class StaticFiles implements Closeable {
    * @return archive filesystem, or null for filesystem mounts and classpath directories
    */
   @Nullable FileSystem archiveFileSystem() {
-    var path = source.getPath();
+    final var path = source.getPath();
 
     return path == null || path.getFileSystem().equals(FileSystems.getDefault())
         ? null
@@ -241,7 +277,7 @@ final class StaticFiles implements Closeable {
       return null;
     }
 
-    var selected = select(path);
+    final var selected = select(path);
     if (selected == null) {
       return null;
     }
@@ -306,7 +342,7 @@ final class StaticFiles implements Closeable {
       return;
     }
 
-    var selected = filesystemResource(relative);
+    final var selected = filesystemResource(relative);
     if (selected == null) {
       throw new NotFoundException();
     }
@@ -334,7 +370,7 @@ final class StaticFiles implements Closeable {
    * @throws IOException if the resource cannot be staged
    */
   private void serveClasspath(String relative, Response response) throws IOException {
-    var resource = source.resolve(URIUtil.encodePath(relative));
+    final var resource = source.resolve(URIUtil.encodePath(relative));
     if (!resource.exists()
         || resource.isDirectory()
         || !resource.isReadable()
@@ -357,13 +393,14 @@ final class StaticFiles implements Closeable {
    */
   @SuppressWarnings("java:S1181") // Release the channel if metadata selection fails fatally.
   private @Nullable Selected filesystemResource(String relative) throws IOException {
-    var resource = source.resolve(URIUtil.encodePath(relative));
+    final var resource = source.resolve(URIUtil.encodePath(relative));
     if (!readable(resource)) {
       return null;
     }
 
-    var path = Objects.requireNonNull(resource.getPath());
-    var channel = Files.newByteChannel(path, StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS);
+    final var path = Objects.requireNonNull(resource.getPath());
+    final var channel =
+        Files.newByteChannel(path, StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS);
 
     try {
       return new Selected(
@@ -401,7 +438,7 @@ final class StaticFiles implements Closeable {
    * @return validated relative file path, or null when this mount cannot serve the request
    */
   private @Nullable String select(String path) {
-    var requested = relative(path);
+    final var requested = relative(path);
     if (requested == null) {
       return null;
     }
@@ -412,21 +449,20 @@ final class StaticFiles implements Closeable {
       return requested;
     }
 
-    String welcome = options.welcomeFile();
+    final var welcome = options.welcomeFile();
     if (welcome != null) {
-      String directory =
+      final var directory =
           requested.endsWith(HttpCharacters.PATH_SEPARATOR_STRING)
               ? requested.substring(0, requested.length() - 1)
               : requested;
-      String candidate =
+      final var candidate =
           directory.isEmpty() ? welcome : directory + HttpCharacters.PATH_SEPARATOR + welcome;
       if (available(candidate)) {
         return candidate;
       }
     }
 
-    String fallback = options.spaFallback();
-
+    final var fallback = options.spaFallback();
     return fallback != null && available(fallback) ? fallback : null;
   }
 
@@ -499,8 +535,7 @@ final class StaticFiles implements Closeable {
     }
 
     try {
-      var resource = source.resolve(URIUtil.encodePath(relative));
-
+      final var resource = source.resolve(URIUtil.encodePath(relative));
       return readable(resource);
     } catch (InvalidPathException ignored) {
       return false;
@@ -524,8 +559,7 @@ final class StaticFiles implements Closeable {
       return false;
     }
 
-    var path = resource.getPath();
-
+    final var path = resource.getPath();
     return !filesystem || (path != null && Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS));
   }
 

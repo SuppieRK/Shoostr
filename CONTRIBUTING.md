@@ -252,7 +252,7 @@ Use JDK annotations only in application examples. Tests may also use JUnit 5 ann
 Add short in-code comments at the steps that need explanation: scope selection, ordering,
 ownership transfers, protocol choices, and failure handling. Explain why the example takes a
 step and what changes for the caller; do not narrate obvious Java syntax or add a comment quota.
-Use the fluent `Routes` and `TypedRoutes` methods for adjacent registrations on the same scope.
+Use the fluent `Routes` and `Routes.Typed` methods for adjacent registrations on the same scope.
 Keep child callbacks and setup boundaries clear, and preserve registration order. A chain returns
 the current scope, not a builder for the last endpoint; a scope-wide setting can affect earlier routes.
 
@@ -381,11 +381,11 @@ Sources checked on 2026-09-26:
 
 Generation uses Swagger Core 3.0.0 models and its Jackson 3 OpenAPI 3.1 `Json31` serializer.
 UI CSS and bundle are extracted at build time from
-[`org.webjars:swagger-ui:5.34.0`](https://repo.maven.apache.org/maven2/org/webjars/swagger-ui/5.34.0/).
-The SHA-256 `a439f1bd0d0c69667e97fac5a8cdfb3cc599ed9bdb31fbf40602c648dd2e1a63`
+[`org.webjars:swagger-ui:5.35.1`](https://repo.maven.apache.org/maven2/org/webjars/swagger-ui/5.35.1/).
+The SHA-256 `745a149abc9f1f40cc65ae242dd8825a44946063fe6d6cd84cddb7d5d7933593`
 is enforced before packaging. The WebJar is build-only; it is not published as a runtime dependency.
 No CDN or runtime download is needed. Preserve the upstream Apache LICENSE/NOTICE and
-bundle third-party notices under `META-INF/licenses/swagger-ui-5.34.0/`.
+bundle third-party notices under `META-INF/licenses/swagger-ui-5.35.1/`.
 
 ## Example container validation
 

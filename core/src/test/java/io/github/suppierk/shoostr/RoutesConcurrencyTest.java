@@ -2,6 +2,7 @@ package io.github.suppierk.shoostr;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -19,6 +20,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import org.eclipse.jetty.server.ServerConnector;
 import org.junit.jupiter.api.RepeatedTest;
 import org.junit.jupiter.api.Test;
@@ -45,6 +47,39 @@ class RoutesConcurrencyTest {
   }
 
   @Test
+  void preservesWireMethodValidationPrecedenceAfterRegistrationCloses() throws Exception {
+    var app = new Shoostr();
+
+    try (Closeable appCleanup = app::close;
+        var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+      var routes = app.routes();
+      app.close();
+      Handler handler = (request, response) -> {};
+
+      assertThrows(
+          IllegalStateException.class, () -> routes.route("INVALID", "/selected", handler));
+      assertThrows(
+          IllegalStateException.class, () -> routes.route((String) null, "/selected", handler));
+      assertThrows(
+          NullPointerException.class,
+          () -> routes.route((String) null, "/selected", handler, ignored -> {}));
+      assertEquals(
+          "Unrecognized HTTP method: INVALID",
+          assertThrows(
+                  IllegalArgumentException.class,
+                  () -> routes.route("INVALID", "/selected", handler, ignored -> {}))
+              .getMessage());
+      assertThrows(
+          IllegalArgumentException.class,
+          () -> routes.route("INVALID", "/selected", executor, handler));
+      assertThrows(
+          IllegalArgumentException.class, () -> routes.route("INVALID", executor, handler));
+      assertThrows(
+          IllegalStateException.class, () -> routes.route("GET", "/selected", executor, handler));
+    }
+  }
+
+  @Test
   void preservesRegistrationsAcrossRootAndSharedPathScopes() throws Exception {
     {
       var app = new Shoostr();
@@ -57,16 +92,15 @@ class RoutesConcurrencyTest {
         for (int worker = 0; worker < 8; worker++) {
           int index = worker;
           tasks.add(
-              workers.submit(
-                  () -> {
-                    await(ready);
-                    for (int route = 0; route < 8; route++) {
-                      String path = index + "/" + route;
-                      var scope = scopes.get(index % scopes.size());
-                      scope.route(
-                          "GET", prefix(index) + path, (ignored, response) -> response.text(path));
-                    }
-                  }));
+              workers.submit(() -> {
+                await(ready);
+                for (int route = 0; route < 8; route++) {
+                  String path = index + "/" + route;
+                  var scope = scopes.get(index % scopes.size());
+                  scope.route(
+                      "GET", prefix(index) + path, (ignored, response) -> response.text(path));
+                }
+              }));
         }
         ready.countDown();
         for (var task : tasks) {
@@ -104,22 +138,21 @@ class RoutesConcurrencyTest {
         for (int worker = 0; worker < 24; worker++) {
           int index = worker;
           tasks.add(
-              workers.submit(
-                  () -> {
-                    await(ready);
+              workers.submit(() -> {
+                await(ready);
 
-                    try {
-                      scopes
-                          .get(index % scopes.size())
-                          .get(
-                              prefix(index) + "{id" + index + "}",
-                              (ignoredRequest, response) -> response.text(Integer.toString(index)));
+                try {
+                  scopes
+                      .get(index % scopes.size())
+                      .get(
+                          prefix(index) + "{id" + index + "}",
+                          (ignoredRequest, response) -> response.text(Integer.toString(index)));
 
-                      return true;
-                    } catch (IllegalArgumentException ignoredFailure) {
-                      return false;
-                    }
-                  }));
+                  return true;
+                } catch (IllegalArgumentException ignoredFailure) {
+                  return false;
+                }
+              }));
         }
         ready.countDown();
         int winners = 0;
@@ -146,47 +179,42 @@ class RoutesConcurrencyTest {
   }
 
   @Test
-  void callbacksCanWaitForRegistrationsFromOtherThreads() throws Exception {
-    {
-      var app = new Shoostr();
+  void serializesCallbacksAcrossTheRootAndSharedScopes() throws Exception {
+    var entered = new CountDownLatch(1);
+    var release = new CountDownLatch(1);
+    var attempted = new CountDownLatch(1);
+    var app = new Shoostr();
 
-      try (Closeable appCleanup2 = app::close;
-          var workers = Executors.newVirtualThreadPerTaskExecutor()) {
-        app.routes()
-            .path(
-                "/api",
-                routes -> {
-                  var task =
-                      submitTaskForCallbacksCanWaitForRegistrationsFromOtherThreads(
-                          workers, routes);
+    try (Closeable appCleanup = app::close;
+        var workers = Executors.newVirtualThreadPerTaskExecutor()) {
+      var first =
+          submitCallbackForRootCallbackRejectsStartupUntilItFinishes(
+              workers, app, entered, release);
+      await(entered);
+      var second = submitOtherScopeRegistration(workers, app, attempted);
 
-                  assertDoesNotThrow(() -> task.get(3, TimeUnit.SECONDS));
+      try {
+        await(attempted);
+        assertThrows(TimeoutException.class, () -> second.get(150, TimeUnit.MILLISECONDS));
+        assertThrows(IllegalStateException.class, app::start);
+      } finally {
+        release.countDown();
+      }
 
-                  var startup =
-                      workers.submit(() -> assertThrows(IllegalStateException.class, app::start));
+      first.get(3, TimeUnit.SECONDS);
+      second.get(3, TimeUnit.SECONDS);
 
-                  assertDoesNotThrow(() -> startup.get(3, TimeUnit.SECONDS));
-                });
-
-        try (var test = TestServer.start(app)) {
-          assertEquals(
-              "ready",
-              test.send(
-                      request -> request.path("/api/nested").timeout(Duration.ofSeconds(3)),
-                      HttpResponse.BodyHandlers.ofString())
-                  .body());
-        }
+      try (var test = TestServer.start(app)) {
+        assertEquals(
+            "ready",
+            test.send(request -> request.path("/ready"), HttpResponse.BodyHandlers.ofString())
+                .body());
+        assertEquals(
+            "other",
+            test.send(request -> request.path("/other"), HttpResponse.BodyHandlers.ofString())
+                .body());
       }
     }
-  }
-
-  private Future<Routes> submitTaskForCallbacksCanWaitForRegistrationsFromOtherThreads(
-      ExecutorService workers, Routes routes) {
-    return workers.submit(
-        () ->
-            routes.path(
-                "/nested",
-                nested -> nested.get((ignoredRequest, response) -> response.text("ready"))));
   }
 
   @Test
@@ -226,152 +254,79 @@ class RoutesConcurrencyTest {
 
   private Future<Shoostr> submitCallbackForRootCallbackRejectsStartupUntilItFinishes(
       ExecutorService workers, Shoostr app, CountDownLatch entered, CountDownLatch release) {
-    return workers.submit(
-        () ->
-            app.routes(
+    return workers.submit(() -> {
+      var caller = Thread.currentThread();
+      return app.routes(routes -> {
+        assertSame(caller, Thread.currentThread());
+        entered.countDown();
+        await(release);
+        routes.get("/ready", (request, response) -> response.text("ready"));
+      });
+    });
+  }
+
+  @Test
+  void closeWaitsForRegistrationCallbackWithoutBlockingItsExtensionSetup() throws Exception {
+    var entered = new CountDownLatch(1);
+    var release = new CountDownLatch(1);
+    var closing = new CountDownLatch(1);
+    var app = new Shoostr();
+
+    try (Closeable appCleanup = app::close;
+        var workers = Executors.newVirtualThreadPerTaskExecutor()) {
+      var callback = submitCallbackForCloseWaitsForExtensionSetup(workers, app, entered, release);
+      await(entered);
+      var close = submitClose(workers, app, closing);
+
+      try {
+        await(closing);
+        assertThrows(TimeoutException.class, () -> close.get(150, TimeUnit.MILLISECONDS));
+      } finally {
+        release.countDown();
+      }
+
+      callback.get(3, TimeUnit.SECONDS);
+      close.get(3, TimeUnit.SECONDS);
+      assertThrows(IllegalStateException.class, app::start);
+    }
+  }
+
+  private Future<Routes> submitCallbackForCloseWaitsForExtensionSetup(
+      ExecutorService workers, Shoostr app, CountDownLatch entered, CountDownLatch release) {
+    return workers.submit(() ->
+        app.routes()
+            .path(
+                "/api",
                 routes -> {
                   entered.countDown();
                   await(release);
-                  routes.get("/ready", (ignoredRequest, response) -> response.text("ready"));
+                  var cors = new Cors(CorsPolicy.builder().origins("https://example.com").build());
+                  routes.get((request, response) -> {}, lifecycle -> lifecycle.withExtension(cors));
                 }));
   }
 
   @Test
-  void startupRejectsActiveCallbacksAndCloseDoesNotWaitForThem() throws Exception {
-    var entered = new CountDownLatch(1);
-    var release = new CountDownLatch(1);
+  void releasesTheSharedLockAfterRegistrationCallbackFails() throws Exception {
+    var app = new Shoostr();
 
-    {
-      var app =
-          new Shoostr()
-              .modifyServer(
-                  nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
+    try (Closeable appCleanup = app::close;
+        var workers = Executors.newVirtualThreadPerTaskExecutor()) {
+      var failure = submitFailedRegistration(workers, app);
+      assertEquals("registration failed", failure.get(3, TimeUnit.SECONDS).getMessage());
+      var next = submitNextRegistration(workers, app);
+      next.get(3, TimeUnit.SECONDS);
 
-      try (Closeable appCleanup4 = app::close;
-          var workers = Executors.newVirtualThreadPerTaskExecutor()) {
-        var callback =
-            submitCallbackForStartupRejectsActiveCallbacksAndCloseDoesNotWaitForThem(
-                workers, app, entered, release);
-
-        try {
-          assertTrue(entered.await(3, TimeUnit.SECONDS));
-          assertThrows(IllegalStateException.class, app::start);
-          assertThrows(IllegalStateException.class, app::port);
-
-          workers
-              .submit(
-                  () -> {
-                    app.close();
-
-                    return null;
-                  })
-              .get(3, TimeUnit.SECONDS);
-        } finally {
-          release.countDown();
-        }
-
-        callback.get(3, TimeUnit.SECONDS);
-
-        assertThrows(IllegalStateException.class, app::start);
+      try (var test = TestServer.start(app)) {
+        assertEquals(
+            "retained",
+            test.send(request -> request.path("/retained"), HttpResponse.BodyHandlers.ofString())
+                .body());
+        assertEquals(
+            "next",
+            test.send(request -> request.path("/next"), HttpResponse.BodyHandlers.ofString())
+                .body());
       }
     }
-  }
-
-  private Future<Routes> submitCallbackForStartupRejectsActiveCallbacksAndCloseDoesNotWaitForThem(
-      ExecutorService workers, Shoostr app, CountDownLatch entered, CountDownLatch release) {
-    return workers.submit(
-        () ->
-            app.routes()
-                .path(
-                    "/api",
-                    routes -> {
-                      entered.countDown();
-                      await(release);
-
-                      assertThrows(
-                          IllegalStateException.class,
-                          () -> routes.get((ignoredRequest, ignoredResponse) -> {}));
-                    }));
-  }
-
-  @Test
-  void failedCallbacksDoNotHideOtherActiveCallbacksOrBlockLaterStartup() throws Exception {
-    var entered = new CountDownLatch(2);
-    var firstRelease = new CountDownLatch(1);
-    var secondRelease = new CountDownLatch(1);
-
-    {
-      var app =
-          new Shoostr()
-              .modifyServer(
-                  nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
-
-      try (Closeable appCleanup5 = app::close;
-          var workers = Executors.newVirtualThreadPerTaskExecutor()) {
-        var rootRoutes = app.routes();
-        var first =
-            submitFirstForFailedCallbacksDoNotHideOtherActiveCallbacksOrBlockLaterStartup(
-                workers, rootRoutes, entered, firstRelease);
-        var second =
-            submitSecondForFailedCallbacksDoNotHideOtherActiveCallbacksOrBlockLaterStartup(
-                workers, app, entered, secondRelease);
-
-        try {
-          assertTrue(entered.await(3, TimeUnit.SECONDS));
-
-          firstRelease.countDown();
-          first.get(3, TimeUnit.SECONDS);
-
-          assertThrows(IllegalStateException.class, app::start);
-        } finally {
-          firstRelease.countDown();
-          secondRelease.countDown();
-        }
-
-        second.get(3, TimeUnit.SECONDS);
-        app.start();
-
-        assertTrue(app.port() > 0);
-      }
-    }
-  }
-
-  private Future<IllegalArgumentException>
-      submitFirstForFailedCallbacksDoNotHideOtherActiveCallbacksOrBlockLaterStartup(
-          ExecutorService workers,
-          Routes rootRoutes,
-          CountDownLatch entered,
-          CountDownLatch firstRelease) {
-    return workers.submit(
-        () ->
-            assertThrows(
-                IllegalArgumentException.class,
-                () ->
-                    rootRoutes.path(
-                        "/first",
-                        ignoredRoutes -> {
-                          entered.countDown();
-                          await(firstRelease);
-                          throw new IllegalArgumentException("registration failed");
-                        })));
-  }
-
-  private Future<Routes>
-      submitSecondForFailedCallbacksDoNotHideOtherActiveCallbacksOrBlockLaterStartup(
-          ExecutorService workers,
-          Shoostr app,
-          CountDownLatch entered,
-          CountDownLatch secondRelease) {
-    return workers.submit(
-        () ->
-            app.routes()
-                .path(
-                    "/second",
-                    routes -> {
-                      entered.countDown();
-                      await(secondRelease);
-                      routes.get((ignoredRequest, ignoredResponse) -> {});
-                    }));
   }
 
   @RepeatedTest(5)
@@ -391,28 +346,34 @@ class RoutesConcurrencyTest {
         for (int worker = 0; worker < 16; worker++) {
           int index = worker;
           tasks.add(
-              workers.submit(
-                  () -> {
-                    await(ready);
+              workers.submit(() -> {
+                await(ready);
 
-                    try {
-                      scopes
-                          .get(index % scopes.size())
-                          .get(
-                              prefix(index) + index,
-                              (ignoredRequest, response) -> response.text("registered"));
+                try {
+                  scopes
+                      .get(index % scopes.size())
+                      .get(
+                          prefix(index) + index,
+                          (ignoredRequest, response) -> response.text("registered"));
 
-                      return true;
-                    } catch (IllegalStateException ignoredFailure) {
-                      return false;
-                    }
-                  }));
+                  return true;
+                } catch (IllegalStateException ignoredFailure) {
+                  return false;
+                }
+              }));
         }
         var startup =
             submitStartupForRacingStartupEitherIncludesOrRejectsEachRegistration(
                 workers, ready, app);
         ready.countDown();
-        startup.get(5, TimeUnit.SECONDS);
+        boolean started = startup.get(5, TimeUnit.SECONDS);
+        for (var task : tasks) {
+          task.get(3, TimeUnit.SECONDS);
+        }
+        if (!started) {
+          app.start();
+        }
+
         for (int index = 0; index < tasks.size(); index++) {
           boolean registered = tasks.get(index).get(3, TimeUnit.SECONDS);
 
@@ -431,13 +392,86 @@ class RoutesConcurrencyTest {
     }
   }
 
-  private Future<Shoostr> submitStartupForRacingStartupEitherIncludesOrRejectsEachRegistration(
+  private Future<Boolean> submitStartupForRacingStartupEitherIncludesOrRejectsEachRegistration(
       ExecutorService workers, CountDownLatch ready, Shoostr app) {
-    return workers.submit(
-        () -> {
-          await(ready);
+    return workers.submit(() -> {
+      await(ready);
 
-          return app.start();
+      try {
+        app.start();
+        return true;
+      } catch (IllegalStateException registrationInProgress) {
+        return false;
+      }
+    });
+  }
+
+  @Test
+  void concurrentCloseAllowsStartupFailureCleanupToFinish() throws Exception {
+    var entered = new CountDownLatch(1);
+    var release = new CountDownLatch(1);
+    var closing = new CountDownLatch(1);
+    var app = startupFailureApplication(entered, release);
+
+    try (Closeable appCleanup = app::close;
+        var workers = Executors.newVirtualThreadPerTaskExecutor()) {
+      var startup = workers.submit(() -> assertThrows(IllegalStateException.class, app::start));
+      await(entered);
+      var close = submitClose(workers, app, closing);
+
+      try {
+        await(closing);
+        assertThrows(TimeoutException.class, () -> close.get(150, TimeUnit.MILLISECONDS));
+      } finally {
+        release.countDown();
+      }
+
+      assertEquals("startup failed", startup.get(3, TimeUnit.SECONDS).getMessage());
+      close.get(3, TimeUnit.SECONDS);
+      assertThrows(IllegalStateException.class, app::start);
+    }
+  }
+
+  private Shoostr startupFailureApplication(CountDownLatch entered, CountDownLatch release) {
+    return new Shoostr()
+        .modifyServer(server -> {
+          entered.countDown();
+          await(release);
+          throw new IllegalStateException("startup failed");
         });
+  }
+
+  private Future<Routes> submitOtherScopeRegistration(
+      ExecutorService workers, Shoostr app, CountDownLatch attempted) {
+    return workers.submit(() -> {
+      attempted.countDown();
+      return app.routes()
+          .path("/other", routes -> routes.get((request, response) -> response.text("other")));
+    });
+  }
+
+  private Future<?> submitClose(ExecutorService workers, Shoostr app, CountDownLatch closing) {
+    return workers.submit(() -> {
+      closing.countDown();
+      app.close();
+      return null;
+    });
+  }
+
+  private Future<IllegalArgumentException> submitFailedRegistration(
+      ExecutorService workers, Shoostr app) {
+    return workers.submit(() ->
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                app.routes(routes -> {
+                  routes.get("/retained", (request, response) -> response.text("retained"));
+                  throw new IllegalArgumentException("registration failed");
+                })));
+  }
+
+  private Future<Shoostr> submitNextRegistration(ExecutorService workers, Shoostr app) {
+    return workers.submit(() ->
+        app.routes(routes -> routes.get("/next", (request, response) -> response.text("next"))));
   }
 }

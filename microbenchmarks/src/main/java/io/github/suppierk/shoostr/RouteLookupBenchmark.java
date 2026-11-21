@@ -91,10 +91,9 @@ public class RouteLookupBenchmark {
   static List<RadixRoutes.Endpoint> endpoints(
       Map<String, Map<HttpMethods, Handler>> registrations) {
     var endpoints = new ArrayList<RadixRoutes.Endpoint>();
-    registrations.forEach(
-        (path, methods) ->
-            methods.forEach(
-                (method, handler) -> endpoints.add(RadixRoutes.endpoint(method, path, handler))));
+    registrations.forEach((path, methods) ->
+        methods.forEach(
+            (method, handler) -> endpoints.add(RadixRoutes.endpoint(method, path, handler))));
 
     return endpoints;
   }

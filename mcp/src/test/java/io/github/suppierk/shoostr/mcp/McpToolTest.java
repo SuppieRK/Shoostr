@@ -72,14 +72,13 @@ class McpToolTest {
                 .tools(
                     McpServerFeatures.SyncToolSpecification.builder()
                         .tool(tool)
-                        .callHandler(
-                            (exchange, ignoredCallToolRequest) -> {
-                              exchange.ping();
+                        .callHandler((exchange, ignoredCallToolRequest) -> {
+                          exchange.ping();
 
-                              return McpSchema.CallToolResult.builder()
-                                  .addTextContent("native ping returned")
-                                  .build();
-                            })
+                          return McpSchema.CallToolResult.builder()
+                              .addTextContent("native ping returned")
+                              .build();
+                        })
                         .build())
                 .build());
   }
@@ -122,11 +121,10 @@ class McpToolTest {
                 .tools(
                     McpServerFeatures.SyncToolSpecification.builder()
                         .tool(tool)
-                        .callHandler(
-                            (ignoredMcpSyncServerExchange, ignoredCallToolRequest) ->
-                                McpSchema.CallToolResult.builder()
-                                    .addTextContent("hello from Shoostr")
-                                    .build())
+                        .callHandler((ignoredMcpSyncServerExchange, ignoredCallToolRequest) ->
+                            McpSchema.CallToolResult.builder()
+                                .addTextContent("hello from Shoostr")
+                                .build())
                         .build())
                 .build());
   }
@@ -171,12 +169,11 @@ class McpToolTest {
                 .tools(
                     McpServerFeatures.AsyncToolSpecification.builder()
                         .tool(tool)
-                        .callHandler(
-                            (ignoredMcpAsyncServerExchange, ignoredCallToolRequest) ->
-                                Mono.just(
-                                    McpSchema.CallToolResult.builder()
-                                        .addTextContent("hello from async Shoostr")
-                                        .build()))
+                        .callHandler((ignoredMcpAsyncServerExchange, ignoredCallToolRequest) ->
+                            Mono.just(
+                                McpSchema.CallToolResult.builder()
+                                    .addTextContent("hello from async Shoostr")
+                                    .build()))
                         .build())
                 .build());
   }

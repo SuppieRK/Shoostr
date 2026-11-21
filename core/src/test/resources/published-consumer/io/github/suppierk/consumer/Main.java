@@ -47,7 +47,7 @@ public final class Main {
     configuredOptions.setMaxResponseBytes(1048576);
     configuredOptions.setStreamBufferBytes(8192);
     configuredOptions.setMaxParameters(1000);
-    configuredOptions.setMultipart(MultipartOptions.defaults());
+    configuredOptions.setMultipart(new MultipartOptions());
 
     return configuredOptions;
   }

@@ -6,6 +6,7 @@ import io.github.suppierk.shoostr.Handler;
 import io.github.suppierk.shoostr.Lifecycle;
 import io.github.suppierk.shoostr.RouteExtension;
 import io.github.suppierk.shoostr.RouteInfo;
+import io.github.suppierk.shoostr.http.HttpCharacters;
 import io.github.suppierk.shoostr.http.MediaType;
 import io.swagger.v3.core.util.Json31;
 import io.swagger.v3.oas.models.Components;
@@ -26,6 +27,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.Supplier;
 import org.jspecify.annotations.Nullable;
 import tools.jackson.core.JacksonException;
 
@@ -36,6 +39,11 @@ import tools.jackson.core.JacksonException;
  */
 public final class OpenApi
     implements ApplicationExtension<OpenApiOperation>, RouteExtension<OpenApiOperation> {
+  private static final String OPENAPI_VERSION = "3.1.1";
+  private static final String COMPONENT_NAME_REGEX = "[A-Za-z0-9._-]+";
+  private static final String PATH_PARAMETER_REGEX = "\\{[^}]+}";
+
+  private final ReentrantLock configurationLock;
   private final Info info;
   private final List<Binding> bindings;
   private final Components components;
@@ -43,6 +51,7 @@ public final class OpenApi
   private final List<Tag> tags;
   private final List<OpenApiUi> interfaces;
   private final AtomicReference<byte @Nullable []> document;
+
   private boolean installed;
   private boolean prepared;
 
@@ -53,6 +62,7 @@ public final class OpenApi
    * @param version nonblank application API version
    */
   public OpenApi(String title, String version) {
+    this.configurationLock = new ReentrantLock();
     this.info = new Info().title(text(title)).version(text(version));
     this.bindings = new ArrayList<>();
     this.components = new Components();
@@ -100,7 +110,7 @@ public final class OpenApi
    * @throws IllegalArgumentException if the name is not representable
    */
   static String componentName(String value) {
-    if (!text(value).matches("[A-Za-z0-9._-]+")) {
+    if (!text(value).matches(COMPONENT_NAME_REGEX)) {
       throw new IllegalArgumentException("Invalid OpenAPI component name: " + value);
     }
 
@@ -113,12 +123,12 @@ public final class OpenApi
    * @param value nonblank description
    * @return this extension
    */
-  public synchronized OpenApi description(String value) {
-    requireMutable();
+  public OpenApi description(String value) {
+    return withMutableConfiguration(() -> {
+      info.setDescription(text(value));
 
-    info.setDescription(text(value));
-
-    return this;
+      return this;
+    });
   }
 
   /**
@@ -127,12 +137,12 @@ public final class OpenApi
    * @param url nonblank server URL
    * @return this extension
    */
-  public synchronized OpenApi server(String url) {
-    requireMutable();
+  public OpenApi server(String url) {
+    return withMutableConfiguration(() -> {
+      servers.add(new Server().url(text(url)));
 
-    servers.add(new Server().url(text(url)));
-
-    return this;
+      return this;
+    });
   }
 
   /**
@@ -143,17 +153,17 @@ public final class OpenApi
    * @return this extension
    * @throws IllegalArgumentException if the tag is duplicated
    */
-  public synchronized OpenApi tag(String name, String description) {
-    requireMutable();
+  public OpenApi tag(String name, String description) {
+    return withMutableConfiguration(() -> {
+      final var key = text(name);
+      if (tags.stream().anyMatch(tag -> key.equals(tag.getName()))) {
+        throw new IllegalArgumentException("Duplicate OpenAPI tag: " + key);
+      }
 
-    var key = text(name);
-    if (tags.stream().anyMatch(tag -> key.equals(tag.getName()))) {
-      throw new IllegalArgumentException("Duplicate OpenAPI tag: " + key);
-    }
+      tags.add(new Tag().name(key).description(text(description)));
 
-    tags.add(new Tag().name(key).description(text(description)));
-
-    return this;
+      return this;
+    });
   }
 
   /**
@@ -170,13 +180,13 @@ public final class OpenApi
    * @param specPath absolute literal same-origin specification path
    * @return handler for the four exact prepared UI resource paths
    */
-  public synchronized Handler uiHandler(String basePath, String specPath) {
-    requireMutable();
+  public Handler uiHandler(String basePath, String specPath) {
+    return withMutableConfiguration(() -> {
+      final var ui = new OpenApiUi(basePath, specPath);
+      interfaces.add(ui);
 
-    var ui = new OpenApiUi(basePath, specPath);
-    interfaces.add(ui);
-
-    return ui;
+      return ui;
+    });
   }
 
   /**
@@ -188,19 +198,19 @@ public final class OpenApi
    * @return reusable local schema reference
    * @throws IllegalArgumentException if the name is invalid or duplicated
    */
-  public synchronized JsonSchema schema(String name, Schema<?> schema) {
-    requireMutable();
+  public JsonSchema schema(String name, Schema<?> schema) {
+    return withMutableConfiguration(() -> {
+      final var key = componentName(name);
+      if (components.getSchemas() != null && components.getSchemas().containsKey(key)) {
+        throw new IllegalArgumentException("Duplicate schema: " + key);
+      }
 
-    var key = componentName(name);
-    if (components.getSchemas() != null && components.getSchemas().containsKey(key)) {
-      throw new IllegalArgumentException("Duplicate schema: " + key);
-    }
+      components.addSchemas(key, copy(schema, Schema.class));
+      final var reference = new JsonSchema();
+      reference.set$ref(Components.COMPONENTS_SCHEMAS_REF + key);
 
-    components.addSchemas(key, copy(schema, Schema.class));
-    var reference = new JsonSchema();
-    reference.set$ref("#/components/schemas/" + key);
-
-    return reference;
+      return reference;
+    });
   }
 
   /**
@@ -211,20 +221,20 @@ public final class OpenApi
    * @return this extension
    * @throws IllegalArgumentException if the name is invalid or duplicated
    */
-  public synchronized OpenApi securityScheme(String name, SecurityScheme scheme) {
-    requireMutable();
+  public OpenApi securityScheme(String name, SecurityScheme scheme) {
+    return withMutableConfiguration(() -> {
+      final var key = componentName(name);
+      if (components.getSecuritySchemes() != null
+          && components.getSecuritySchemes().containsKey(key)) {
+        throw new IllegalArgumentException("Duplicate security scheme: " + key);
+      }
 
-    var key = componentName(name);
-    if (components.getSecuritySchemes() != null
-        && components.getSecuritySchemes().containsKey(key)) {
-      throw new IllegalArgumentException("Duplicate security scheme: " + key);
-    }
+      OpenApiValidation.scheme(Objects.requireNonNull(scheme));
+      final var detached = copy(scheme, SecurityScheme.class);
+      components.addSecuritySchemes(key, detached);
 
-    OpenApiValidation.scheme(Objects.requireNonNull(scheme));
-    var detached = copy(scheme, SecurityScheme.class);
-    components.addSecuritySchemes(key, detached);
-
-    return this;
+      return this;
+    });
   }
 
   /**
@@ -234,13 +244,19 @@ public final class OpenApi
    * @throws IllegalStateException if this instance was already installed
    */
   @Override
-  public synchronized void install(ApplicationCallbacks callbacks) {
-    Objects.requireNonNull(callbacks);
-    if (installed) {
-      throw new IllegalStateException("An OpenApi instance belongs to one application");
-    }
+  public void install(ApplicationCallbacks callbacks) {
+    configurationLock.lock();
 
-    installed = true;
+    try {
+      Objects.requireNonNull(callbacks);
+      if (installed) {
+        throw new IllegalStateException("An OpenApi instance belongs to one application");
+      }
+
+      installed = true;
+    } finally {
+      configurationLock.unlock();
+    }
   }
 
   /**
@@ -251,15 +267,14 @@ public final class OpenApi
    * @return independent operation configurator
    */
   @Override
-  public synchronized OpenApiOperation configure(
-      Lifecycle endpoint, @Nullable OpenApiOperation inherited) {
-    requireMutable();
+  public OpenApiOperation configure(Lifecycle endpoint, @Nullable OpenApiOperation inherited) {
+    return withMutableConfiguration(() -> {
+      final var operation = new OpenApiOperation(this, inherited);
 
-    var operation = new OpenApiOperation(this, inherited);
+      endpoint.onRoute(route -> collect(route, operation));
 
-    endpoint.onRoute(route -> collect(route, operation));
-
-    return operation;
+      return operation;
+    });
   }
 
   /**
@@ -269,31 +284,56 @@ public final class OpenApi
    * @throws IllegalArgumentException if selected bindings cannot form an unambiguous document
    */
   @Override
-  public synchronized void beforeStart() {
-    requireMutable();
+  public void beforeStart() {
+    configurationLock.lock();
 
-    prepared = true;
+    try {
+      requireMutable();
 
-    var paths = new Paths();
-    var shapes = new LinkedHashMap<String, String>();
-    var identifiers = new HashSet<String>();
-    for (var binding : bindings) {
+      prepared = true;
+
+      final var paths = assemblePaths();
+
+      try {
+        final var bytes = serializeDocument(paths);
+        prepareInterfaces();
+        document.set(bytes);
+      } catch (IOException | JacksonException failure) {
+        throw new IllegalStateException("Cannot serialize OpenAPI document", failure);
+      }
+    } finally {
+      configurationLock.unlock();
+    }
+  }
+
+  /**
+   * Validates and assembles paths from the collected bindings while holding the configuration lock.
+   *
+   * @return paths for the document
+   * @throws IllegalArgumentException if the bindings cannot form an unambiguous document
+   */
+  private Paths assemblePaths() {
+    final var paths = new Paths();
+    final var shapes = new LinkedHashMap<String, String>();
+    final var identifiers = new HashSet<String>();
+    for (final var binding : bindings) {
       OpenApiValidation.security(binding.operation(), components);
-      var identifier = binding.operation().getOperationId();
+      final var identifier = binding.operation().getOperationId();
       if (identifier != null && !identifiers.add(identifier)) {
         throw new IllegalArgumentException("Duplicate OpenAPI operationId: " + identifier);
       }
 
-      var template = OpenApiPaths.normalize(binding.route().pathTemplate(), binding.operation());
-      var shape = template.replaceAll("\\{[^}]+}", "{}");
-      var previous = shapes.putIfAbsent(shape, template);
+      final var template =
+          OpenApiPaths.normalize(binding.route().pathTemplate(), binding.operation());
+      final var shape = template.replaceAll(PATH_PARAMETER_REGEX, HttpCharacters.CURLY_BRACES);
+      final var previous = shapes.putIfAbsent(shape, template);
       if (previous != null && !previous.equals(template)) {
         throw new IllegalArgumentException(
             "Conflicting OpenAPI path names: " + previous + " and " + template);
       }
 
-      var path = paths.computeIfAbsent(template, ignored -> new PathItem());
-      var method = PathItem.HttpMethod.valueOf(binding.route().method().value());
+      final var path = paths.computeIfAbsent(template, ignored -> new PathItem());
+      final var method = PathItem.HttpMethod.valueOf(binding.route().method().value());
       if (path.readOperationsMap().containsKey(method)) {
         throw new IllegalArgumentException(
             "Conflicting OpenAPI operation: " + method + " " + template);
@@ -302,31 +342,44 @@ public final class OpenApi
       path.operation(method, binding.operation());
     }
 
-    try {
-      var model = new OpenAPI().openapi("3.1.1").info(info).paths(paths).components(components);
-      if (!servers.isEmpty()) {
-        model.setServers(servers);
+    return paths;
+  }
+
+  /**
+   * Serializes the document and validates its references while holding the configuration lock.
+   *
+   * @param paths assembled document paths
+   * @return validated JSON bytes
+   */
+  private byte[] serializeDocument(Paths paths) {
+    final var model =
+        new OpenAPI().openapi(OPENAPI_VERSION).info(info).paths(paths).components(components);
+    if (!servers.isEmpty()) {
+      model.setServers(servers);
+    }
+
+    if (!tags.isEmpty()) {
+      model.setTags(tags);
+    }
+
+    final var bytes = Json31.mapper().writeValueAsBytes(model);
+    final var tree = Json31.mapper().readTree(bytes);
+    OpenApiValidation.references(tree, tree, false);
+    return bytes;
+  }
+
+  /**
+   * Prepares registered UI handlers from the shared assets while holding the configuration lock.
+   *
+   * @throws IOException if a bundled asset cannot be read
+   */
+  private void prepareInterfaces() throws IOException {
+    if (!interfaces.isEmpty()) {
+      final var css = OpenApiUi.asset(OpenApiUi.STYLESHEET_NAME);
+      final var bundle = OpenApiUi.asset(OpenApiUi.BUNDLE_NAME);
+      for (final var ui : interfaces) {
+        ui.prepare(css, bundle);
       }
-
-      if (!tags.isEmpty()) {
-        model.setTags(tags);
-      }
-
-      var bytes = Json31.mapper().writeValueAsBytes(model);
-      var tree = Json31.mapper().readTree(bytes);
-      OpenApiValidation.references(tree, tree, false);
-
-      if (!interfaces.isEmpty()) {
-        var css = OpenApiUi.asset("swagger-ui.css");
-        var bundle = OpenApiUi.asset("swagger-ui-bundle.js");
-        for (var ui : interfaces) {
-          ui.prepare(css, bundle);
-        }
-      }
-
-      document.set(bytes);
-    } catch (IOException | JacksonException failure) {
-      throw new IllegalStateException("Cannot serialize OpenAPI document", failure);
     }
   }
 
@@ -338,7 +391,7 @@ public final class OpenApi
    */
   public Handler handler() {
     return (ignoredRequest, response) -> {
-      var bytes = document.get();
+      final var bytes = document.get();
       if (bytes == null) {
         throw new IllegalStateException("OpenAPI document is not prepared");
       }
@@ -353,16 +406,49 @@ public final class OpenApi
    * @param route successful final binding
    * @param configuration this binding's operation configuration
    */
-  private synchronized void collect(RouteInfo route, OpenApiOperation configuration) {
-    requireMutable();
+  private void collect(RouteInfo route, OpenApiOperation configuration) {
+    configurationLock.lock();
 
-    if (!configuration.isHidden()) {
-      bindings.add(new Binding(route, configuration.snapshot()));
+    try {
+      requireMutable();
+
+      if (!configuration.isHidden()) {
+        bindings.add(new Binding(route, configuration.snapshot()));
+      }
+    } finally {
+      configurationLock.unlock();
     }
   }
 
   /**
-   * Rejects edits after startup preparation begins.
+   * Runs a configuration change under the lock after checking that configuration is mutable.
+   *
+   * @param action configuration validation and change
+   * @param <T> configuration result type
+   * @return result of the configuration change
+   */
+  private <T> T withMutableConfiguration(Supplier<T> action) {
+    configurationLock.lock();
+
+    try {
+      requireMutable();
+      return action.get();
+    } finally {
+      configurationLock.unlock();
+    }
+  }
+
+  /**
+   * Provides the lock shared by document and operation configuration.
+   *
+   * @return this document's configuration lock
+   */
+  ReentrantLock configurationLock() {
+    return configurationLock;
+  }
+
+  /**
+   * Rejects edits after startup preparation begins while the caller holds the configuration lock.
    *
    * @throws IllegalStateException if resources are already frozen
    */

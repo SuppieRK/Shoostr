@@ -65,15 +65,14 @@ class McpRefreshTest {
               .pollDelay(Duration.ZERO)
               .pollInterval(Duration.ofMillis(10))
               .atMost(Duration.ofSeconds(5))
-              .until(
-                  () -> {
-                    if (Thread.interrupted()) {
-                      throw new InterruptedException("The old expiry wait was interrupted");
-                    }
+              .until(() -> {
+                if (Thread.interrupted()) {
+                  throw new InterruptedException("The old expiry wait was interrupted");
+                }
 
-                    return Duration.ofNanos(System.nanoTime() - started).compareTo(initial) >= 0
-                        && !Instant.now().isBefore(target);
-                  });
+                return Duration.ofNanos(System.nanoTime() - started).compareTo(initial) >= 0
+                    && !Instant.now().isBefore(target);
+              });
           mcp.server().notifyToolsListChanged();
           var received = submitReceivedForRefreshedListener(readers, refreshedInput);
 
@@ -112,20 +111,19 @@ class McpRefreshTest {
 
   private HttpResponse<byte[]> sendInitializedRequestForRefreshedListener(TestServer test)
       throws IOException, InterruptedException {
-    return test.send(
-        request ->
-            request
-                .path("/mcp")
-                .method("POST")
-                .header("Content-Type", "application/json")
-                .header("Accept", "application/json, text/event-stream")
-                .body(
-                    """
-                    {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
-                      "protocolVersion":"2025-11-25","capabilities":{},
-                      "clientInfo":{"name":"refresh-fixture","version":"1.0"}}}
-                    """
-                        .getBytes(StandardCharsets.UTF_8)));
+    return test.send(request ->
+        request
+            .path("/mcp")
+            .method("POST")
+            .header("Content-Type", "application/json")
+            .header("Accept", "application/json, text/event-stream")
+            .body(
+                """
+                {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+                  "protocolVersion":"2025-11-25","capabilities":{},
+                  "clientInfo":{"name":"refresh-fixture","version":"1.0"}}}
+                """
+                    .getBytes(StandardCharsets.UTF_8)));
   }
 
   private HttpResponse<InputStream> sendOldGetRequestForRefreshedListener(
@@ -155,30 +153,28 @@ class McpRefreshTest {
 
   private Future<Object> submitOldEndedForRefreshedListener(
       ExecutorService readers, InputStream oldInput) {
-    return readers.submit(
-        () -> {
-          try {
-            oldInput.readAllBytes();
-          } catch (IOException ignoredFailure) {
-            // Either EOF or a transport failure ends the committed old stream.
-          }
+    return readers.submit(() -> {
+      try {
+        oldInput.readAllBytes();
+      } catch (IOException ignoredFailure) {
+        // Either EOF or a transport failure ends the committed old stream.
+      }
 
-          return null;
-        });
+      return null;
+    });
   }
 
   private Future<JSONRPCMessage> submitReceivedForRefreshedListener(
       ExecutorService readers, BufferedReader refreshedInput) {
-    return readers.submit(
-        () -> {
-          String line;
-          do {
-            line = refreshedInput.readLine();
+    return readers.submit(() -> {
+      String line;
+      do {
+        line = refreshedInput.readLine();
 
-            assertNotNull(line, "The refreshed stream must remain attached");
-          } while (!line.startsWith("data:"));
-          return McpSchema.deserializeJsonRpcMessage(
-              McpJsonDefaults.getMapper(), line.substring(5).strip());
-        });
+        assertNotNull(line, "The refreshed stream must remain attached");
+      } while (!line.startsWith("data:"));
+      return McpSchema.deserializeJsonRpcMessage(
+          McpJsonDefaults.getMapper(), line.substring(5).strip());
+    });
   }
 }

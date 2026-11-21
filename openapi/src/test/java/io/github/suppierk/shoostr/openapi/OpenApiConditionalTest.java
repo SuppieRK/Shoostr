@@ -30,45 +30,42 @@ class OpenApiConditionalTest {
       var app = new Shoostr();
 
       try (Closeable appCleanup = app::close) {
-        app.routes(
-            routes -> {
-              routes.path(
-                  "/api",
-                  group -> {
-                    group.get("/public", (ignored, ignoredResponse) -> {});
-                    group.when(
-                        () -> {
-                          calls.incrementAndGet();
+        app.routes(routes -> {
+          routes.path(
+              "/api",
+              group -> {
+                group.get("/public", (ignored, ignoredResponse) -> {});
+                group.when(
+                    () -> {
+                      calls.incrementAndGet();
 
-                          return available;
-                        },
-                        conditional ->
-                            conditional.path(
-                                "/nested",
-                                nested ->
-                                    nested.get(
-                                        "/private", (ignoredRequest, ignoredResponse) -> {})));
-                  },
-                  lifecycle -> {
-                    lifecycle.withExtension(docs).summary("Default");
-                    lifecycle.onRoute((method, path) -> facts.add(method.value() + " " + path));
-                  });
-              routes.get("/openapi.json", docs.handler());
-            });
+                      return available;
+                    },
+                    conditional ->
+                        conditional.path(
+                            "/nested",
+                            nested ->
+                                nested.get("/private", (ignoredRequest, ignoredResponse) -> {})));
+              },
+              lifecycle -> {
+                lifecycle.withExtension(docs).summary("Default");
+                lifecycle.onRoute((method, path) -> facts.add(method.value() + " " + path));
+              });
+          routes.get("/openapi.json", docs.handler());
+        });
         app.codec(codec)
-            .routes(
-                routes ->
-                    routes.when(
-                        () -> {
-                          calls.incrementAndGet();
+            .routes(routes ->
+                routes.when(
+                    () -> {
+                      calls.incrementAndGet();
 
-                          return available;
-                        },
-                        conditional ->
-                            conditional.get(
-                                "/typed",
-                                (ignoredTypedRequest, ignoredTypedResponse) -> {},
-                                lifecycle -> lifecycle.withExtension(docs).summary("Typed"))));
+                      return available;
+                    },
+                    conditional ->
+                        conditional.get(
+                            "/typed",
+                            (ignoredTypedRequest, ignoredTypedResponse) -> {},
+                            lifecycle -> lifecycle.withExtension(docs).summary("Typed"))));
 
         try (var test = TestServer.start(app)) {
           var document =

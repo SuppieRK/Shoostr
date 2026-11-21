@@ -10,7 +10,10 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
+import io.github.suppierk.shoostr.WebSocket.CloseHandler;
+import io.github.suppierk.shoostr.WebSocket.ConnectionHandler;
 import io.github.suppierk.shoostr.WebSocket.MessageHandler;
+import io.github.suppierk.shoostr.WebSocket.Typed;
 import io.github.suppierk.shoostr.testing.TestServer;
 import java.io.ByteArrayOutputStream;
 import java.io.Closeable;
@@ -24,6 +27,7 @@ import java.time.Duration;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -50,8 +54,9 @@ class TypedWebSocketTest {
   @ValueSource(booleans = {false, true})
   void suppliesTheSameTypedConnectionToOpeningTextObjectAndCloseCallbacks(boolean virtual)
       throws Exception {
-    var opened = new AtomicReference<TypedWebSocketConnection>();
-    var closed = new CompletableFuture<TypedWebSocketConnection>();
+    var opened = new AtomicReference<WebSocketConnection.Typed>();
+    var closed = new CompletableFuture<WebSocketConnection.Typed>();
+    var admitted = new CompletableFuture<String>();
     var configuredOptions = new Options();
     configuredOptions.setVirtualThreads(virtual);
 
@@ -59,7 +64,7 @@ class TypedWebSocketTest {
 
     var app =
         createAppForSuppliesTheSameTypedConnectionToOpeningTextObjectAndCloseCallbacks(
-            base, opened, closed);
+            base, opened, closed, admitted);
 
     try (var server = TestServer.start(app);
         var client = HttpClient.newHttpClient()) {
@@ -67,6 +72,7 @@ class TypedWebSocketTest {
       var socket = connect(client, server, "/callbacks", messages);
 
       try {
+        assertEquals("/callbacks", admitted.get(3, TimeUnit.SECONDS));
         assertArrayEquals(
             new byte[] {111, 112, 101, 110}, messages.binary.poll(3, TimeUnit.SECONDS));
 
@@ -90,42 +96,39 @@ class TypedWebSocketTest {
 
   private Shoostr createAppForSuppliesTheSameTypedConnectionToOpeningTextObjectAndCloseCallbacks(
       Shoostr base,
-      AtomicReference<TypedWebSocketConnection> opened,
-      CompletableFuture<TypedWebSocketConnection> closed) {
+      AtomicReference<WebSocketConnection.Typed> opened,
+      CompletableFuture<WebSocketConnection.Typed> closed,
+      CompletableFuture<String> admitted) {
     return base.codec(new TextCodec())
-        .routes(
-            routes ->
-                routes.websocket(
-                    "/callbacks",
-                    socket ->
-                        socket
-                            .beforeUpgrade(
-                                (request, response) -> {
-                                  TypedRequest typedRequest = request;
-                                  TypedResponse typedResponse = response;
-                                  typedResponse.setHeader("X-Path", typedRequest.path());
-                                })
-                            .onOpen(
-                                connection -> {
-                                  opened.set(connection);
-                                  connection.sendObject("open");
-                                })
-                            .onText(
-                                (connection, text) -> {
-                                  assertSame(opened.get(), connection);
+        .routes(routes ->
+            routes.websocket(
+                "/callbacks",
+                socket ->
+                    socket
+                        .beforeUpgrade((request, response) -> {
+                          Request.Typed typedRequest = request;
+                          Response.Typed typedResponse = response;
+                          typedResponse.setHeader("X-Path", typedRequest.path());
+                          admitted.complete(typedRequest.path());
+                        })
+                        .onOpen(connection -> {
+                          opened.set(connection);
+                          connection.sendObject("open");
+                        })
+                        .onText((connection, text) -> {
+                          assertSame(opened.get(), connection);
 
-                                  connection.sendObject(text);
-                                })
-                            .onObject(
-                                String.class,
-                                (connection, value) -> {
-                                  assertSame(opened.get(), connection);
+                          connection.sendObject(text);
+                        })
+                        .onObject(
+                            String.class,
+                            (connection, value) -> {
+                              assertSame(opened.get(), connection);
 
-                                  connection.sendObject(value);
-                                })
-                            .onClose(
-                                (connection, ignored, ignoredString) ->
-                                    closed.complete(connection))));
+                              connection.sendObject(value);
+                            })
+                        .onClose(
+                            (connection, ignored, ignoredString) -> closed.complete(connection))));
   }
 
   @Test
@@ -153,14 +156,13 @@ class TypedWebSocketTest {
   private Shoostr createAppForDecodesFragmentedBinaryObjectsAndEncodesBinaryReplies() {
     return new Shoostr()
         .codec(new TextCodec())
-        .routes(
-            routes ->
-                routes.websocket(
-                    "/objects",
-                    socket ->
-                        socket.onObject(
-                            String.class,
-                            (connection, value) -> connection.sendObject("reply:" + value))));
+        .routes(routes ->
+            routes.websocket(
+                "/objects",
+                socket ->
+                    socket.onObject(
+                        String.class,
+                        (connection, value) -> connection.sendObject("reply:" + value))));
   }
 
   @ParameterizedTest
@@ -202,24 +204,23 @@ class TypedWebSocketTest {
       TextCodec codec, boolean objectLast, MessageHandler<byte[]> raw) {
     return new Shoostr()
         .codec(codec)
-        .routes(
-            routes ->
-                routes.websocket(
-                    "/replace",
-                    socket -> {
-                      if (objectLast) {
-                        socket
-                            .onBinary(raw)
-                            .onObject(String.class, TypedWebSocketConnection::sendObject);
-                      } else {
-                        socket
-                            .onObject(
-                                String.class,
-                                (ignoredTypedWebSocketConnection, ignoredString) ->
-                                    fail("Replaced object callback"))
-                            .onBinary(raw);
-                      }
-                    }));
+        .routes(routes ->
+            routes.websocket(
+                "/replace",
+                socket -> {
+                  if (objectLast) {
+                    socket
+                        .onBinary(raw)
+                        .onObject(String.class, WebSocketConnection.Typed::sendObject);
+                  } else {
+                    socket
+                        .onObject(
+                            String.class,
+                            (ignoredTypedWebSocketConnection, ignoredString) ->
+                                fail("Replaced object callback"))
+                        .onBinary(raw);
+                  }
+                }));
   }
 
   @Test
@@ -260,17 +261,15 @@ class TypedWebSocketTest {
       TextCodec codec) {
     return new Shoostr()
         .codec(codec)
-        .routes(
-            routes ->
-                routes.websocket(
-                    "/bytes",
-                    socket ->
-                        socket.onOpen(
-                            connection -> {
-                              connection.send("raw");
-                              connection.send(new byte[] {1, 2});
-                              connection.sendObject("encoded even though this is a String");
-                            })));
+        .routes(routes ->
+            routes.websocket(
+                "/bytes",
+                socket ->
+                    socket.onOpen(connection -> {
+                      connection.send("raw");
+                      connection.send(new byte[] {1, 2});
+                      connection.sendObject("encoded even though this is a String");
+                    })));
   }
 
   @Test
@@ -320,24 +319,21 @@ class TypedWebSocketTest {
       CompletableFuture<Throwable> observed) {
     return new Shoostr()
         .codec(codec)
-        .routes(
-            routes ->
-                routes.websocket(
-                    "/failure",
-                    socket ->
-                        socket
-                            .onObject(
-                                String.class,
-                                (ignoredTypedWebSocketConnection, ignoredString) ->
-                                    callbacks.incrementAndGet())
-                            .onError(
-                                (ignoredTypedWebSocketConnection, error) -> {
-                                  order.add("error");
-                                  observed.complete(error);
-                                })
-                            .onClose(
-                                (ignoredTypedWebSocketConnection, ignoredIndex, ignoredString) ->
-                                    order.add("close"))));
+        .routes(routes ->
+            routes.websocket(
+                "/failure",
+                socket ->
+                    socket
+                        .onObject(
+                            String.class,
+                            (ignoredTypedWebSocketConnection, ignoredString) ->
+                                callbacks.incrementAndGet())
+                        .onError((ignoredTypedWebSocketConnection, error) -> {
+                          order.add("error");
+                          observed.complete(error);
+                        })
+                        .onClose((ignoredTypedWebSocketConnection, ignoredIndex, ignoredString) ->
+                            order.add("close"))));
   }
 
   @Test
@@ -381,20 +377,17 @@ class TypedWebSocketTest {
       TextCodec codec, IOException failure) {
     return new Shoostr()
         .codec(codec)
-        .routes(
-            routes ->
-                routes.websocket(
-                    "/recover",
-                    socket ->
-                        socket.onText(
-                            (connection, text) -> {
-                              assertSame(
-                                  failure,
-                                  assertThrows(
-                                      IOException.class, () -> connection.sendObject(text)));
+        .routes(routes ->
+            routes.websocket(
+                "/recover",
+                socket ->
+                    socket.onText((connection, text) -> {
+                      assertSame(
+                          failure,
+                          assertThrows(IOException.class, () -> connection.sendObject(text)));
 
-                              connection.send("recovered");
-                            })));
+                      connection.send("recovered");
+                    })));
   }
 
   @ParameterizedTest
@@ -447,39 +440,38 @@ class TypedWebSocketTest {
       CompletableFuture<Boolean> interrupted) {
     return new Shoostr()
         .codec(codec)
-        .routes(
-            routes ->
-                routes.websocket(
-                    "/closed",
-                    socket ->
-                        socket.onOpen(
-                            connection -> {
-                              if (closed) {
-                                connection.close();
-                              }
+        .routes(routes ->
+            routes.websocket(
+                "/closed",
+                socket ->
+                    socket.onOpen(connection -> {
+                      if (closed) {
+                        connection.close();
+                      }
 
-                              // Native close timing must not decide the admission result.
-                              Thread.currentThread().interrupt();
+                      // Native close timing must not decide the admission result.
+                      Thread.currentThread().interrupt();
 
-                              try {
-                                connection.sendObject("late");
-                                checked.complete(null);
-                              } catch (Exception failure) {
-                                checked.complete(failure);
-                              } finally {
-                                interrupted.complete(Thread.interrupted());
-                              }
-                            })));
+                      try {
+                        connection.sendObject("late");
+                        checked.complete(null);
+                      } catch (Exception failure) {
+                        checked.complete(failure);
+                      } finally {
+                        interrupted.complete(Thread.interrupted());
+                      }
+                    })));
   }
 
   @Test
   void allowsCloseDuringEncodingAndRejectsTheEncodedBytesBeforeSubmission() throws Exception {
     var encoding = new CountDownLatch(1);
     var release = new CountDownLatch(1);
-    var opened = new CompletableFuture<TypedWebSocketConnection>();
+    var opened = new CompletableFuture<WebSocketConnection.Typed>();
+    var calls = new AtomicInteger();
     var codec =
         createCodecForAllowsCloseDuringEncodingAndRejectsTheEncodedBytesBeforeSubmission(
-            encoding, release);
+            calls, encoding, release);
     var app =
         new Shoostr()
             .codec(codec)
@@ -500,6 +492,14 @@ class TypedWebSocketTest {
 
         assertTrue(encoding.await(3, TimeUnit.SECONDS));
 
+        var queuedSend = new CompletableFuture<Void>();
+        var queued =
+            createThirdForSerializesObjectAndRawSendsAndAllowsInterruptionOfAnEstablishedWaiter(
+                connection, queuedSend);
+        await()
+            .atMost(Duration.ofSeconds(3))
+            .until(() -> queued.getState() == Thread.State.WAITING);
+
         connection.close();
 
         assertFalse(connection.isOpen());
@@ -508,6 +508,10 @@ class TypedWebSocketTest {
         release.countDown();
         send.get(3, TimeUnit.SECONDS);
 
+        var queuedFailure =
+            assertThrows(ExecutionException.class, () -> queuedSend.get(3, TimeUnit.SECONDS));
+        assertInstanceOf(IOException.class, queuedFailure.getCause());
+        assertEquals(1, calls.get());
         assertTrue(messages.binary.isEmpty());
       } finally {
         release.countDown();
@@ -518,10 +522,11 @@ class TypedWebSocketTest {
 
   private TextCodec
       createCodecForAllowsCloseDuringEncodingAndRejectsTheEncodedBytesBeforeSubmission(
-          CountDownLatch encoding, CountDownLatch release) {
+          AtomicInteger calls, CountDownLatch encoding, CountDownLatch release) {
     return new TextCodec() {
       @Override
       public byte[] write(Object value) throws Exception {
+        calls.incrementAndGet();
         encoding.countDown();
 
         assertTrue(release.await(5, TimeUnit.SECONDS));
@@ -538,8 +543,13 @@ class TypedWebSocketTest {
 
       try (Closeable appCleanup = app::close) {
         var routes = app.codec(new TextCodec()).routes();
-        var saved = new AtomicReference<TypedWebSocket>();
-        routes.websocket("/frozen", saved::set);
+        var saved = new AtomicReference<Typed>();
+        routes.websocket(
+            "/frozen",
+            socket -> {
+              assertFluentCallbackRegistration(socket);
+              saved.set(socket);
+            });
         var socket = saved.get();
 
         assertThrows(
@@ -584,6 +594,28 @@ class TypedWebSocketTest {
         routes.websocket("/retry", events -> events.onText(WebSocketConnection::send));
       }
     }
+  }
+
+  private void assertFluentCallbackRegistration(Typed socket) {
+    Handler admission = (request, response) -> {};
+    assertSame(socket, socket.beforeUpgrade(admission));
+
+    ConnectionHandler opening = connection -> {};
+    assertSame(socket, socket.onOpen(opening));
+
+    MessageHandler<String> text = (connection, message) -> {};
+    assertSame(socket, socket.onText(text));
+
+    MessageHandler<byte[]> binary = (connection, bytes) -> {};
+    assertSame(socket, socket.onBinary(binary));
+    assertSame(socket, socket.onBinary((connection, bytes) -> {}));
+
+    MessageHandler<Throwable> error = (connection, failure) -> {};
+    assertSame(socket, socket.onError(error));
+
+    CloseHandler close = (connection, code, reason) -> {};
+    assertSame(socket, socket.onClose(close));
+    assertSame(socket, socket.onClose((connection, code, reason) -> {}));
   }
 
   @ParameterizedTest
@@ -634,32 +666,29 @@ class TypedWebSocketTest {
       TextCodec codec, boolean decoding, CompletableFuture<Throwable> observed) {
     return new Shoostr()
         .codec(codec)
-        .routes(
-            routes ->
-                routes.websocket(
-                    "/null-result",
-                    socket ->
-                        socket
-                            .onOpen(
-                                connection -> {
-                                  if (!decoding) {
-                                    connection.sendObject("start");
-                                  }
-                                })
-                            .onObject(
-                                String.class,
-                                (ignoredTypedWebSocketConnection, ignoredString) ->
-                                    fail("Null result must not reach the callback"))
-                            .onError(
-                                (ignoredTypedWebSocketConnection, failure) ->
-                                    observed.complete(failure))));
+        .routes(routes ->
+            routes.websocket(
+                "/null-result",
+                socket ->
+                    socket
+                        .onOpen(connection -> {
+                          if (!decoding) {
+                            connection.sendObject("start");
+                          }
+                        })
+                        .onObject(
+                            String.class,
+                            (ignoredTypedWebSocketConnection, ignoredString) ->
+                                fail("Null result must not reach the callback"))
+                        .onError((ignoredTypedWebSocketConnection, failure) ->
+                            observed.complete(failure))));
   }
 
   @Test
   void serializesObjectAndRawSendsAndAllowsInterruptionOfAnEstablishedWaiter() throws Exception {
     var encoding = new CountDownLatch(1);
     var release = new CountDownLatch(1);
-    var opened = new CompletableFuture<TypedWebSocketConnection>();
+    var opened = new CompletableFuture<WebSocketConnection.Typed>();
     var calls = new AtomicInteger();
     var codec =
         createCodecForSerializesObjectAndRawSendsAndAllowsInterruptionOfAnEstablishedWaiter(
@@ -748,7 +777,7 @@ class TypedWebSocketTest {
   }
 
   private Shoostr createAppForSerializesObjectAndRawSendsAndAllowsInterruptionOfAnEstablishedWaiter(
-      TextCodec codec, CompletableFuture<TypedWebSocketConnection> opened) {
+      TextCodec codec, CompletableFuture<WebSocketConnection.Typed> opened) {
     return new Shoostr()
         .codec(codec)
         .routes(
@@ -757,59 +786,55 @@ class TypedWebSocketTest {
 
   private Future<Boolean>
       submitFirstForSerializesObjectAndRawSendsAndAllowsInterruptionOfAnEstablishedWaiter(
-          ExecutorService producers, TypedWebSocketConnection connection) {
-    return producers.submit(
-        () -> {
-          connection.sendObject("first");
+          ExecutorService producers, WebSocketConnection.Typed connection) {
+    return producers.submit(() -> {
+      connection.sendObject("first");
 
-          return true;
-        });
+      return true;
+    });
   }
 
   private Thread
       createRawSenderForSerializesObjectAndRawSendsAndAllowsInterruptionOfAnEstablishedWaiter(
-          TypedWebSocketConnection connection, CompletableFuture<Void> rawSent) {
+          WebSocketConnection.Typed connection, CompletableFuture<Void> rawSent) {
     return Thread.ofVirtual()
-        .start(
-            () -> {
-              try {
-                connection.send("raw");
-                rawSent.complete(null);
-              } catch (Exception failure) {
-                rawSent.completeExceptionally(failure);
-              }
-            });
+        .start(() -> {
+          try {
+            connection.send("raw");
+            rawSent.complete(null);
+          } catch (Exception failure) {
+            rawSent.completeExceptionally(failure);
+          }
+        });
   }
 
   private Thread
       createThirdForSerializesObjectAndRawSendsAndAllowsInterruptionOfAnEstablishedWaiter(
-          TypedWebSocketConnection connection, CompletableFuture<Void> thirdSent) {
+          WebSocketConnection.Typed connection, CompletableFuture<Void> thirdSent) {
     return Thread.ofVirtual()
-        .start(
-            () -> {
-              try {
-                connection.sendObject("third");
-                thirdSent.complete(null);
-              } catch (Exception failure) {
-                thirdSent.completeExceptionally(failure);
-              }
-            });
+        .start(() -> {
+          try {
+            connection.sendObject("third");
+            thirdSent.complete(null);
+          } catch (Exception failure) {
+            thirdSent.completeExceptionally(failure);
+          }
+        });
   }
 
   private Thread
       createSecondForSerializesObjectAndRawSendsAndAllowsInterruptionOfAnEstablishedWaiter(
-          TypedWebSocketConnection connection, CompletableFuture<Void> interrupted) {
+          WebSocketConnection.Typed connection, CompletableFuture<Void> interrupted) {
     return Thread.ofVirtual()
-        .start(
-            () -> {
-              try {
-                assertThrows(InterruptedException.class, () -> connection.sendObject("second"));
+        .start(() -> {
+          try {
+            assertThrows(InterruptedException.class, () -> connection.sendObject("second"));
 
-                interrupted.complete(null);
-              } catch (Throwable failure) {
-                interrupted.completeExceptionally(failure);
-              }
-            });
+            interrupted.complete(null);
+          } catch (Throwable failure) {
+            interrupted.completeExceptionally(failure);
+          }
+        });
   }
 
   private static class TextCodec implements Codec {

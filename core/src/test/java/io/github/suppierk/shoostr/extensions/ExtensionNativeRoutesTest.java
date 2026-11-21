@@ -39,31 +39,29 @@ class ExtensionNativeRoutesTest {
 
       try (Closeable appCleanup = app::close;
           var client = HttpClient.newHttpClient()) {
-        app.routes(
-            routes ->
-                routes.path(
-                    "/api",
-                    group ->
-                        group.when(
-                            enabled::get,
-                            conditional -> {
-                              conditional.sse(
-                                  "/events",
-                                  (ignored, response) -> response.startEventStream().send("hello"));
-                              conditional.websocket(
-                                  "/socket",
-                                  (ignoredRequest, ignoredServerUpgradeResponse) ->
-                                      new Session.Listener.AutoDemanding() {});
-                              conditional.classpathResources("/files", "/");
-                            }),
-                    lifecycle -> {
-                      lifecycle.withExtension(auth);
-                      lifecycle.beforeRouteHandler(
-                          (request, response) ->
-                              response.setHeader(
-                                  "X-Principal", request.principal().orElseThrow().getName()));
-                      lifecycle.onRoute((method, path) -> facts.add(method.value() + " " + path));
-                    }));
+        app.routes(routes ->
+            routes.path(
+                "/api",
+                group ->
+                    group.when(
+                        enabled::get,
+                        conditional -> {
+                          conditional.sse(
+                              "/events",
+                              (ignored, response) -> response.startEventStream().send("hello"));
+                          conditional.websocket(
+                              "/socket",
+                              (ignoredRequest, ignoredServerUpgradeResponse) ->
+                                  new Session.Listener.AutoDemanding() {});
+                          conditional.classpathResources("/files", "/");
+                        }),
+                lifecycle -> {
+                  lifecycle.withExtension(auth);
+                  lifecycle.beforeRouteHandler((request, response) ->
+                      response.setHeader(
+                          "X-Principal", request.principal().orElseThrow().getName()));
+                  lifecycle.onRoute((method, path) -> facts.add(method.value() + " " + path));
+                }));
 
         try (var test = TestServer.start(app)) {
           assertEquals(List.of("GET /api/events"), facts);

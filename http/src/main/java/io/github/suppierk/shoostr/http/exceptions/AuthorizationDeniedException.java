@@ -1,5 +1,6 @@
 package io.github.suppierk.shoostr.http.exceptions;
 
+import io.github.suppierk.shoostr.http.HttpCharacters;
 import java.io.Serial;
 import java.util.Objects;
 
@@ -23,7 +24,10 @@ public final class AuthorizationDeniedException extends ForbiddenException {
   public AuthorizationDeniedException(String challenge) {
     var value = Objects.requireNonNull(challenge);
     if (value.isBlank()
-        || value.chars().anyMatch(character -> character < 0x20 || character > 0x7e)) {
+        || value
+            .chars()
+            .anyMatch(character ->
+                character < HttpCharacters.SPACE || character > HttpCharacters.TILDE)) {
       throw new IllegalArgumentException("Invalid authorization challenge");
     }
 

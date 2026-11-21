@@ -25,6 +25,7 @@ import org.jspecify.annotations.Nullable;
 public record Cors(CorsPolicy policy)
     implements ApplicationExtension<Cors.Configuration>, RouteExtension<Cors.Configuration> {
   static final Map<String, String> OPTIONS_VARIATION = optionsVariation();
+
   private static final Map<String, String> VARIATION =
       Map.of(HttpHeaders.VARY.value(), HttpHeaders.ORIGIN.value());
 
@@ -45,7 +46,7 @@ public record Cors(CorsPolicy policy)
    */
   static void validatePreflight(Request request) {
     validatedOrigin(request.headers(HttpHeaders.ORIGIN.value()));
-    var methods = request.headers(HttpHeaders.ACCESS_CONTROL_REQUEST_METHOD.value());
+    final var methods = request.headers(HttpHeaders.ACCESS_CONTROL_REQUEST_METHOD.value());
     if (methods.size() != 1) {
       throw new BadRequestException();
     }
@@ -65,19 +66,19 @@ public record Cors(CorsPolicy policy)
    * @throws ForbiddenException if cross-origin permissions are denied
    */
   static boolean prepare(CorsPolicy policy, Request request, Response response) {
-    boolean options = HttpMethods.OPTIONS.value().equals(request.method());
-    var variation = options ? OPTIONS_VARIATION : VARIATION;
+    final var options = HttpMethods.OPTIONS.value().equals(request.method());
+    final var variation = options ? OPTIONS_VARIATION : VARIATION;
     response.corsHeaders(variation);
 
-    var incomingOrigins = request.headers(HttpHeaders.ORIGIN.value());
+    final var incomingOrigins = request.headers(HttpHeaders.ORIGIN.value());
     if (incomingOrigins.isEmpty()) {
       return false;
     }
 
-    var origin = validatedOrigin(incomingOrigins);
+    final var origin = validatedOrigin(incomingOrigins);
 
-    var requestedMethods = request.headers(HttpHeaders.ACCESS_CONTROL_REQUEST_METHOD.value());
-    boolean preflight = options && !requestedMethods.isEmpty();
+    final var requestedMethods = request.headers(HttpHeaders.ACCESS_CONTROL_REQUEST_METHOD.value());
+    final var preflight = options && !requestedMethods.isEmpty();
     if (preflight && requestedMethods.size() != 1) {
       throw new BadRequestException();
     }
@@ -86,7 +87,7 @@ public record Cors(CorsPolicy policy)
       return false;
     }
 
-    var method = preflight ? requestedMethods.getFirst() : request.method();
+    final var method = preflight ? requestedMethods.getFirst() : request.method();
     validateToken(method);
     if (!policy.origins().contains(origin)
         && !policy.origins().contains(HttpCharacters.ASTERISK_STRING)) {
@@ -98,7 +99,7 @@ public record Cors(CorsPolicy policy)
       throw new ForbiddenException();
     }
 
-    Map<String, String> fields = new HashMap<>(variation);
+    final var fields = new HashMap<>(variation);
     fields.put(
         HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN.value(),
         policy.origins().contains(HttpCharacters.ASTERISK_STRING)
@@ -115,7 +116,7 @@ public record Cors(CorsPolicy policy)
   }
 
   /**
-   * Builds the preflight variation fields once before any request is served.
+   * Lists the request fields that affect a preflight response.
    *
    * @return immutable preflight variation
    */
@@ -142,7 +143,7 @@ public record Cors(CorsPolicy policy)
       throw new BadRequestException();
     }
 
-    var origin = incomingOrigins.getFirst();
+    final var origin = incomingOrigins.getFirst();
 
     try {
       Origins.validateOrigin(origin);
@@ -169,7 +170,7 @@ public record Cors(CorsPolicy policy)
       String method,
       boolean preflight) {
     if (preflight) {
-      var requestedHeaders = requestedHeaders(policy, request);
+      final var requestedHeaders = requestedHeaders(policy, request);
       fields.put(HttpHeaders.ACCESS_CONTROL_ALLOW_METHODS.value(), method);
       if (!requestedHeaders.isEmpty()) {
         fields.put(
@@ -194,8 +195,8 @@ public record Cors(CorsPolicy policy)
    * @throws ForbiddenException if a requested header is not allowed
    */
   private static Set<String> requestedHeaders(CorsPolicy policy, Request request) {
-    var names = validateRequestedHeaders(request);
-    for (var name : names) {
+    final var names = validateRequestedHeaders(request);
+    for (final var name : names) {
       if (!policy.allowedHeaders().contains(HttpHeaders.of(HttpCharacters.ASTERISK_STRING))
           && !policy.allowedHeaders().contains(HttpHeaders.of(name))) {
         throw new ForbiddenException();
@@ -212,11 +213,11 @@ public record Cors(CorsPolicy policy)
    * @throws BadRequestException if preflight fields are malformed
    */
   private static Set<String> validateRequestedHeaders(Request request) {
-    var values = request.headers(HttpHeaders.ACCESS_CONTROL_REQUEST_HEADERS.value());
-    var names = new TreeSet<String>();
-    for (var value : values) {
-      for (var token : value.split(HttpCharacters.COMMA_SIGN_STRING, -1)) {
-        var name = token.trim();
+    final var values = request.headers(HttpHeaders.ACCESS_CONTROL_REQUEST_HEADERS.value());
+    final var names = new TreeSet<String>();
+    for (final var value : values) {
+      for (final var token : value.split(HttpCharacters.COMMA_SIGN_STRING, -1)) {
+        final var name = token.trim();
         if (name.isEmpty()) {
           continue;
         }
@@ -292,7 +293,7 @@ public record Cors(CorsPolicy policy)
      */
     public Configuration policy(CorsPolicy contribution) {
       endpoint.requireMutable();
-      var combined = new CorsPolicy(Objects.requireNonNull(contribution));
+      final var combined = new CorsPolicy(Objects.requireNonNull(contribution));
       endpoint.cors(cors, combined);
 
       policy = combined;

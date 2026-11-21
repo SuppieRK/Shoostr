@@ -40,37 +40,34 @@ class McpCompletedDeadlineTest {
     var mcp =
         createMcpForCompletedStreamCannotInterruptItsReusedWorkerAtTheOldDeadline(owner, expiry);
     var app = new Shoostr();
-    app.routes(
-        routes -> {
-          routes.path("/mcp", group -> mcp.routes(group, selected));
-          routes.get(
-              "/occupy",
-              selected,
-              (ignoredRequest, response) -> {
-                var target = Objects.requireNonNull(expiry.get()).plusMillis(100);
-                var started = System.nanoTime();
-                var initial = Duration.between(Instant.now(), target);
-                await("the reused worker reaches the verified expiry without interruption")
-                    .pollInSameThread()
-                    .pollDelay(Duration.ZERO)
-                    .pollInterval(Duration.ofMillis(10))
-                    .atMost(Duration.ofSeconds(5))
-                    .until(
-                        () -> {
-                          if (Thread.interrupted()) {
-                            throw new InterruptedException("The reused worker was interrupted");
-                          }
+    app.routes(routes -> {
+      routes.path("/mcp", group -> mcp.routes(group, selected));
+      routes.get(
+          "/occupy",
+          selected,
+          (ignoredRequest, response) -> {
+            var target = Objects.requireNonNull(expiry.get()).plusMillis(100);
+            var started = System.nanoTime();
+            var initial = Duration.between(Instant.now(), target);
+            await("the reused worker reaches the verified expiry without interruption")
+                .pollInSameThread()
+                .pollDelay(Duration.ZERO)
+                .pollInterval(Duration.ofMillis(10))
+                .atMost(Duration.ofSeconds(5))
+                .until(() -> {
+                  if (Thread.interrupted()) {
+                    throw new InterruptedException("The reused worker was interrupted");
+                  }
 
-                          return Duration.ofNanos(System.nanoTime() - started).compareTo(initial)
-                                  >= 0
-                              && !Instant.now().isBefore(target);
-                        });
-                response.text(
-                    (Thread.currentThread() == owner.get())
-                        + ":"
-                        + Thread.currentThread().isInterrupted());
-              });
-        });
+                  return Duration.ofNanos(System.nanoTime() - started).compareTo(initial) >= 0
+                      && !Instant.now().isBefore(target);
+                });
+            response.text(
+                (Thread.currentThread() == owner.get())
+                    + ":"
+                    + Thread.currentThread().isInterrupted());
+          });
+    });
 
     try (selected;
         var test = TestServer.start(app)) {
@@ -120,39 +117,36 @@ class McpCompletedDeadlineTest {
   private HttpResponse<byte[]>
       sendInitializedRequestForCompletedStreamCannotInterruptItsReusedWorkerAtTheOldDeadline(
           TestServer test) throws IOException, InterruptedException {
-    return test.send(
-        request ->
-            request
-                .path("/mcp")
-                .method("POST")
-                .header("Content-Type", "application/json")
-                .header("Accept", "application/json, text/event-stream")
-                .body(
-                    """
-                    {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
-                      "protocolVersion":"2025-11-25","capabilities":{},
-                      "clientInfo":{"name":"completed-deadline","version":"1.0"}}}
-                    """
-                        .getBytes(StandardCharsets.UTF_8)));
+    return test.send(request ->
+        request
+            .path("/mcp")
+            .method("POST")
+            .header("Content-Type", "application/json")
+            .header("Accept", "application/json, text/event-stream")
+            .body(
+                """
+                {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+                  "protocolVersion":"2025-11-25","capabilities":{},
+                  "clientInfo":{"name":"completed-deadline","version":"1.0"}}}
+                """
+                    .getBytes(StandardCharsets.UTF_8)));
   }
 
   private HttpResponse<byte[]>
       sendCompletedRequestForCompletedStreamCannotInterruptItsReusedWorkerAtTheOldDeadline(
           TestServer test, HttpResponse<byte[]> initialized)
           throws IOException, InterruptedException {
-    return test.send(
-        request ->
-            request
-                .path("/mcp")
-                .method("POST")
-                .header("Content-Type", "application/json")
-                .header("Accept", "application/json, text/event-stream")
-                .header(
-                    "Mcp-Session-Id",
-                    initialized.headers().firstValue("Mcp-Session-Id").orElseThrow())
-                .header("X-Expiring", "true")
-                .body(
-                    "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"ping\"}"
-                        .getBytes(StandardCharsets.UTF_8)));
+    return test.send(request ->
+        request
+            .path("/mcp")
+            .method("POST")
+            .header("Content-Type", "application/json")
+            .header("Accept", "application/json, text/event-stream")
+            .header(
+                "Mcp-Session-Id", initialized.headers().firstValue("Mcp-Session-Id").orElseThrow())
+            .header("X-Expiring", "true")
+            .body(
+                "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"ping\"}"
+                    .getBytes(StandardCharsets.UTF_8)));
   }
 }

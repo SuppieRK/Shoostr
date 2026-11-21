@@ -58,14 +58,13 @@ class BorrowedExecutorShutdownTest {
 
         try (Closeable secondCleanup = second::close) {
           first.modifyServer(server -> server.setStopTimeout(0));
-          first.afterRequest(
-              outcome -> {
-                if ("/queued".equals(outcome.routePattern())) {
-                  queuedOutcome.complete(outcome);
-                } else {
-                  activeOutcome.complete(outcome);
-                }
-              });
+          first.afterRequest(outcome -> {
+            if ("/queued".equals(outcome.routePattern())) {
+              queuedOutcome.complete(outcome);
+            } else {
+              activeOutcome.complete(outcome);
+            }
+          });
           first
               .routes()
               .get(
@@ -147,20 +146,17 @@ class BorrowedExecutorShutdownTest {
 
   private Future<Boolean> submitBlockedUnrelatedTask(
       ThreadPoolExecutor workers, CountDownLatch blockerEntered, CountDownLatch releaseBlocker) {
-    return workers.submit(
-        () -> {
-          blockerEntered.countDown();
+    return workers.submit(() -> {
+      blockerEntered.countDown();
 
-          return releaseBlocker.await(10, TimeUnit.SECONDS);
-        });
+      return releaseBlocker.await(10, TimeUnit.SECONDS);
+    });
   }
 
   private Future<HttpResponse<String>> submitSecondApplicationRequest(
       ExecutorService drivers, TestServer secondTest) {
-    return drivers.submit(
-        () ->
-            secondTest.send(
-                request -> request.path("/second"), HttpResponse.BodyHandlers.ofString()));
+    return drivers.submit(() ->
+        secondTest.send(request -> request.path("/second"), HttpResponse.BodyHandlers.ofString()));
   }
 
   @Test
@@ -183,11 +179,10 @@ class BorrowedExecutorShutdownTest {
 
       try (Closeable appCleanup = app::close) {
         app.modifyServer(server -> server.setStopTimeout(0));
-        app.afterRequest(
-            outcome -> {
-              completions.incrementAndGet();
-              completed.complete(outcome);
-            });
+        app.afterRequest(outcome -> {
+          completions.incrementAndGet();
+          completed.complete(outcome);
+        });
         app.routes()
             .get("/racing", workers, (ignoredRequest, ignoredResponse) -> invoked.set(true));
 
@@ -258,11 +253,10 @@ class BorrowedExecutorShutdownTest {
 
       try (Closeable appCleanup1 = app::close) {
         app.modifyServer(server -> server.setStopTimeout(0));
-        app.afterRequest(
-            outcome -> {
-              completions.incrementAndGet();
-              finished.complete(outcome);
-            });
+        app.afterRequest(outcome -> {
+          completions.incrementAndGet();
+          finished.complete(outcome);
+        });
         app.routes()
             .get(
                 "/active",
@@ -395,17 +389,16 @@ class BorrowedExecutorShutdownTest {
           CountDownLatch helped,
           CountDownLatch release,
           AtomicBoolean interrupted) {
-    return workers.submit(
-        () -> {
-          helpedThread.complete(Thread.currentThread());
-          helped.countDown();
+    return workers.submit(() -> {
+      helpedThread.complete(Thread.currentThread());
+      helped.countDown();
 
-          try {
-            return release.await(10, TimeUnit.SECONDS);
-          } catch (InterruptedException failure) {
-            interrupted.set(true);
-            throw failure;
-          }
-        });
+      try {
+        return release.await(10, TimeUnit.SECONDS);
+      } catch (InterruptedException failure) {
+        interrupted.set(true);
+        throw failure;
+      }
+    });
   }
 }

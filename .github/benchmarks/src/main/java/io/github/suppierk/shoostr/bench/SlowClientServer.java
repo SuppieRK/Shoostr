@@ -10,12 +10,13 @@ import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.ReentrantLock;
 import org.eclipse.jetty.server.Connector;
 import org.eclipse.jetty.server.ServerConnector;
 
 /** Loopback-only fixture for finite slow-client resource-safety diagnostics. */
 public final class SlowClientServer implements AutoCloseable {
-  private final Object phase;
+  private final ReentrantLock phaseLock;
   private int activeBodies;
   private int activeBlocked;
   private int activeExchanges;
@@ -33,41 +34,46 @@ public final class SlowClientServer implements AutoCloseable {
    * @param port requested loopback port, or zero for an ephemeral test listener
    */
   SlowClientServer(int port) {
-    this.phase = new Object();
+    this.phaseLock = new ReentrantLock();
     this.release = new CountDownLatch(1);
     this.connectors = List.of();
     this.nativeConfiguration = "";
     final var defaults = new Options();
     this.app =
         new Shoostr()
-            .modifyServer(
-                nativeServer -> {
-                  var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
-                  nativeConnector.setHost("127.0.0.1");
-                  nativeConnector.setPort(port);
-                });
+            .modifyServer(nativeServer -> {
+              var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
+              nativeConnector.setHost("127.0.0.1");
+              nativeConnector.setPort(port);
+            });
     app.modifyServer(server -> this.connectors = List.of(server.getConnectors()));
     app.modifyHttpConfiguration(configuration -> this.nativeConfiguration = configuration.dump());
-    app.onRouteMatched(
-        (request, ignored) -> {
-          synchronized (phase) {
-            if (("POST".equals(request.method()) && "/slow-body".equals(request.path()))
-                || ("GET".equals(request.method()) && "/blocked".equals(request.path()))) {
-              this.activeExchanges++;
-              this.admitted++;
-            }
-          }
-        });
-    app.afterRequest(
-        outcome -> {
-          synchronized (phase) {
-            if (("POST".equals(outcome.method()) && "/slow-body".equals(outcome.routePattern()))
-                || ("GET".equals(outcome.method()) && "/blocked".equals(outcome.routePattern()))) {
-              this.activeExchanges--;
-              this.completed++;
-            }
-          }
-        });
+    app.onRouteMatched((request, ignored) -> {
+      phaseLock.lock();
+
+      try {
+        if (("POST".equals(request.method()) && "/slow-body".equals(request.path()))
+            || ("GET".equals(request.method()) && "/blocked".equals(request.path()))) {
+          this.activeExchanges++;
+          this.admitted++;
+        }
+      } finally {
+        phaseLock.unlock();
+      }
+    });
+    app.afterRequest(outcome -> {
+      phaseLock.lock();
+
+      try {
+        if (("POST".equals(outcome.method()) && "/slow-body".equals(outcome.routePattern()))
+            || ("GET".equals(outcome.method()) && "/blocked".equals(outcome.routePattern()))) {
+          this.activeExchanges--;
+          this.completed++;
+        }
+      } finally {
+        phaseLock.unlock();
+      }
+    });
     app.routes().post("/slow-body", this::consumeBody);
     app.routes().get("/blocked", (ignoredRequest, response) -> awaitRelease(response));
     app.routes().post("/arm", (ignoredRequest, response) -> arm(response));
@@ -119,14 +125,13 @@ public final class SlowClientServer implements AutoCloseable {
           .addShutdownHook(
               Thread.ofPlatform()
                   .name("slow-client-shutdown")
-                  .unstarted(
-                      () -> {
-                        try {
-                          server.close();
-                        } catch (IOException failure) {
-                          System.err.println("Fixture shutdown failed: " + failure);
-                        }
-                      }));
+                  .unstarted(() -> {
+                    try {
+                      server.close();
+                    } catch (IOException failure) {
+                      System.err.println("Fixture shutdown failed: " + failure);
+                    }
+                  }));
 
       System.out.println("READY " + server.port());
 
@@ -171,9 +176,13 @@ public final class SlowClientServer implements AutoCloseable {
    * @throws IOException if content ends prematurely or the peer disconnects
    */
   private void consumeBody(Request request, Response response) throws IOException {
-    synchronized (phase) {
+    phaseLock.lock();
+
+    try {
       activeBodies++;
       peakWork = Math.max(peakWork, activeBodies + activeBlocked);
+    } finally {
+      phaseLock.unlock();
     }
 
     try {
@@ -181,8 +190,12 @@ public final class SlowClientServer implements AutoCloseable {
 
       response.text("consumed");
     } finally {
-      synchronized (phase) {
+      phaseLock.lock();
+
+      try {
         activeBodies--;
+      } finally {
+        phaseLock.unlock();
       }
     }
   }
@@ -195,17 +208,25 @@ public final class SlowClientServer implements AutoCloseable {
    */
   private void awaitRelease(Response response) throws InterruptedException {
     CountDownLatch waiting;
-    synchronized (phase) {
+    phaseLock.lock();
+
+    try {
       activeBlocked++;
       peakWork = Math.max(peakWork, activeBodies + activeBlocked);
       waiting = release;
+    } finally {
+      phaseLock.unlock();
     }
 
     try {
       response.text(waiting.await(5, TimeUnit.SECONDS) ? "released" : "elapsed");
     } finally {
-      synchronized (phase) {
+      phaseLock.lock();
+
+      try {
         activeBlocked--;
+      } finally {
+        phaseLock.unlock();
       }
     }
   }
@@ -216,7 +237,9 @@ public final class SlowClientServer implements AutoCloseable {
    * @param response paired phase-control response
    */
   private void arm(Response response) {
-    synchronized (phase) {
+    phaseLock.lock();
+
+    try {
       if (activeBodies != 0 || activeBlocked != 0 || activeExchanges != 0) {
         response.status(409).text("busy");
         return;
@@ -226,13 +249,19 @@ public final class SlowClientServer implements AutoCloseable {
       peakWork = 0;
 
       response.text("armed");
+    } finally {
+      phaseLock.unlock();
     }
   }
 
   /** Releases current cooperative work without holding the phase lock during native shutdown. */
   private void releaseWork() {
-    synchronized (phase) {
+    phaseLock.lock();
+
+    try {
       release.countDown();
+    } finally {
+      phaseLock.unlock();
     }
   }
 
@@ -242,7 +271,9 @@ public final class SlowClientServer implements AutoCloseable {
    * @return fixture state as JSON
    */
   private String state() {
-    synchronized (phase) {
+    phaseLock.lock();
+
+    try {
       return "{\"active_bodies\":"
           + activeBodies
           + ",\"active_blocked\":"
@@ -260,6 +291,8 @@ public final class SlowClientServer implements AutoCloseable {
               .mapToInt(connector -> connector.getConnectedEndPoints().size())
               .sum()
           + "}";
+    } finally {
+      phaseLock.unlock();
     }
   }
 }

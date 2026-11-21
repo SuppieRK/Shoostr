@@ -1,5 +1,6 @@
 package io.github.suppierk.shoostr;
 
+import io.github.suppierk.shoostr.http.HttpCharacters;
 import java.io.IOException;
 import java.lang.reflect.Proxy;
 import java.nio.ByteBuffer;
@@ -104,7 +105,7 @@ public class BufferedRequestBenchmark {
   @Setup
   public void setup() {
     payload = new byte[bytes];
-    Arrays.fill(payload, (byte) 0x5A);
+    Arrays.fill(payload, (byte) HttpCharacters.Z_UPPERCASE);
 
     textCharset =
         switch (charset) {
@@ -128,7 +129,7 @@ public class BufferedRequestBenchmark {
     options.setMaxResponseBytes(defaults.getMaxResponseBytes());
     options.setStreamBufferBytes(defaults.getStreamBufferBytes());
     options.setMaxParameters(1000);
-    options.setMultipart(MultipartOptions.defaults());
+    options.setMultipart(new MultipartOptions());
 
     var fields = HttpFields.build();
     for (int index = 0; index < headers; index++) {

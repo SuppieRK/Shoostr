@@ -15,6 +15,9 @@ public final class MediaType {
   public static final MediaType APPLICATION_FORM_URLENCODED =
       of("application/x-www-form-urlencoded");
 
+  /** Multipart form data without a boundary parameter. */
+  public static final MediaType MULTIPART_FORM_DATA = of("multipart/form-data");
+
   /** Arbitrary binary data, as registered by RFC 2046. */
   public static final MediaType APPLICATION_OCTET_STREAM = of("application/octet-stream");
 
@@ -45,7 +48,7 @@ public final class MediaType {
     if (charset == null) {
       this.value = this.name;
     } else {
-      var charsetName = charset.name();
+      final var charsetName = charset.name();
       if (!HttpCharacters.isValidHttpToken(charsetName)) {
         throw new IllegalArgumentException("Charset name must be an HTTP token");
       }

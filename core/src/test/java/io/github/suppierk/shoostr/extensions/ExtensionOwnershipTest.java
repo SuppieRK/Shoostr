@@ -584,12 +584,11 @@ class ExtensionOwnershipTest {
 
     @Override
     public void install(ApplicationCallbacks callbacks) {
-      callbacks.beforeRouteHandler(
-          (ignoredRequest, ignoredResponse) -> {
-            if (closes.get() != 0) {
-              throw new IllegalStateException("The owned resource is closed");
-            }
-          });
+      callbacks.beforeRouteHandler((ignoredRequest, ignoredResponse) -> {
+        if (closes.get() != 0) {
+          throw new IllegalStateException("The owned resource is closed");
+        }
+      });
     }
 
     @Override

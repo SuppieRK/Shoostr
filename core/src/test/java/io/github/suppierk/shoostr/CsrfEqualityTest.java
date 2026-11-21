@@ -44,9 +44,15 @@ class CsrfEqualityTest {
   @Test
   void equivalentOriginSetsProduceEqualValuesAndHashes() {
     var first =
-        new Csrf(new LinkedHashSet<>(List.of("https://first.example", "https://second.example")));
+        Csrf.builder()
+            .trustedOrigins(
+                new LinkedHashSet<>(List.of("https://first.example", "https://second.example")))
+            .build();
     var second =
-        new Csrf(new LinkedHashSet<>(List.of("https://second.example", "https://first.example")));
+        Csrf.builder()
+            .trustedOrigins(
+                new LinkedHashSet<>(List.of("https://second.example", "https://first.example")))
+            .build();
 
     assertNotSame(first, second);
     assertEquals(first, second);
@@ -61,8 +67,8 @@ class CsrfEqualityTest {
 
   @Test
   void differentOriginPermissionsProduceUnequalValues() {
-    var first = new Csrf(Set.of("https://first.example"));
-    var second = new Csrf(Set.of("https://second.example"));
+    var first = Csrf.builder().trustedOrigins(Set.of("https://first.example")).build();
+    var second = Csrf.builder().trustedOrigins(Set.of("https://second.example")).build();
 
     assertNotEquals(first, second);
     assertNotEquals(new Csrf(), first);
@@ -70,8 +76,8 @@ class CsrfEqualityTest {
 
   @Test
   void rejectsSelectingDistinctEqualInstancesForOneEndpoint() throws Exception {
-    var first = new Csrf(Set.of("https://client.example"));
-    var second = new Csrf(Set.of("https://client.example"));
+    var first = Csrf.builder().trustedOrigins(Set.of("https://client.example")).build();
+    var second = Csrf.builder().trustedOrigins(Set.of("https://client.example")).build();
 
     assertEquals(first, second);
 

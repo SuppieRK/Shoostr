@@ -93,17 +93,16 @@ class HttpContractTest {
     configuredOptions.setMaxResponseBytes(1024);
     configuredOptions.setStreamBufferBytes(8);
     configuredOptions.setMaxParameters(1000);
-    configuredOptions.setMultipart(MultipartOptions.defaults());
+    configuredOptions.setMultipart(new MultipartOptions());
 
     app =
         new Shoostr(configuredOptions)
-            .modifyServer(
-                nativeServer -> {
-                  var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
-                  nativeConnector.setHost("127.0.0.1");
-                  nativeConnector.setPort(0);
-                  nativeConnector.setIdleTimeout(5000);
-                });
+            .modifyServer(nativeServer -> {
+              var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
+              nativeConnector.setHost("127.0.0.1");
+              nativeConnector.setPort(0);
+              nativeConnector.setIdleTimeout(5000);
+            });
 
     app.routes().get("/plain", (ignoredRequest, response) -> response.text("hello"));
     app.routes()
@@ -208,14 +207,13 @@ class HttpContractTest {
   }
 
   private Thread createThreadForStartServer(Response response, AtomicReference<Throwable> failure) {
-    return Thread.startVirtualThread(
-        () -> {
-          try {
-            response.text("bad");
-          } catch (Throwable error) {
-            failure.set(error);
-          }
-        });
+    return Thread.startVirtualThread(() -> {
+      try {
+        response.text("bad");
+      } catch (Throwable error) {
+        failure.set(error);
+      }
+    });
   }
 
   @AfterEach
@@ -314,11 +312,10 @@ class HttpContractTest {
   private Future<HttpResponse<InputStream>>
       submitFiniteForStagesFiniteBodyUntilHandlerReturnsAndClosesApplicationAccess(
           ExecutorService testRequests) {
-    return testRequests.submit(
-        () ->
-            test.send(
-                request -> request.path("/finite").timeout(Duration.ofSeconds(5)),
-                HttpResponse.BodyHandlers.ofInputStream()));
+    return testRequests.submit(() ->
+        test.send(
+            request -> request.path("/finite").timeout(Duration.ofSeconds(5)),
+            HttpResponse.BodyHandlers.ofInputStream()));
   }
 
   @Test
@@ -342,11 +339,10 @@ class HttpContractTest {
           ExecutorService testRequests)
           throws InterruptedException, ExecutionException, TimeoutException {
     return testRequests
-        .submit(
-            () ->
-                test.send(
-                    request -> request.path("/stream").timeout(Duration.ofSeconds(5)),
-                    HttpResponse.BodyHandlers.ofInputStream()))
+        .submit(() ->
+            test.send(
+                request -> request.path("/stream").timeout(Duration.ofSeconds(5)),
+                HttpResponse.BodyHandlers.ofInputStream()))
         .get(3, TimeUnit.SECONDS);
   }
 
@@ -597,33 +593,32 @@ class HttpContractTest {
       boolean afterFlushFails,
       AtomicReference<Throwable> failure,
       CountDownLatch returned) {
-    return Thread.startVirtualThread(
-        () -> {
-          try {
-            var response = response(sink, completion);
-            if (hasAfterFlush) {
-              response.flushHooks(
-                  () -> {},
-                  () -> {
-                    afterFlushes.incrementAndGet();
-                    if (afterFlushFails) {
-                      throw new IllegalStateException("after flush");
-                    }
-                  });
-            }
+    return Thread.startVirtualThread(() -> {
+      try {
+        var response = response(sink, completion);
+        if (hasAfterFlush) {
+          response.flushHooks(
+              () -> {},
+              () -> {
+                afterFlushes.incrementAndGet();
+                if (afterFlushFails) {
+                  throw new IllegalStateException("after flush");
+                }
+              });
+        }
 
-            var original = "finished".getBytes(StandardCharsets.UTF_8);
-            response.body("text/plain;charset=utf-8", original);
-            original[0] = '!';
-            response.complete();
+        var original = "finished".getBytes(StandardCharsets.UTF_8);
+        response.body("text/plain;charset=utf-8", original);
+        original[0] = '!';
+        response.complete();
 
-            assertThrows(IllegalStateException.class, () -> response.text("too late"));
-          } catch (Throwable error) {
-            failure.set(error);
-          } finally {
-            returned.countDown();
-          }
-        });
+        assertThrows(IllegalStateException.class, () -> response.text("too late"));
+      } catch (Throwable error) {
+        failure.set(error);
+      } finally {
+        returned.countDown();
+      }
+    });
   }
 
   @Test

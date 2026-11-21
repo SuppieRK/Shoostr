@@ -2,6 +2,7 @@ package io.github.suppierk.shoostr.mcp;
 
 import io.github.suppierk.shoostr.Response;
 import io.github.suppierk.shoostr.SseEvent;
+import io.github.suppierk.shoostr.http.HttpHeaders;
 import io.modelcontextprotocol.json.McpJsonMapper;
 import io.modelcontextprotocol.json.TypeRef;
 import io.modelcontextprotocol.spec.McpSchema;
@@ -24,11 +25,13 @@ import reactor.core.publisher.MonoSink;
 final class McpStream implements McpStreamableServerTransport {
   private static final int CAPACITY = 64;
   private static final Duration HEARTBEAT = Duration.ofSeconds(15);
+
   private final McpJsonMapper mapper;
   private final ArrayDeque<Frame> frames;
   private final @Nullable Instant expiresAt;
   private final ReentrantLock lock;
   private final Condition changed;
+
   private boolean finished;
   private @Nullable Throwable failure;
 
@@ -72,8 +75,8 @@ final class McpStream implements McpStreamableServerTransport {
    */
   void pump(Response response) throws IOException {
     try {
-      response.setHeader("Cache-Control", "no-cache");
-      var output = response.startEventStream();
+      response.setHeader(HttpHeaders.CACHE_CONTROL.value(), "no-cache");
+      final var output = response.startEventStream();
       output.heartbeat();
 
       while (true) {
@@ -169,56 +172,78 @@ final class McpStream implements McpStreamableServerTransport {
   public Mono<Void> sendMessage(McpSchema.JSONRPCMessage message, @Nullable String messageId) {
     Objects.requireNonNull(message);
 
-    return Mono.create(
-        sink -> {
-          if (expiresAt != null && !expiresAt.isAfter(Instant.now())) {
-            sink.error(new IOException("The MCP HTTP token expired"));
-            return;
-          }
+    return Mono.create(sink -> {
+      if (expiresAt != null && !expiresAt.isAfter(Instant.now())) {
+        sink.error(new IOException("The MCP HTTP token expired"));
+        return;
+      }
 
-          boolean unavailable;
-          lock.lock();
+      if (isMailboxClosedOrFull()) {
+        sink.error(new IOException("MCP stream is closed or its frame mailbox is full"));
+        return;
+      }
 
-          try {
-            unavailable = finished || frames.size() >= CAPACITY;
-          } finally {
-            lock.unlock();
-          }
+      SseEvent event;
 
-          if (unavailable) {
-            sink.error(new IOException("MCP stream is closed or its frame mailbox is full"));
-            return;
-          }
+      try {
+        event = new SseEvent(mapper.writeValueAsString(message), "message", messageId, null);
+      } catch (IOException | RuntimeException error) {
+        sink.error(error);
+        return;
+      }
 
-          SseEvent event;
+      if (!tryEnqueue(event, sink)) {
+        sink.error(new IOException("MCP stream is closed or its frame mailbox is full"));
+      }
+    });
+  }
 
-          try {
-            event = new SseEvent(mapper.writeValueAsString(message), "message", messageId, null);
-          } catch (IOException | RuntimeException error) {
-            sink.error(error);
-            return;
-          }
+  /**
+   * Checks mailbox availability before serialization without reserving capacity.
+   *
+   * @return whether the mailbox is closed or full
+   */
+  private boolean isMailboxClosedOrFull() {
+    lock.lock();
 
-          boolean accepted;
-          lock.lock();
+    try {
+      return isMailboxClosedOrFullUnderLock();
+    } finally {
+      lock.unlock();
+    }
+  }
 
-          try {
-            accepted =
-                !finished
-                    && frames.size() < CAPACITY
-                    && (expiresAt == null || expiresAt.isAfter(Instant.now()));
-            if (accepted) {
-              frames.addLast(new Frame(event, sink));
-              changed.signalAll();
-            }
-          } finally {
-            lock.unlock();
-          }
+  /**
+   * Rechecks mailbox availability and expiry before enqueueing the serialized event.
+   *
+   * @param event serialized event
+   * @param acknowledgment native completion after flushing
+   * @return whether the event was enqueued
+   */
+  private boolean tryEnqueue(SseEvent event, MonoSink<Void> acknowledgment) {
+    lock.lock();
 
-          if (!accepted) {
-            sink.error(new IOException("MCP stream is closed or its frame mailbox is full"));
-          }
-        });
+    try {
+      if (isMailboxClosedOrFullUnderLock()
+          || (expiresAt != null && !expiresAt.isAfter(Instant.now()))) {
+        return false;
+      }
+
+      frames.addLast(new Frame(event, acknowledgment));
+      changed.signalAll();
+      return true;
+    } finally {
+      lock.unlock();
+    }
+  }
+
+  /**
+   * Checks mailbox state while the caller holds the lock.
+   *
+   * @return whether the mailbox is closed or full
+   */
+  private boolean isMailboxClosedOrFullUnderLock() {
+    return finished || frames.size() >= CAPACITY;
   }
 
   /**

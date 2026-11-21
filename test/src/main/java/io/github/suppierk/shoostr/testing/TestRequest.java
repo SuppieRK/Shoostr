@@ -46,7 +46,7 @@ public final class TestRequest {
   public TestRequest path(String path) {
     requireOpen();
 
-    var relative = URI.create(Objects.requireNonNull(path));
+    final var relative = URI.create(Objects.requireNonNull(path));
     if (path.isEmpty()
         || relative.isAbsolute()
         || relative.getRawAuthority() != null

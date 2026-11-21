@@ -79,17 +79,16 @@ class ShoostrLifecycleTest {
 
       try (Closeable appCleanup = app::close;
           var client = HttpClient.newHttpClient()) {
-        app.modifyServer(
-            server -> {
-              var connector = assertInstanceOf(ServerConnector.class, server.getConnectors()[0]);
+        app.modifyServer(server -> {
+          var connector = assertInstanceOf(ServerConnector.class, server.getConnectors()[0]);
 
-              connector.setPort(0);
-              if (loopback) {
-                connector.setHost("127.0.0.1");
-              }
+          connector.setPort(0);
+          if (loopback) {
+            connector.setHost("127.0.0.1");
+          }
 
-              listener.set(connector);
-            });
+          listener.set(connector);
+        });
         app.routes().get("/", (ignored, response) -> response.text("configured listener"));
         app.start();
 
@@ -132,9 +131,8 @@ class ShoostrLifecycleTest {
     {
       var app =
           new Shoostr(configuredOptions)
-              .modifyServer(
-                  nativeServerConfiguration ->
-                      ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
+              .modifyServer(nativeServerConfiguration ->
+                  ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
 
       try (Closeable appCleanup1 = app::close) {
         app.routes()
@@ -180,16 +178,15 @@ class ShoostrLifecycleTest {
 
   private CompletableFuture<HttpResponse<String>>
       createBlockedForServesAnotherConnectionWhileVirtualHandlerIsBlocked(TestServer test) {
-    return CompletableFuture.supplyAsync(
-        () -> {
-          try {
-            return test.send(
-                request -> request.path("/blocked").timeout(Duration.ofSeconds(6)),
-                HttpResponse.BodyHandlers.ofString());
-          } catch (IOException | InterruptedException failure) {
-            throw new CompletionException(failure);
-          }
-        });
+    return CompletableFuture.supplyAsync(() -> {
+      try {
+        return test.send(
+            request -> request.path("/blocked").timeout(Duration.ofSeconds(6)),
+            HttpResponse.BodyHandlers.ofString());
+      } catch (IOException | InterruptedException failure) {
+        throw new CompletionException(failure);
+      }
+    });
   }
 
   @Test
@@ -197,9 +194,8 @@ class ShoostrLifecycleTest {
     {
       var app =
           new Shoostr()
-              .modifyServer(
-                  nativeServerConfiguration ->
-                      ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
+              .modifyServer(nativeServerConfiguration ->
+                  ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
 
       try (Closeable appCleanup2 = app::close) {
         app.routes().get("/", (ignoredRequest, response) -> response.text("default listener"));
@@ -225,17 +221,15 @@ class ShoostrLifecycleTest {
     {
       var app =
           new Shoostr()
-              .modifyServer(
-                  nativeServerConfiguration ->
-                      ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
+              .modifyServer(nativeServerConfiguration ->
+                  ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
 
       try (Closeable appCleanup3 = app::close) {
-        app.modifyHttpConfiguration(
-            configuration -> {
-              assertEquals(8192, configuration.getRequestHeaderSize());
+        app.modifyHttpConfiguration(configuration -> {
+          assertEquals(8192, configuration.getRequestHeaderSize());
 
-              configuration.setRequestHeaderSize(16_384);
-            });
+          configuration.setRequestHeaderSize(16_384);
+        });
         app.routes()
             .get(
                 "/",
@@ -264,43 +258,39 @@ class ShoostrLifecycleTest {
     {
       var app =
           new Shoostr()
-              .modifyServer(
-                  nativeServerConfiguration ->
-                      ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
+              .modifyServer(nativeServerConfiguration ->
+                  ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
 
       try (Closeable appCleanup4 = app::close) {
         app.modifyHttpConfiguration(http -> http.setSendServerVersion(true));
-        app.modifyHttpConfiguration(
-            http -> {
-              assertTrue(http.getSendServerVersion());
+        app.modifyHttpConfiguration(http -> {
+          assertTrue(http.getSendServerVersion());
 
-              http.setSendServerVersion(false);
-              http.setRequestHeaderSize(512);
-            });
-        app.modifyServer(
-            server -> {
-              nativeServer.set(server);
+          http.setSendServerVersion(false);
+          http.setRequestHeaderSize(512);
+        });
+        app.modifyServer(server -> {
+          nativeServer.set(server);
 
-              assertFalse(server.isStarted());
-              assertEquals(5000, server.getStopTimeout());
+          assertFalse(server.isStarted());
+          assertEquals(5000, server.getStopTimeout());
 
-              server.setStopTimeout(200);
-            });
-        app.modifyServer(
-            server -> {
-              assertEquals(200, server.getStopTimeout());
+          server.setStopTimeout(200);
+        });
+        app.modifyServer(server -> {
+          assertEquals(200, server.getStopTimeout());
 
-              var connector = (ServerConnector) server.getConnectors()[0];
-              connector.setIdleTimeout(2345);
-              connector.setShutdownIdleTimeout(100);
+          var connector = (ServerConnector) server.getConnectors()[0];
+          connector.setIdleTimeout(2345);
+          connector.setShutdownIdleTimeout(100);
 
-              assertEquals(
-                  512,
-                  connector
-                      .getConnectionFactory(HttpConnectionFactory.class)
-                      .getHttpConfiguration()
-                      .getRequestHeaderSize());
-            });
+          assertEquals(
+              512,
+              connector
+                  .getConnectionFactory(HttpConnectionFactory.class)
+                  .getHttpConfiguration()
+                  .getRequestHeaderSize());
+        });
         app.routes().get("/", (ignoredRequest, routeResponse) -> routeResponse.text("configured"));
 
         try (var test = TestServer.start(app)) {
@@ -336,9 +326,8 @@ class ShoostrLifecycleTest {
     {
       var app =
           new Shoostr()
-              .modifyServer(
-                  nativeServerConfiguration ->
-                      ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
+              .modifyServer(nativeServerConfiguration ->
+                  ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
 
       try (Closeable appCleanup5 = app::close;
           var client = HttpClient.newHttpClient()) {
@@ -404,25 +393,23 @@ class ShoostrLifecycleTest {
     {
       var app =
           new Shoostr()
-              .modifyServer(
-                  nativeServerConfiguration ->
-                      ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
+              .modifyServer(nativeServerConfiguration ->
+                  ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
 
       try (Closeable appCleanup6 = app::close;
           var client = HttpClient.newHttpClient()) {
-        app.modifyServer(
-            server -> {
-              assertEquals(
-                  1000, ((ServerConnector) server.getConnectors()[0]).getShutdownIdleTimeout());
+        app.modifyServer(server -> {
+          assertEquals(
+              1000, ((ServerConnector) server.getConnectors()[0]).getShutdownIdleTimeout());
 
-              server.addEventListener(
-                  new LifeCycle.Listener() {
-                    @Override
-                    public void lifeCycleStopping(LifeCycle event) {
-                      stopping.countDown();
-                    }
-                  });
-            });
+          server.addEventListener(
+              new LifeCycle.Listener() {
+                @Override
+                public void lifeCycleStopping(LifeCycle event) {
+                  stopping.countDown();
+                }
+              });
+        });
         app.routes()
             .post(
                 "/",
@@ -482,14 +469,13 @@ class ShoostrLifecycleTest {
   private CompletableFuture<Void>
       createClosingForAppCloseLetsQuietFiniteAndStreamingHandlersFinishWithinDefaultGrace(
           Shoostr app) {
-    return CompletableFuture.runAsync(
-        () -> {
-          try {
-            app.close();
-          } catch (Exception failure) {
-            throw new CompletionException(failure);
-          }
-        });
+    return CompletableFuture.runAsync(() -> {
+      try {
+        app.close();
+      } catch (Exception failure) {
+        throw new CompletionException(failure);
+      }
+    });
   }
 
   @ParameterizedTest
@@ -503,19 +489,17 @@ class ShoostrLifecycleTest {
     {
       var app =
           new Shoostr()
-              .modifyServer(
-                  nativeServerConfiguration ->
-                      ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
+              .modifyServer(nativeServerConfiguration ->
+                  ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
 
       try (Closeable appCleanup7 = app::close;
           var client = HttpClient.newHttpClient()) {
-        app.modifyServer(
-            server -> {
-              server.setStopTimeout(budget);
-              // Native graceful draining and platform-worker shutdown have separate budgets.
-              ((QueuedThreadPool) server.getThreadPool()).setStopTimeout(100);
-              ((ServerConnector) server.getConnectors()[0]).setShutdownIdleTimeout(0);
-            });
+        app.modifyServer(server -> {
+          server.setStopTimeout(budget);
+          // Native graceful draining and platform-worker shutdown have separate budgets.
+          ((QueuedThreadPool) server.getThreadPool()).setStopTimeout(100);
+          ((ServerConnector) server.getConnectors()[0]).setShutdownIdleTimeout(0);
+        });
         app.routes()
             .post(
                 "/",
@@ -570,14 +554,13 @@ class ShoostrLifecycleTest {
   private CompletableFuture<Void>
       createClosingForNativeShutdownBudgetsBoundWaitingForHandlersThatIgnoreInterrupts(
           Shoostr app) {
-    return CompletableFuture.runAsync(
-        () -> {
-          try {
-            app.close();
-          } catch (Exception failure) {
-            throw new CompletionException(failure);
-          }
-        });
+    return CompletableFuture.runAsync(() -> {
+      try {
+        app.close();
+      } catch (Exception failure) {
+        throw new CompletionException(failure);
+      }
+    });
   }
 
   @Test
@@ -587,17 +570,15 @@ class ShoostrLifecycleTest {
     {
       var app =
           new Shoostr()
-              .modifyServer(
-                  nativeServerConfiguration ->
-                      ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
+              .modifyServer(nativeServerConfiguration ->
+                  ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
 
       try (Closeable appCleanup8 = app::close) {
-        app.modifyServer(
-            server -> {
-              nativeServer.set(server);
+        app.modifyServer(server -> {
+          nativeServer.set(server);
 
-              assertDoesNotThrow(app::close);
-            });
+          assertDoesNotThrow(app::close);
+        });
 
         try {
           assertThrows(IllegalStateException.class, app::start);
@@ -620,18 +601,15 @@ class ShoostrLifecycleTest {
     {
       var app =
           new Shoostr(configuredOptions)
-              .modifyServer(
-                  nativeServerConfiguration ->
-                      ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
+              .modifyServer(nativeServerConfiguration ->
+                  ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
 
       try (Closeable appCleanup9 = app::close) {
-        app.modifyServer(
-            server -> {
-              nativeServer.set(server);
-              ownedExecutor.set(
-                  (ExecutorService)
-                      VirtualThreads.getVirtualThreadsExecutor(server.getThreadPool()));
-            });
+        app.modifyServer(server -> {
+          nativeServer.set(server);
+          ownedExecutor.set(
+              (ExecutorService) VirtualThreads.getVirtualThreadsExecutor(server.getThreadPool()));
+        });
         app.sessions(ignoredSessionHandler -> assertDoesNotThrow(app::close));
 
         try {
@@ -660,9 +638,8 @@ class ShoostrLifecycleTest {
     {
       var app =
           new Shoostr()
-              .modifyServer(
-                  nativeServerConfiguration ->
-                      ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
+              .modifyServer(nativeServerConfiguration ->
+                  ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
 
       try (Closeable appCleanup10 = app::close) {
         app.modifyServer(nativeServer::set);
@@ -695,28 +672,27 @@ class ShoostrLifecycleTest {
 
   private Shoostr createAppForRejectsHandlerReplacementEvenWhenItsEqualsClaimsTheOwnedHandler() {
     return new Shoostr()
-        .modifyServer(
-            server -> {
-              ((ServerConnector) server.getConnectors()[0]).setPort(0);
-              var graceful = server.getDescendant(GracefulHandler.class);
+        .modifyServer(server -> {
+          ((ServerConnector) server.getConnectors()[0]).setPort(0);
+          var graceful = server.getDescendant(GracefulHandler.class);
 
-              var owned = assertInstanceOf(Handler.class, graceful.getHandler());
+          var owned = assertInstanceOf(Handler.class, graceful.getHandler());
 
-              graceful.setHandler(
-                  new Handler.Wrapper(owned) {
-                    @Override
-                    public boolean equals(Object other) {
-                      return owned.equals(other)
-                          || (other instanceof Handler.Wrapper wrapper
-                              && owned.equals(wrapper.getHandler()));
-                    }
+          graceful.setHandler(
+              new Handler.Wrapper(owned) {
+                @Override
+                public boolean equals(Object other) {
+                  return owned.equals(other)
+                      || (other instanceof Handler.Wrapper wrapper
+                          && owned.equals(wrapper.getHandler()));
+                }
 
-                    @Override
-                    public int hashCode() {
-                      return owned.hashCode();
-                    }
-                  });
-            });
+                @Override
+                public int hashCode() {
+                  return owned.hashCode();
+                }
+              });
+        });
   }
 
   @Test
@@ -728,29 +704,27 @@ class ShoostrLifecycleTest {
     {
       var app =
           new Shoostr()
-              .modifyServer(
-                  nativeServerConfiguration ->
-                      ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
+              .modifyServer(nativeServerConfiguration ->
+                  ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
 
       try (Closeable appCleanup12 = app::close;
           var client = HttpClient.newHttpClient()) {
         assertThrows(NullPointerException.class, () -> app.modifyServer(null));
         assertThrows(NullPointerException.class, () -> app.modifyHttpConfiguration(null));
 
-        app.modifyServer(
-            server -> {
-              var http =
-                  server
-                      .getConnectors()[0]
-                      .getConnectionFactory(HttpConnectionFactory.class)
-                      .getHttpConfiguration();
-              var extra = new ServerConnector(server, new HttpConnectionFactory(http));
-              extra.setHost("127.0.0.1");
-              extra.setPort(0);
-              server.addConnector(extra);
-              additional.set(extra);
-              server.setHandler(new Handler.Wrapper(server.getHandler()));
-            });
+        app.modifyServer(server -> {
+          var http =
+              server
+                  .getConnectors()[0]
+                  .getConnectionFactory(HttpConnectionFactory.class)
+                  .getHttpConfiguration();
+          var extra = new ServerConnector(server, new HttpConnectionFactory(http));
+          extra.setHost("127.0.0.1");
+          extra.setPort(0);
+          server.addConnector(extra);
+          additional.set(extra);
+          server.setHandler(new Handler.Wrapper(server.getHandler()));
+        });
         app.routes().get("/", (ignoredRequest, response) -> response.text("shared"));
         app.start();
 
@@ -785,28 +759,23 @@ class ShoostrLifecycleTest {
     {
       var app =
           new Shoostr(configuredOptions)
-              .modifyServer(
-                  nativeServerConfiguration ->
-                      ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
+              .modifyServer(nativeServerConfiguration ->
+                  ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
 
       try (Closeable appCleanup13 = app::close) {
-        app.modifyServer(
-            server -> {
-              nativeServer.set(server);
-              ownedExecutor.set(
-                  (ExecutorService)
-                      VirtualThreads.getVirtualThreadsExecutor(server.getThreadPool()));
-            });
+        app.modifyServer(server -> {
+          nativeServer.set(server);
+          ownedExecutor.set(
+              (ExecutorService) VirtualThreads.getVirtualThreadsExecutor(server.getThreadPool()));
+        });
         if (http) {
-          app.modifyHttpConfiguration(
-              ignoredHttpConfiguration -> {
-                throw failure;
-              });
+          app.modifyHttpConfiguration(ignoredHttpConfiguration -> {
+            throw failure;
+          });
         } else {
-          app.modifyServer(
-              ignoredServer -> {
-                throw failure;
-              });
+          app.modifyServer(ignoredServer -> {
+            throw failure;
+          });
         }
 
         assertSame(failure, assertThrows(IllegalArgumentException.class, app::start));
@@ -833,9 +802,8 @@ class ShoostrLifecycleTest {
     {
       var app =
           new Shoostr()
-              .modifyServer(
-                  nativeServerConfiguration ->
-                      ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
+              .modifyServer(nativeServerConfiguration ->
+                  ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
 
       try (Closeable appCleanup14 = app::close;
           var client = HttpClient.newHttpClient()) {
@@ -855,14 +823,13 @@ class ShoostrLifecycleTest {
 
   private CompletableFuture<Void>
       createClosingForDefaultShutdownClosesIdleKeepAliveBeforeTheGraceBudgetExpires(Shoostr app) {
-    return CompletableFuture.runAsync(
-        () -> {
-          try {
-            app.close();
-          } catch (Exception failure) {
-            throw new CompletionException(failure);
-          }
-        });
+    return CompletableFuture.runAsync(() -> {
+      try {
+        app.close();
+      } catch (Exception failure) {
+        throw new CompletionException(failure);
+      }
+    });
   }
 
   @Test
@@ -872,7 +839,7 @@ class ShoostrLifecycleTest {
     app.routes().path("/api", scope::set);
 
     assertFalse(
-        List.of(Shoostr.class, Routes.class, TypedRoutes.class).stream()
+        List.of(Shoostr.class, Routes.class, Routes.Typed.class).stream()
             .anyMatch(AutoCloseable.class::isAssignableFrom));
 
     app.close();
@@ -902,9 +869,8 @@ class ShoostrLifecycleTest {
     {
       var app =
           new Shoostr()
-              .modifyServer(
-                  nativeServerConfiguration ->
-                      ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
+              .modifyServer(nativeServerConfiguration ->
+                  ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
 
       try (Closeable appCleanup17 = app::close) {
         assertSame(app, app.start());
@@ -935,9 +901,8 @@ class ShoostrLifecycleTest {
 
   private Shoostr createReplacementForExplicitCloseReleasesTheListenerAndPreventsRestart(int port) {
     return new Shoostr()
-        .modifyServer(
-            nativeServerConfiguration ->
-                ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(port));
+        .modifyServer(nativeServerConfiguration ->
+            ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(port));
   }
 
   @Test
@@ -962,10 +927,9 @@ class ShoostrLifecycleTest {
 
   private Shoostr createAppForFailedStartupCleansUpAndCannotBeRetried(ServerSocket occupied) {
     return new Shoostr()
-        .modifyServer(
-            nativeServerConfiguration ->
-                ((ServerConnector) nativeServerConfiguration.getConnectors()[0])
-                    .setPort(occupied.getLocalPort()));
+        .modifyServer(nativeServerConfiguration ->
+            ((ServerConnector) nativeServerConfiguration.getConnectors()[0])
+                .setPort(occupied.getLocalPort()));
   }
 
   @Test
@@ -973,9 +937,8 @@ class ShoostrLifecycleTest {
     {
       var app =
           new Shoostr()
-              .modifyServer(
-                  nativeServerConfiguration ->
-                      ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
+              .modifyServer(nativeServerConfiguration ->
+                  ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
 
       try (Closeable appCleanup19 = app::close) {
         app.routes()
@@ -998,9 +961,8 @@ class ShoostrLifecycleTest {
     {
       var app =
           new Shoostr()
-              .modifyServer(
-                  nativeServerConfiguration ->
-                      ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
+              .modifyServer(nativeServerConfiguration ->
+                  ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
 
       try (Closeable appCleanup20 = app::close) {
         var before = new AtomicInteger();
@@ -1077,23 +1039,18 @@ class ShoostrLifecycleTest {
     public static void main(String[] args) throws Exception {
       var app =
           new Shoostr()
-              .modifyServer(
-                  nativeServerConfiguration ->
-                      ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
-      app.afterClose(
-          () -> {
-            assertThrows(IllegalStateException.class, app::port);
+              .modifyServer(nativeServerConfiguration ->
+                  ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
+      app.afterClose(() -> {
+        assertThrows(IllegalStateException.class, app::port);
 
-            try {
-              Files.writeString(
-                  Path.of(args[0]),
-                  "closed\n",
-                  StandardOpenOption.CREATE,
-                  StandardOpenOption.APPEND);
-            } catch (IOException failure) {
-              throw new IllegalStateException(failure);
-            }
-          });
+        try {
+          Files.writeString(
+              Path.of(args[0]), "closed\n", StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+        } catch (IOException failure) {
+          throw new IllegalStateException(failure);
+        }
+      });
       if (!"unstarted".equals(args[1])) {
         app.start();
       }

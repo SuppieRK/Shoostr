@@ -1,5 +1,6 @@
 package io.github.suppierk.shoostr;
 
+import io.github.suppierk.shoostr.http.HttpCharacters;
 import io.github.suppierk.shoostr.http.HttpMethods;
 import java.util.Objects;
 
@@ -23,7 +24,7 @@ public record RouteInfo(HttpMethods method, String pathTemplate, boolean conditi
   public RouteInfo {
     Objects.requireNonNull(method);
     Objects.requireNonNull(pathTemplate);
-    if (!pathTemplate.startsWith("/")) {
+    if (!pathTemplate.startsWith(HttpCharacters.PATH_SEPARATOR_STRING)) {
       throw new IllegalArgumentException("Route template must be absolute");
     }
   }

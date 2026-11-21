@@ -39,18 +39,17 @@ class McpExecutorExpiryTest {
     var expiry = new AtomicReference<Instant>();
     var mcp = createMcpForExpiresStreamWithoutInterruptingTheReusedCallerOwnedWorker(owner, expiry);
     var app = new Shoostr();
-    app.routes(
-        routes -> {
-          routes.path("/mcp", group -> mcp.routes(group, selected));
-          routes.get(
-              "/probe",
-              selected,
-              (ignoredRequest, response) ->
-                  response.text(
-                      (Thread.currentThread() == owner.get())
-                          + ":"
-                          + Thread.currentThread().isInterrupted()));
-        });
+    app.routes(routes -> {
+      routes.path("/mcp", group -> mcp.routes(group, selected));
+      routes.get(
+          "/probe",
+          selected,
+          (ignoredRequest, response) ->
+              response.text(
+                  (Thread.currentThread() == owner.get())
+                      + ":"
+                      + Thread.currentThread().isInterrupted()));
+    });
 
     try (selected;
         var readers = Executors.newVirtualThreadPerTaskExecutor();
@@ -106,20 +105,19 @@ class McpExecutorExpiryTest {
   private HttpResponse<byte[]>
       sendInitializedRequestForExpiresStreamWithoutInterruptingTheReusedCallerOwnedWorker(
           TestServer test) throws IOException, InterruptedException {
-    return test.send(
-        request ->
-            request
-                .path("/mcp")
-                .method("POST")
-                .header("Content-Type", "application/json")
-                .header("Accept", "application/json, text/event-stream")
-                .body(
-                    """
-                    {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
-                      "protocolVersion":"2025-11-25","capabilities":{},
-                      "clientInfo":{"name":"executor-expiry","version":"1.0"}}}
-                    """
-                        .getBytes(StandardCharsets.UTF_8)));
+    return test.send(request ->
+        request
+            .path("/mcp")
+            .method("POST")
+            .header("Content-Type", "application/json")
+            .header("Accept", "application/json, text/event-stream")
+            .body(
+                """
+                {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+                  "protocolVersion":"2025-11-25","capabilities":{},
+                  "clientInfo":{"name":"executor-expiry","version":"1.0"}}}
+                """
+                    .getBytes(StandardCharsets.UTF_8)));
   }
 
   private HttpResponse<InputStream>
@@ -139,15 +137,14 @@ class McpExecutorExpiryTest {
 
   private Future<Instant> submitEndedForExpiresStreamWithoutInterruptingTheReusedCallerOwnedWorker(
       ExecutorService readers, InputStream input) {
-    return readers.submit(
-        () -> {
-          try {
-            input.readAllBytes();
-          } catch (IOException ignoredFailure) {
-            // A committed stream may end with transport failure rather than clean EOF.
-          }
+    return readers.submit(() -> {
+      try {
+        input.readAllBytes();
+      } catch (IOException ignoredFailure) {
+        // A committed stream may end with transport failure rather than clean EOF.
+      }
 
-          return Instant.now();
-        });
+      return Instant.now();
+    });
   }
 }

@@ -72,19 +72,18 @@ class ExtensionShutdownTest {
 
               @Override
               public void install(ApplicationCallbacks callbacks) {
-                callbacks.observe(
-                    ignored ->
-                        new RequestObservation() {
-                          @Override
-                          public void close() {
-                            resource.execute(scopeUsedResource::countDown);
-                          }
+                callbacks.observe(ignored ->
+                    new RequestObservation() {
+                      @Override
+                      public void close() {
+                        resource.execute(scopeUsedResource::countDown);
+                      }
 
-                          @Override
-                          public void complete(RequestOutcome outcome) {
-                            resource.execute(completionUsedResource::countDown);
-                          }
-                        });
+                      @Override
+                      public void complete(RequestOutcome outcome) {
+                        resource.execute(completionUsedResource::countDown);
+                      }
+                    });
               }
 
               @Override
@@ -98,15 +97,14 @@ class ExtensionShutdownTest {
                 resource.close();
               }
             });
-        app.modifyServer(
-            server ->
-                server.addEventListener(
-                    new LifeCycle.Listener() {
-                      @Override
-                      public void lifeCycleStopping(LifeCycle event) {
-                        stopping.countDown();
-                      }
-                    }));
+        app.modifyServer(server ->
+            server.addEventListener(
+                new LifeCycle.Listener() {
+                  @Override
+                  public void lifeCycleStopping(LifeCycle event) {
+                    stopping.countDown();
+                  }
+                }));
         app.routes()
             .get(
                 "/drain",
@@ -156,12 +154,11 @@ class ExtensionShutdownTest {
   }
 
   private Future<Object> submitApplicationClose(ExecutorService workers, Shoostr app) {
-    return workers.submit(
-        () -> {
-          app.close();
+    return workers.submit(() -> {
+      app.close();
 
-          return null;
-        });
+      return null;
+    });
   }
 
   @Test
@@ -172,15 +169,14 @@ class ExtensionShutdownTest {
             .modifyServer(
                 nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
     app.withExtension(capability("first", events)).withExtension(capability("second", events));
-    app.modifyServer(
-        server ->
-            server.addEventListener(
-                new LifeCycle.Listener() {
-                  @Override
-                  public void lifeCycleStopping(LifeCycle event) {
-                    events.add("server");
-                  }
-                }));
+    app.modifyServer(server ->
+        server.addEventListener(
+            new LifeCycle.Listener() {
+              @Override
+              public void lifeCycleStopping(LifeCycle event) {
+                events.add("server");
+              }
+            }));
 
     try (Closeable appCleanup1 = app::close) {
       app.start();
@@ -206,15 +202,14 @@ class ExtensionShutdownTest {
 
       try (Closeable appCleanup2 = app::close) {
         app.withExtension(capability("first", events)).withExtension(broken);
-        app.modifyServer(
-            server ->
-                server.addEventListener(
-                    new LifeCycle.Listener() {
-                      @Override
-                      public void lifeCycleStopping(LifeCycle event) {
-                        events.add("server");
-                      }
-                    }));
+        app.modifyServer(server ->
+            server.addEventListener(
+                new LifeCycle.Listener() {
+                  @Override
+                  public void lifeCycleStopping(LifeCycle event) {
+                    events.add("server");
+                  }
+                }));
         app.start();
 
         var failure = assertThrows(IOException.class, app::close);
@@ -471,22 +466,20 @@ class ExtensionShutdownTest {
   }
 
   private Future<Object> submitFirstClose(ExecutorService workers, Shoostr app) {
-    return workers.submit(
-        () -> {
-          app.close();
+    return workers.submit(() -> {
+      app.close();
 
-          return null;
-        });
+      return null;
+    });
   }
 
   private Future<Object> submitSecondClose(
       ExecutorService workers, CountDownLatch secondAttempt, Shoostr app) {
-    return workers.submit(
-        () -> {
-          secondAttempt.countDown();
-          app.close();
+    return workers.submit(() -> {
+      secondAttempt.countDown();
+      app.close();
 
-          return null;
-        });
+      return null;
+    });
   }
 }
