@@ -1,5 +1,11 @@
 # Shoostr
 
+[![SonarQube Cloud quality gate](https://sonarcloud.io/api/project_badges/measure?project=SuppieRK_Shoostr&metric=alert_status)](https://sonarcloud.io/dashboard?id=SuppieRK_Shoostr)
+[![SonarQube Cloud coverage](https://sonarcloud.io/api/project_badges/measure?project=SuppieRK_Shoostr&metric=coverage)](https://sonarcloud.io/dashboard?id=SuppieRK_Shoostr)
+[![shoostr-core on Maven Central](https://img.shields.io/maven-central/v/io.github.suppierk/shoostr-core?label=shoostr-core)](https://central.sonatype.com/artifact/io.github.suppierk/shoostr-core)
+[![shoostr-test on Maven Central](https://img.shields.io/maven-central/v/io.github.suppierk/shoostr-test?label=shoostr-test)](https://central.sonatype.com/artifact/io.github.suppierk/shoostr-test)
+[![shoostr-core Javadoc](https://www.javadocs.dev/io.github.suppierk/shoostr-core/badge.svg)](https://www.javadocs.dev/io.github.suppierk/shoostr-core/latest)
+
 A Java web framework for HTTP APIs.
 
 Define routes and handle requests through a fluent Java API. Build on Jetty and configure

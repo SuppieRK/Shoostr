@@ -32,6 +32,14 @@ export default defineConfig({
             defaultLocale: 'root',
             locales: {root: {label: 'English', lang: 'en'}},
             favicon: '/favicon.svg',
+            head: [{
+                tag: 'script',
+                attrs: {
+                    type: 'module',
+                    src: 'https://static.cloudflareinsights.com/beacon.min.js',
+                    'data-cf-beacon': JSON.stringify({token: '0936c0fc0abd4ecbbc6e3bbe1d0051c4'}),
+                },
+            }],
             customCss: ['./src/styles/brand.css'],
             expressiveCode: {themes: ['github-dark', 'github-light']},
             components: {
