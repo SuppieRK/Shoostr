@@ -3,6 +3,8 @@ import {readdir, readFile, stat} from 'node:fs/promises';
 import {join, sep} from 'node:path';
 import process from 'node:process';
 import {fileURLToPath} from 'node:url';
+import {parseFrontmatter} from '@astrojs/markdown-remark';
+import sidebar from '../sidebar.mjs';
 
 const output = fileURLToPath(new URL('../dist/', import.meta.url));
 const basePath = process.env.BASE_PATH || '/';
@@ -45,7 +47,7 @@ test('published pages keep their links and assets inside the hosting path', asyn
     }
 });
 
-test('readers can find published dependencies, Javadocs and complete examples', async ({page, request}) => {
+test('readers can find published dependencies and Javadocs', async ({page, request}) => {
     await page.goto('./');
     const main = page.locator('main');
     const beforeStarting = main.getByRole('region', {name: 'Before you start'});
@@ -62,17 +64,73 @@ test('readers can find published dependencies, Javadocs and complete examples', 
         const index = await request.get(await link.getAttribute('href'));
         expect(index.ok()).toBe(true);
     }
+    const integrationTypes = [
+        'Pac4j', 'MicrometerMetrics', 'OpenTelemetryTracing', 'OpenApi', 'OpenApiOperation',
+        'Mcp', 'McpHttpSecurity', 'McpIdentity', 'McpSessionLimits',
+    ];
+    for (const type of integrationTypes) {
+        const link = main.getByRole('link', {name: type, exact: true});
+        const javadoc = await request.get(await link.getAttribute('href'));
+        expect(javadoc.ok(), `Published Javadoc for ${type}`).toBe(true);
+        expect(await javadoc.text()).toMatch(new RegExp(`<h1 title="[^"]+ ${type}"`));
+    }
     await main.getByRole('link', {name: 'Shoostr', exact: true}).click();
     await expect(page.getByRole('heading', {level: 1})).toHaveText('Class Shoostr');
+});
 
+test('the agent index describes every guide and links to a complete page-sized export', async ({request}) => {
     const agentIndex = await request.get('llms.txt');
     expect(agentIndex.ok()).toBe(true);
-    const entries = (await agentIndex.text()).split('\n').filter(line => line.startsWith('- ['));
+    const index = await agentIndex.text();
+    expect(index).toContain('> Shoostr is a Java 21 web framework on Jetty for HTTP APIs.');
+    const entries = index.split('\n').filter(line => line.includes(' [Markdown]('));
     expect(entries[0]).toContain(new URL('start/libraries/', published).href);
+    expect(entries[1]).toContain(`(${published})`);
 
     const complete = await request.get('llms-full.txt');
+    const abridged = await request.get('llms-small.txt');
     expect(complete.ok()).toBe(true);
-    const text = (await complete.text()).replaceAll('\r\n', '\n').replaceAll(/[ \t]+$/gm, '');
+    expect(abridged.ok()).toBe(true);
+    const full = await complete.text();
+    const small = await abridged.text();
+    expect(index).toContain(`(${new URL('llms-full.txt', published)}): ${Buffer.byteLength(full).toLocaleString('en-US')} bytes`);
+    expect(index).toContain(`(${new URL('llms-small.txt', published)}): ${Buffer.byteLength(small).toLocaleString('en-US')} bytes`);
+
+    const docs = new URL('../src/content/docs/', import.meta.url);
+    const guides = (await readdir(docs, {recursive: true})).filter(file => file.endsWith('.mdx'));
+    expect(entries).toHaveLength(guides.length);
+    const sources = new Set();
+    for (const file of guides) {
+        const slug = file.slice(0, -4).replaceAll(sep, '/');
+        const canonical = new URL(slug === 'index' ? './' : `${slug}/`, published);
+        const markdownPath = `llms/${slug}.md`;
+        const {frontmatter} = parseFrontmatter(await readFile(new URL(file.replaceAll(sep, '/'), docs), 'utf8'));
+        const markdown = await readFile(join(output, markdownPath), 'utf8');
+        const topic = sidebar.find(group => group.items?.some(item => item.slug === slug))?.label ?? 'Start here';
+        const section = index.split('\n## ').find(section => section.startsWith(`${topic}\n`));
+
+        expect(section).toContain(`- [${frontmatter.title}](${canonical}): ${frontmatter.description} [Markdown](${new URL(markdownPath, published)})`);
+        expect(markdown).toContain(`\n\nSource: ${canonical}\n\n`);
+        expect(full).toContain(markdown.trimEnd());
+        sources.add(`Source: ${canonical}`);
+    }
+    for (const text of [full, small]) {
+        const sourceLines = text.split('\n').filter(line => line.startsWith('Source: '));
+        expect(sourceLines).toHaveLength(guides.length);
+        expect(new Set(sourceLines)).toEqual(sources);
+        expect(sourceLines.slice(0, 2)).toEqual([`Source: ${new URL('start/libraries/', published)}`, `Source: ${published}`]);
+    }
+
+    const home = await request.get('llms/index.md');
+    expect(home.ok()).toBe(true);
+    const homeMarkdown = await home.text();
+    expect(homeMarkdown).toContain('# Your HTTP API, written in plain Java.');
+    expect(homeMarkdown).toContain('## Before you start');
+    expect(homeMarkdown).toContain('routes.get("/hello", (req, res) -> res.text("Hi!"))');
+
+    const firstRequest = await request.get('llms/start/first-request.md');
+    expect(firstRequest.ok()).toBe(true);
+    const text = (await firstRequest.text()).replaceAll('\r\n', '\n').replaceAll(/[ \t]+$/gm, '');
     for (const [scope, name] of [['main', 'HelloExample'], ['test', 'HelloExampleTest']]) {
         const source = await readFile(new URL(
             `../../examples/01-hello/src/${scope}/java/io/github/suppierk/shoostr/example/hello/${name}.java`,

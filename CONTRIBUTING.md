@@ -384,11 +384,11 @@ Sources checked on 2026-09-26:
 
 Generation uses Swagger Core 3.0.0 models and its Jackson 3 OpenAPI 3.1 `Json31` serializer.
 UI CSS and bundle are extracted at build time from
-[`org.webjars:swagger-ui:5.35.1`](https://repo.maven.apache.org/maven2/org/webjars/swagger-ui/5.35.1/).
-The SHA-256 `745a149abc9f1f40cc65ae242dd8825a44946063fe6d6cd84cddb7d5d7933593`
+[`org.webjars:swagger-ui:5.36.0`](https://repo.maven.apache.org/maven2/org/webjars/swagger-ui/5.36.0/).
+The SHA-256 `12aa334cf5b1d5e97820be2135b3d13e6cfebf79ead63697d599474d93c25a7d`
 is enforced before packaging. The WebJar is build-only; it is not published as a runtime dependency.
 No CDN or runtime download is needed. Preserve the upstream Apache LICENSE/NOTICE and
-bundle third-party notices under `META-INF/licenses/swagger-ui-5.35.1/`.
+bundle third-party notices under `META-INF/licenses/swagger-ui-5.36.0/`.
 
 ## Example container validation
 

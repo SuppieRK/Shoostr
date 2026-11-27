@@ -1,4 +1,5 @@
 import {readFile} from 'node:fs/promises';
+import {setTimeout as delay} from 'node:timers/promises';
 
 const modules = ['core', 'http', 'test', 'pac4j', 'micrometer', 'opentelemetry', 'openapi', 'mcp'];
 
@@ -27,7 +28,7 @@ function projectVersion(module, source) {
 async function publishedVersion(module, configuredVersion) {
     const artifact = `shoostr-${module}`;
     const url = `https://repo.maven.apache.org/maven2/io/github/suppierk/${artifact}/maven-metadata.xml`;
-    const response = await fetch(url, {redirect: 'error', signal: AbortSignal.timeout(30_000)}).catch(error => {
+    const response = await fetchMetadata(url).catch(error => {
         throw new Error(`Cannot look up ${artifact} releases on Maven Central`, {cause: error});
     });
     if (module === 'bom' && response.status === 404) return undefined;
@@ -42,4 +43,12 @@ async function publishedVersion(module, configuredVersion) {
     }
     return /^\d{4}\.\d{2}\.\d{1,2}\.\d+$/.test(configuredVersion) && versions.includes(`<version>${configuredVersion}</version>`)
         ? configuredVersion : release;
+}
+
+function fetchMetadata(url) {
+    const fetchOnce = () => fetch(url, {redirect: 'error', signal: AbortSignal.timeout(30_000)});
+    return fetchOnce().catch(async () => {
+        await delay(250);
+        return fetchOnce();
+    });
 }
