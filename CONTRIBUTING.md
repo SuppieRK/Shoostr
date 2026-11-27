@@ -91,9 +91,9 @@ of MCP also needs compatible core and HTTP publications. Include an unpublished 
 by giving it a stable version and using that version in the dependent library.
 
 The [installation reference](site/src/content/docs/start/libraries.mdx) and Java API reference
-use the same published versions. The site build selects each configured Gradle version when
-Maven Central lists it and uses Central's latest release otherwise. The BOM owns its version
-and artifact pins in `bom/build.gradle`. Update a pin deliberately and bump the BOM version
+use the versions declared in the checkout's Gradle files. The site builds Javadocs from that
+same checkout. The BOM owns its version and artifact pins in `bom/build.gradle`.
+Update a pin deliberately and bump the BOM version
 whenever its published constraints change.
 
 1. Compare each library with its own last successful publication. Review production
@@ -136,7 +136,8 @@ Library dependency declarations are separate from application dependency wiring.
 
 ### Build and preview
 
-Use Node.js 22.22.0 or later. Run these commands from the repository root:
+Use Node.js 22.22.0 or later and a Java 21 JDK. The site build uses the Gradle wrapper to
+generate Javadocs. Run these commands from the repository root.
 
 ```sh
 npm --prefix site ci
@@ -146,7 +147,8 @@ npm --prefix site run preview
 
 Open the local address printed by the preview command. Press Ctrl+C to stop it.
 The preview serves the production build, including the search index.
-`npm --prefix site run dev` supports editing, but its search box does not run Pagefind.
+`npm --prefix site run dev` supports editing. It builds Javadocs when you first open a Javadoc page.
+The dev server's search box does not run Pagefind.
 
 Test repository-path hosting with the same commands and these build inputs:
 
@@ -203,8 +205,6 @@ Build the library and verify examples separately:
 ```sh
 ./gradlew clean spotlessApply build
 ```
-
-Node tooling is independent of the Gradle build and the library runtime.
 
 ### Add a consumer topic
 

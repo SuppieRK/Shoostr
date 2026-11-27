@@ -34,24 +34,24 @@ function checked(response) {
     return response;
 }
 
-function shoostrReleases() {
-    let releases;
+function shoostrVersions() {
+    let versions;
     const gradleFiles = [];
     return {
-        name: 'shoostr-releases',
+        name: 'shoostr-versions',
         hooks: {
             'astro:config:setup': async ({addWatchFile, command, updateConfig}) => {
                 if (command !== 'dev' && command !== 'build') return;
-                releases = await loadDependencyVersions(path => {
+                versions = await loadDependencyVersions(path => {
                     addWatchFile(path);
                     gradleFiles.push(fileURLToPath(path));
                 });
-                updateConfig({vite: {define: {SHOOSTR_RELEASES: JSON.stringify(releases)}}});
+                updateConfig({vite: {define: {SHOOSTR_VERSIONS: JSON.stringify(versions)}}});
             },
-            'astro:build:done': options => publishJavadoc(options, releases.libraries),
+            'astro:build:done': options => publishJavadoc(options, versions.libraries),
             'astro:server:setup': options => {
                 options.server.watcher.add(gradleFiles);
-                serveJavadoc(options, base, releases.libraries);
+                serveJavadoc(options, base, versions.libraries);
             },
         },
     };
@@ -104,7 +104,7 @@ export default defineConfig({
             name: 'shoostr-search-index',
             hooks: {'astro:build:done': buildSearchIndex},
         },
-        shoostrReleases(),
+        shoostrVersions(),
         ...(documentationExports ? [documentationExports.integration] : []),
     ],
 });

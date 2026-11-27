@@ -1,16 +1,15 @@
 ---
 title: Look up the Java API
-description: Find Shoostr's core and integration types, published method signatures, overloads and exceptions, and the guides that use them.
+description: Find Shoostr's core and integration types, method signatures, overloads and exceptions, and the guides that use them.
 ---
 
-export const libraries = SHOOSTR_RELEASES.libraries;
+export const libraries = SHOOSTR_VERSIONS.libraries;
 export const javadoc = (module, path = 'index.html') =>
   `${import.meta.env.BASE_URL.replace(/\/$/, '')}/javadoc/${module}/${libraries[module]}/${path}`;
 export const prefix = 'io/github/suppierk/shoostr/';
 
-Use these Javadocs to check a released type's package, signatures, overloads and exceptions.
-They cover the releases in the [Maven and Gradle installation guide](../libraries/).
-Examples follow the project checkout and may include additions scheduled for a later release.
+Use these Javadocs to check type packages, signatures, overloads and exceptions.
+They cover the versions in the [Maven and Gradle installation guide](../libraries/).
 
 ## Core types
 
@@ -54,7 +53,7 @@ Examples follow the project checkout and may include additions scheduled for a l
 
 ## Module Javadocs
 
-| Artifact | Published Javadoc |
+| Artifact | Javadoc |
 | --- | --- |
 | `shoostr-core` | <a href={javadoc('core')}>{libraries.core}</a> |
 | `shoostr-http` | <a href={javadoc('http')}>{libraries.http}</a> |
