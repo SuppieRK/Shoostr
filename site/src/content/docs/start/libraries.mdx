@@ -1,12 +1,12 @@
 ---
 title: Install Shoostr with Maven or Gradle
-description: Add Shoostr to a Java 21 Maven or Gradle project. Find library versions, published releases and examples for importing the BOM.
+description: Add Shoostr to a Java 21 Maven or Gradle project. Find library versions and examples for importing the BOM.
 ---
 
 import { Code } from '@astrojs/starlight/components';
 
-export const { libraries: published, bom: bomVersion, bomPublished } = SHOOSTR_RELEASES;
-export const coordinate = (module) => `io.github.suppierk:shoostr-${module}:${published[module]}`;
+export const { libraries, bom: bomVersion } = SHOOSTR_VERSIONS;
+export const coordinate = (module) => `io.github.suppierk:shoostr-${module}:${libraries[module]}`;
 export const bomCoordinate = `io.github.suppierk:shoostr-bom:${bomVersion}`;
 
 Install `shoostr-core` to serve HTTP and `shoostr-test` to test it over HTTP. Shoostr requires Java 21 or later.
@@ -15,19 +15,19 @@ Use your project's logging configuration and a test framework such as JUnit Jupi
 
 ## Libraries
 
-These libraries are available on Maven Central under the group ID `io.github.suppierk`.
-[The Java API reference](../api/) lists method signatures and types for these releases.
+Use the group ID `io.github.suppierk`. The versions below come from the Gradle files used for this documentation build.
+[The Java API reference](../api/) covers the same build.
 
-| Library | Published release | When to add it | Guide |
+| Library | Version | When to add it | Guide |
 | --- | --- | --- | --- |
-| `shoostr-core` | <code>{published.core}</code> | Serve HTTP routes and responses. | [First HTTP request](../first-request/) |
-| `shoostr-http` | <code>{published.http}</code> | Use HTTP protocol values independently. Core already includes it. | [HTTP methods](../../routing/methods/) |
-| `shoostr-test` | <code>{published.test}</code> | Run HTTP fixture tests. Use test scope. | [First HTTP request test](../first-request/#test) |
-| `shoostr-pac4j` | <code>{published.pac4j}</code> | Authenticate with a configured pac4j direct client. | [pac4j authentication](../../security/pac4j/) and [protected OpenAPI UI](../../openapi/ui/) |
-| `shoostr-micrometer` | <code>{published.micrometer}</code> | Record request metrics in your Micrometer registry. | [Micrometer metrics](../../observability/metrics/) |
-| `shoostr-opentelemetry` | <code>{published.opentelemetry}</code> | Trace requests with your OpenTelemetry SDK. | [OpenTelemetry tracing](../../observability/tracing/) |
-| `shoostr-openapi` | <code>{published.openapi}</code> | Describe operations or serve local Swagger UI assets. | [OpenAPI documents](../../openapi/documents/) and [OpenAPI UI](../../openapi/ui/) |
-| `shoostr-mcp` | <code>{published.mcp}</code> | Mount a native MCP server over Streamable HTTP. | [MCP server](../../mcp/server/), [security](../../mcp/security/) and [client interactions](../../mcp/interactions/) |
+| `shoostr-core` | <code>{libraries.core}</code> | Serve HTTP routes and responses. | [First HTTP request](../first-request/) |
+| `shoostr-http` | <code>{libraries.http}</code> | Use HTTP protocol values independently. Core already includes it. | [HTTP methods](../../routing/methods/) |
+| `shoostr-test` | <code>{libraries.test}</code> | Run HTTP fixture tests. Use test scope. | [First HTTP request test](../first-request/#test) |
+| `shoostr-pac4j` | <code>{libraries.pac4j}</code> | Authenticate with a configured pac4j direct client. | [pac4j authentication](../../security/pac4j/) and [protected OpenAPI UI](../../openapi/ui/) |
+| `shoostr-micrometer` | <code>{libraries.micrometer}</code> | Record request metrics in your Micrometer registry. | [Micrometer metrics](../../observability/metrics/) |
+| `shoostr-opentelemetry` | <code>{libraries.opentelemetry}</code> | Trace requests with your OpenTelemetry SDK. | [OpenTelemetry tracing](../../observability/tracing/) |
+| `shoostr-openapi` | <code>{libraries.openapi}</code> | Describe operations or serve local Swagger UI assets. | [OpenAPI documents](../../openapi/documents/) and [OpenAPI UI](../../openapi/ui/) |
+| `shoostr-mcp` | <code>{libraries.mcp}</code> | Mount a native MCP server over Streamable HTTP. | [MCP server](../../mcp/server/), [security](../../mcp/security/) and [client interactions](../../mcp/interactions/) |
 
 Add only the integrations you intend to configure. Guide notes list additional third-party dependencies where needed.
 
@@ -41,12 +41,12 @@ Add these dependencies to your existing POM. Keep `shoostr-test` in test scope.
     <dependency>
         <groupId>io.github.suppierk</groupId>
         <artifactId>shoostr-core</artifactId>
-        <version>${published.core}</version>
+        <version>${libraries.core}</version>
     </dependency>
     <dependency>
         <groupId>io.github.suppierk</groupId>
         <artifactId>shoostr-test</artifactId>
-        <version>${published.test}</version>
+        <version>${libraries.test}</version>
         <scope>test</scope>
     </dependency>
 </dependencies>`} />
@@ -69,8 +69,6 @@ Add these dependencies to your existing POM. Keep `shoostr-test` in test scope.
 
 Import `shoostr-bom` once, then declare each library you use without a version. The BOM selects its own compatible
 library versions.
-
-{!bomPublished && <p>Use the explicit versions above until Maven Central lists BOM version <code>{bomVersion}</code>.</p>}
 
 ### Import the BOM with Maven
 

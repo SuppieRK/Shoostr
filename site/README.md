@@ -1,6 +1,6 @@
 # Edit and review the site
 
-Use Node.js **22.22.0 or later** and a complete repository checkout: documentation pages import Java examples and tests
+Use Node.js **22.22.0 or later**, a Java 21 JDK and a complete repository checkout. Documentation pages import Java examples and tests
 from outside this folder. Run all commands below from the **repository root**. These commands work in Bash and
 PowerShell.
 
@@ -61,11 +61,10 @@ owns the writing rules. Its [build and preview section](../CONTRIBUTING.md#build
 covers `/Shoostr/` hosting and the automated browser checks.
 
 The [version loader](dependency-versions.mjs) reads each module's `build.gradle`. Keep one literal `version`
-assignment per module. The loader selects that version if Maven Central lists it and uses Central's latest release
-otherwise. The installation examples, Java API reference and versioned Javadoc paths share this selection.
+assignment per module. The installation examples, Java API reference and Markdown exports use those versions.
 
-The build downloads the selected Javadoc archives and verifies their Maven Central checksums. During development,
-opening a Javadoc page downloads the archive for that module. A Gradle version change refreshes the selection.
+The site build generates Javadocs with the repository's Gradle wrapper and copies them to versioned paths.
+The dev server generates Javadocs when you first open a Javadoc page. Editing a Gradle version refreshes the dev server.
 Builds with `SITE_URL` also generate the machine-readable documentation from the rendered guides.
 
 ## Languages

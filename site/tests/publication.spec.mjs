@@ -47,7 +47,7 @@ test('published pages keep their links and assets inside the hosting path', asyn
     }
 });
 
-test('readers can find published dependencies and Javadocs', async ({page, request}) => {
+test('readers can find dependencies and Javadocs from the documentation build', async ({page, request}) => {
     await page.goto('./');
     const main = page.locator('main');
     const beforeStarting = main.getByRole('region', {name: 'Before you start'});
@@ -71,7 +71,7 @@ test('readers can find published dependencies and Javadocs', async ({page, reque
     for (const type of integrationTypes) {
         const link = main.getByRole('link', {name: type, exact: true});
         const javadoc = await request.get(await link.getAttribute('href'));
-        expect(javadoc.ok(), `Published Javadoc for ${type}`).toBe(true);
+        expect(javadoc.ok(), `Javadoc for ${type}`).toBe(true);
         expect(await javadoc.text()).toMatch(new RegExp(`<h1 title="[^"]+ ${type}"`));
     }
     await main.getByRole('link', {name: 'Shoostr', exact: true}).click();
@@ -139,37 +139,38 @@ test('the agent index describes every guide and links to a complete page-sized e
     }
 });
 
-test('installation and Javadocs use the releases selected for the Gradle projects', async ({page, request}) => {
+test('installation, Javadocs and Markdown use the versions declared in Gradle', async ({page, request}) => {
     await page.goto('start/libraries/');
     const main = page.locator('main');
-    await expect(main.getByRole('columnheader', {name: 'Project version', exact: true})).toHaveCount(0);
+    await expect(main.getByRole('columnheader', {name: 'Version', exact: true})).toHaveCount(1);
     const modules = ['core', 'http', 'test', 'pac4j', 'micrometer', 'opentelemetry', 'openapi', 'mcp'];
     const versions = new Map(await Promise.all([...modules, 'bom'].map(async module =>
-        [module, await expectedRelease(module, page, request)])));
+        [module, await expectedVersion(module)])));
     for (const module of modules) {
         const cells = libraryRow(page, module).getByRole('cell');
-        await expect.soft(cells.nth(1), `Published release for shoostr-${module}`).toHaveText(versions.get(module).version);
+        await expect.soft(cells.nth(1), `Gradle version for shoostr-${module}`).toHaveText(versions.get(module));
     }
 
     const lines = await main.locator('.ec-line .code').allTextContents();
     const code = lines.map(line => line.trim()).join('\n');
+    const markdown = await request.get('llms/start/libraries.md');
+    expect(markdown.ok()).toBe(true);
+    const installation = await markdown.text();
     for (const module of ['core', 'test', 'bom']) {
-        const {version} = versions.get(module);
+        const version = versions.get(module);
         const coordinate = `io.github.suppierk:shoostr-${module}:${version}`;
         expect.soft(code).toContain(`<artifactId>shoostr-${module}</artifactId>\n<version>${version}</version>`);
         expect.soft(code).toContain(`"${coordinate}"`);
         expect.soft(code).toContain(`'${coordinate}'`);
+        expect.soft(installation).toContain(coordinate);
     }
     await expect(main.getByRole('heading', {name: 'Import the BOM with Gradle (Kotlin DSL)', exact: true})).toBeVisible();
-    const bom = versions.get('bom');
-    expect.soft(code).toContain(`implementation(platform("io.github.suppierk:shoostr-bom:${bom.version}"))`);
-    const notice = main.getByText('Use the explicit versions above until Maven Central lists BOM version');
-    if (bom.published) await expect(notice).toHaveCount(0);
-    else await expect(notice).toContainText(bom.version);
+    expect.soft(code).toContain(`implementation(platform("io.github.suppierk:shoostr-bom:${versions.get('bom')}"))`);
+    await expect(main.getByText('Use the explicit versions above until Maven Central lists BOM version')).toHaveCount(0);
 
     await page.goto('start/api/');
     for (const module of modules) {
-        const {version} = versions.get(module);
+        const version = versions.get(module);
         const link = libraryRow(page, module).getByRole('link');
         await expect.soft(link).toHaveText(version);
         await expect.soft(link).toHaveAttribute('href', `${basePath}javadoc/${module}/${version}/index.html`);
@@ -181,26 +182,12 @@ function libraryRow(page, module) {
     return page.locator('main').getByRole('row').filter({has: name});
 }
 
-async function expectedRelease(module, page, request) {
+async function expectedVersion(module) {
     const source = await readFile(new URL(`../../${module}/build.gradle`, import.meta.url), 'utf8');
     const declaration = source.split(/\r?\n/).find(line => /^\s*version\s*=/.test(line));
-    const projectVersion = declaration?.split(/['"]/)[1];
-    expect(projectVersion, `${module}/build.gradle should declare its version`).toBeTruthy();
-
-    const response = await request.get(`https://repo.maven.apache.org/maven2/io/github/suppierk/shoostr-${module}/maven-metadata.xml`);
-    if (module === 'bom' && response.status() === 404) return {version: projectVersion, published: false};
-    expect(response.ok(), `Maven Central metadata for shoostr-${module}`).toBe(true);
-
-    const version = await page.evaluate(selectVersionFromMetadata, {xml: await response.text(), projectVersion});
-    expect(version, `Expected published version for shoostr-${module}`).toBeTruthy();
-    return {version, published: true};
-}
-
-function selectVersionFromMetadata({xml, projectVersion}) {
-    const metadata = new DOMParser().parseFromString(xml, 'application/xml');
-    const published = [...metadata.querySelectorAll('versioning > versions > version')];
-    return published.some(element => element.textContent === projectVersion)
-        ? projectVersion : metadata.querySelector('versioning > release')?.textContent;
+    const version = declaration?.split(/['"]/)[1];
+    expect(version, `${module}/build.gradle should declare its version`).toBeTruthy();
+    return version;
 }
 
 test('the landing page shows the App route registration example', async ({page}) => {
