@@ -21,7 +21,7 @@ dependencies {
 	// Explicit patched dependencies also protect consumers using only the published Maven POM.
 	api 'tools.jackson.core:jackson-core:3.3.0'
 	api 'tools.jackson.core:jackson-databind:3.3.0'
-	swaggerUiAssets 'org.webjars:swagger-ui:5.35.1'
+	swaggerUiAssets 'org.webjars:swagger-ui:5.36.0'
 	testImplementation dependencies.project(':test')
 	testImplementation 'nl.jqno.equalsverifier:equalsverifier:4.5.2'
 }
