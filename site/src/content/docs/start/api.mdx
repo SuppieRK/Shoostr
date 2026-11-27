@@ -1,6 +1,6 @@
 ---
 title: Look up the Java API
-description: Find Shoostr's core Java types, published method signatures, overloads and exceptions, and the task guides that use them.
+description: Find Shoostr's core and integration types, published method signatures, overloads and exceptions, and the guides that use them.
 ---
 
 export const libraries = SHOOSTR_RELEASES.libraries;
@@ -37,6 +37,20 @@ Examples follow the project checkout and may include additions scheduled for a l
 | <a href={javadoc('http', prefix + 'http/HttpHeaders.html')}><code>HttpHeaders</code></a> | Names HTTP fields for requests and responses. | [Response headers](../../responses/headers/) |
 | <a href={javadoc('http', prefix + 'http/HttpStatusCodes.html')}><code>HttpStatusCodes</code></a> | Provides named HTTP status values. | [Generated statuses](../../errors/statuses/) |
 | <a href={javadoc('test', prefix + 'testing/TestServer.html')}><code>TestServer</code></a> | Starts a loopback application for tests and owns shutdown. | [First HTTP request test](../first-request/#test) |
+
+## Integration types
+
+| Type | Role | Guide |
+| --- | --- | --- |
+| <a href={javadoc('pac4j', prefix + 'pac4j/Pac4j.html')}><code>Pac4j</code></a> | Authenticates with a configured pac4j direct client. | [pac4j authentication](../../security/pac4j/) |
+| <a href={javadoc('micrometer', prefix + 'micrometer/MicrometerMetrics.html')}><code>MicrometerMetrics</code></a> | Records request metrics in your Micrometer registry. | [Request metrics](../../observability/metrics/) |
+| <a href={javadoc('opentelemetry', prefix + 'opentelemetry/OpenTelemetryTracing.html')}><code>OpenTelemetryTracing</code></a> | Creates request spans with your OpenTelemetry SDK. | [Request tracing](../../observability/tracing/) |
+| <a href={javadoc('openapi', prefix + 'openapi/OpenApi.html')}><code>OpenApi</code></a> | Collects explicit OpenAPI operation descriptions and serves the generated document. | [OpenAPI documents](../../openapi/documents/) |
+| <a href={javadoc('openapi', prefix + 'openapi/OpenApiOperation.html')}><code>OpenApiOperation</code></a> | Configures operation metadata for a route or group. | [OpenAPI documents](../../openapi/documents/) |
+| <a href={javadoc('mcp', prefix + 'mcp/Mcp.html')}><code>Mcp</code></a> | Owns a native MCP server and its Streamable HTTP transport. | [MCP server](../../mcp/server/) |
+| <a href={javadoc('mcp', prefix + 'mcp/McpHttpSecurity.html')}><code>McpHttpSecurity</code></a> | Configures HTTP admission, identity extraction and message policy. | [MCP security](../../mcp/security/) |
+| <a href={javadoc('mcp', prefix + 'mcp/McpIdentity.html')}><code>McpIdentity</code></a> | Carries detached caller identity for MCP transport admission and session ownership. | [MCP security](../../mcp/security/) |
+| <a href={javadoc('mcp', prefix + 'mcp/McpSessionLimits.html')}><code>McpSessionLimits</code></a> | Sets session allocation limits and idle expiry. | [MCP security](../../mcp/security/) |
 
 ## Module Javadocs
 

@@ -1,10 +1,11 @@
 import {defineConfig} from 'astro/config';
 import starlight from '@astrojs/starlight';
-import starlightLlmsTxt from 'starlight-llms-txt';
 import {fileURLToPath} from 'node:url';
 import * as pagefind from 'pagefind';
 import {loadDependencyVersions} from './dependency-versions.mjs';
 import {publishJavadoc, serveJavadoc} from './publish-javadoc.mjs';
+import {agentDocs} from './agent-docs.mjs';
+import sidebar from './sidebar.mjs';
 
 const site = process.env.SITE_URL;
 const base = process.env.BASE_PATH || '/';
@@ -12,6 +13,8 @@ const socialImagePath = `${base.replace(/\/$/, '')}/shoostr-social.png`;
 const socialImage = site ? new URL(socialImagePath, site).href : socialImagePath;
 const socialImageAlt = 'Shoostr, a Java web framework for HTTP APIs, with a Java route example.';
 const siteRoot = site && new URL(`${base.replace(/\/$/, '')}/`, site);
+const description = 'Shoostr is a Java 21 web framework on Jetty for HTTP APIs.';
+const documentationExports = siteRoot && agentDocs(sidebar, siteRoot, description);
 
 async function buildSearchIndex({dir}) {
     try {
@@ -61,21 +64,11 @@ export default defineConfig({
     integrations: [
         starlight({
             title: 'Shoostr',
-            description: 'Build HTTP applications with explicit Java configuration.',
+            description,
             defaultLocale: 'root',
             locales: {root: {label: 'English', lang: 'en'}},
             favicon: '/favicon.svg',
-            plugins: siteRoot ? [
-                starlightLlmsTxt({
-                    promote: ['start/libraries', 'start/api', 'start/first-request'],
-                    details: [
-                        '## Start here',
-                        `- [Install Shoostr with Maven or Gradle](${new URL('start/libraries/', siteRoot)}): Java requirements, coordinates and dependency versions.`,
-                        `- [Java API reference](${new URL('start/api/', siteRoot)}): type lookup and released Javadocs.`,
-                        `- [Handle your first HTTP request](${new URL('start/first-request/', siteRoot)}): complete application and HTTP test.`,
-                    ].join('\n'),
-                }),
-            ] : [],
+            plugins: documentationExports ? [documentationExports.plugin] : [],
             social: [
                 {icon: 'github', label: 'GitHub', href: 'https://github.com/SuppieRK/Shoostr'},
                 {icon: 'seti:maven', label: 'Maven Central', href: 'https://central.sonatype.com/artifact/io.github.suppierk/shoostr-core'},
@@ -105,170 +98,13 @@ export default defineConfig({
                 Sidebar: './src/components/Sidebar.astro',
                 PageFrame: './src/components/PageFrame.astro',
             },
-            sidebar: [
-                {label: 'Overview', slug: ''},
-                {
-                    label: 'Start here',
-                    collapsed: false,
-                    items: [
-                        {slug: 'start/libraries'},
-                        {slug: 'start/first-request'},
-                        {slug: 'start/api'},
-                    ],
-                },
-                {
-                    label: 'Routes',
-                    collapsed: false,
-                    items: [
-                        {slug: 'routing/methods'},
-                        {slug: 'routing/patterns'},
-                        {slug: 'routing/groups'},
-                        {slug: 'routing/conditions'},
-                    ],
-                },
-                {
-                    label: 'Request data',
-                    collapsed: false,
-                    items: [
-                        {slug: 'request/parameters'},
-                        {slug: 'request/headers-cookies'},
-                        {slug: 'request/metadata'},
-                        {slug: 'request/state'},
-                    ],
-                },
-                {
-                    label: 'Responses',
-                    collapsed: true,
-                    items: [
-                        {slug: 'responses/bodies'},
-                        {slug: 'responses/headers'},
-                        {slug: 'responses/cookies'},
-                        {slug: 'responses/redirects'},
-                    ],
-                },
-                {
-                    label: 'Bodies and uploads',
-                    collapsed: true,
-                    items: [
-                        {slug: 'bodies/buffered'},
-                        {slug: 'bodies/streaming-input'},
-                        {slug: 'bodies/multipart'},
-                        {slug: 'bodies/persist-upload'},
-                    ],
-                },
-                {
-                    label: 'JSON and representations',
-                    collapsed: false,
-                    items: [
-                        {slug: 'json/codec'},
-                        {slug: 'json/negotiation'},
-                    ],
-                },
-                {
-                    label: 'Error handling',
-                    collapsed: false,
-                    items: [
-                        {slug: 'errors/exceptions'},
-                        {slug: 'errors/statuses'},
-                        {slug: 'errors/problem-details'},
-                    ],
-                },
-                {
-                    label: 'Files and resources',
-                    collapsed: true,
-                    items: [
-                        {slug: 'resources/static'},
-                        {slug: 'resources/downloads'},
-                        {slug: 'resources/caching'},
-                    ],
-                },
-                {
-                    label: 'Request lifecycle',
-                    collapsed: true,
-                    items: [
-                        {slug: 'lifecycle/hooks'},
-                        {slug: 'lifecycle/executors'},
-                        {slug: 'lifecycle/stream-admission'},
-                        {slug: 'lifecycle/shutdown'},
-                    ],
-                },
-                {
-                    label: 'Streaming',
-                    collapsed: true,
-                    items: [
-                        {slug: 'streaming/output'},
-                        {slug: 'streaming/sse'},
-                        {slug: 'streaming/sse-objects'},
-                    ],
-                },
-                {
-                    label: 'WebSockets',
-                    collapsed: true,
-                    items: [
-                        {slug: 'websockets/managed'},
-                        {slug: 'websockets/objects'},
-                        {slug: 'websockets/native'},
-                    ],
-                },
-                {
-                    label: 'Security',
-                    collapsed: true,
-                    items: [
-                        {slug: 'security/authentication'},
-                        {slug: 'security/pac4j'},
-                        {slug: 'security/sessions'},
-                        {slug: 'security/csrf'},
-                        {slug: 'security/login-logout'},
-                        {slug: 'security/cors'},
-                        {slug: 'security/proxies'},
-                    ],
-                },
-                {
-                    label: 'Observability',
-                    collapsed: true,
-                    items: [
-                        {slug: 'observability/metrics'},
-                        {slug: 'observability/tracing'},
-                    ],
-                },
-                {
-                    label: 'OpenAPI',
-                    collapsed: true,
-                    items: [
-                        {slug: 'openapi/documents'},
-                        {slug: 'openapi/ui'},
-                    ],
-                },
-                {
-                    label: 'MCP',
-                    collapsed: true,
-                    items: [
-                        {slug: 'mcp/server'},
-                        {slug: 'mcp/security'},
-                        {slug: 'mcp/interactions'},
-                    ],
-                },
-                {
-                    label: 'Application configuration',
-                    collapsed: true,
-                    items: [
-                        {slug: 'application/server-options'},
-                        {slug: 'application/native-configuration'},
-                    ],
-                },
-                {
-                    label: 'Create an extension',
-                    collapsed: true,
-                    items: [
-                        {slug: 'extensions/route-metadata'},
-                    ],
-                },
-            ],
+            sidebar,
         }),
         {
             name: 'shoostr-search-index',
             hooks: {'astro:build:done': buildSearchIndex},
         },
         shoostrReleases(),
+        ...(documentationExports ? [documentationExports.integration] : []),
     ],
 });
