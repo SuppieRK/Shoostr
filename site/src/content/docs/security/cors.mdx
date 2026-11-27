@@ -1,110 +1,119 @@
 ---
 title: Allow cross-origin requests with CORS
-description: Allow one browser origin to share credentialed responses, handle preflight methods and headers, expose selected response headers, and keep authentication independent.
+description: Configure CORS for selected browser origins. Allow credentialed responses, handle preflight requests, and expose selected response headers.
 next:
   label: Configure trusted proxies
   link: ../proxies/
 ---
 
-import { Code } from '@astrojs/starlight/components';
+import {Code} from '@astrojs/starlight/components';
 import application from '../../../../../examples/14-security/src/main/java/io/github/suppierk/shoostr/example/authentication/CorsExample.java?raw';
 import test from '../../../../../examples/14-security/src/test/java/io/github/suppierk/shoostr/example/authentication/CorsExampleTest.java?raw';
 
 ## Description
 
-Cross-Origin Resource Sharing (CORS) tells a browser which cross-origin requests and response data a service permits. It is a browser access policy, not authentication or protection against a non-browser client.
+Use Cross-Origin Resource Sharing (CORS) to tell browsers which origins can read your responses and what
+they can send after a preflight. Verify callers separately with [authentication](../authentication/).
 
-`CorsPolicy` describes allowed origins, methods and headers. `Cors` is the provider; the route's `Lifecycle` configuration selects that instance and its policy. `HttpMethods` and `HttpHeaders` supply named protocol values.
+1. Build a `CorsPolicy` with the allowed origins, methods and request headers. Pass it to `new Cors(policy)`.
+2. In a route or group configuration callback, use the supplied `Lifecycle` to call
+   `lifecycle.withExtension(cors)`. Shoostr handles shared setup on first selection.
+3. To use the policy as the application default, call `app.withExtension(cors)` before registering routes.
+   Call `lifecycle.withoutExtension(cors)` for a route or group you want to exclude.
 
-This task admits selected browser interactions and checks rejected origins and preflight requests.
+A group passes its selection to registered descendants, including static mounts and SSE routes. An endpoint
+registered separately uses its own scope even when its URL starts with the group's prefix.
 
-Describe allowed browser origins, methods and request headers in `CorsPolicy`, create `new Cors(policy)`, and select that instance with `lifecycle.withExtension(cors)`. Shared setup is automatic. Activate application defaults before registering routes with `app.withExtension(cors)`; exclude deliberately unprotected scopes with `lifecycle.withoutExtension(cors)`. Group selection covers registered descendants, including their static files and SSE, rather than every URL that shares a prefix.
+- A child inherits the full policy. Replace it with `lifecycle.withExtension(cors).policy(replacement)`.
+- A replacement uses its own defaults for omitted settings and its own collections for origins, methods
+  and headers. The parent and sibling policies stay in effect in their scopes.
+- Select the same `Cors` instance when replacing a policy or restoring protection after an exclusion.
+  Repeated selection keeps one contribution. If you call `policy(...)` more than once, the last complete policy wins.
 
-A child inherits the complete policy until `lifecycle.withExtension(cors).policy(replacement)` replaces it.
-Define each replacement as an independent policy: its omitted fields use its own defaults, and its collections do not combine with inherited collections.
-This lets a child narrow permissions without carrying forward an origin or header from its parent.
-The replacement keeps the same extension owner and leaves parent and sibling settings unchanged; excluding an inherited owner does not allow selecting a different instance.
-Repeated selection is deduplicated, and repeated `policy(...)` calls use the last complete policy.
+| Setting | Standalone default and constraints |
+| --- | --- |
+| Origins | None. Use exact origins with a scheme and any nondefault port. Omit the path and trailing slash. |
+| Methods | `GET` and `HEAD`. An empty set permits no methods. `allMethods()` permits any valid method token. |
+| Allowed request headers | None beyond the browser's safelisted request headers. |
+| Exposed response headers | None beyond the browser's safelisted response headers. |
+| Credentials | `false`. For credentialed sharing, use exact origins and name any headers you expose. |
+| Maximum age | Five seconds. Use `0` to disable browser preflight caching. |
 
-| Setting                  | Standalone default and constraints                                                                              |
-| ------------------------ | --------------------------------------------------------------------------------------------------------------- |
-| Origins                  | None. Use exact serialized origins, including the scheme and nondefault port, without a path or trailing slash. |
-| Methods                  | GET and HEAD. An explicit empty set permits none; `allMethods()` permits any valid method token.                |
-| Allowed request headers  | None beyond the browser's safelisted request headers.                                                           |
-| Exposed response headers | None beyond the browser's safelisted response headers.                                                          |
-| Credentials              | `false`. Credentialed policies require explicit origins and explicit exposed headers.                           |
-| Maximum age              | Five seconds. Use `0` to disable preflight caching.                                                             |
+An origin or header wildcard takes the place of every other value in its collection. Preflight replies list the
+validated requested method and headers, including for wildcard methods and request headers. See the
+[Fetch CORS protocol](https://fetch.spec.whatwg.org/#http-cors-protocol).
 
-An origin or header wildcard absorbs the other values in that collection.
-For method and request-header wildcards, Shoostr answers preflight with the validated requested names.
-Serving copies are validated before selection; scoped configurators stop accepting changes when registration finishes.
-The [Fetch specification](https://fetch.spec.whatwg.org/#http-cors-protocol) explains how browsers enforce these permissions.
+A browser preflight sends `OPTIONS` with `Origin` and `Access-Control-Request-Method`. The browser omits
+credentials. See the [Fetch credential rules](https://fetch.spec.whatwg.org/#cors-protocol-and-credentials).
 
-Builder collection methods accept required-first varargs for literal values and sets for computed or explicitly empty permissions.
-Each call replaces that builder setting, and `build()` validates a complete policy.
+- Shoostr looks up the target using the requested method before authentication, CSRF and native session processing.
+- An admitted preflight returns `204` with the configured cache lifetime and required `Vary` fields. Shoostr
+  handles it without an `OPTIONS` handler.
+- Application header-admission hooks still run. An admitted preflight skips authentication, CSRF, native session
+  processing, target conditions, local hooks and the target handler.
 
-`CorsPolicy` is also a mutable JavaBean with a public no-argument constructor, field defaults, and ordinary getters and setters.
-Load configuration directly into `CorsPolicy`, then pass it to `new Cors(policy)` or a scoped replacement.
-Both operations validate and copy the complete policy; later edits to the source or to a value returned by `cors.policy()` cannot change serving permissions.
-Omitted properties keep the defaults above; null setter values restore those defaults.
-For YAML wildcard methods, supply both `methods: []` and `allMethods: true`; the setters are independent of key order, and provider selection rejects a wildcard combined with finite methods.
-Configure your chosen loader in the application.
+| Preflight result | Status |
+| --- | --- |
+| The registered target's policy permits sharing | `204` |
+| The registered target's policy denies sharing, or the target has no CORS policy | `403` |
+| Malformed CORS fields | `400` |
+| No target for the requested path or method | Normal `404` or `405` |
 
-Keep configured headers available to application code through their typed accessors:
+Shoostr checks actual cross-origin requests even after a cached preflight. Denied permissions yield `403` before
+the handler and grant no sharing. Malformed CORS input yields `400`. Once CORS admits an actual request,
+authentication failures and framework-rendered errors keep the applicable sharing and `Vary` headers, including
+after a response reset.
 
-| Accessor                  | Configured headers                                    |
-| ------------------------- | ----------------------------------------------------- |
-| `policy.allowedHeaders()` | Request headers permitted during preflight.           |
+Requests without `Origin` and same-origin requests follow normal routing. Ordinary `OPTIONS` requests use their
+own route and its policy. Excluding CORS from a route leaves ordinary HTTP access in place and removes automatic
+sharing and origin-based rejection for actual requests. Protect cookie-backed writes with [CSRF](../csrf/).
+Validate browser origins for WebSockets with a [handshake Origin check](../../websockets/managed/).
+
+Builder collection methods take a required first value and optional additional arguments. Pass a set for
+computed or explicitly empty collections. Each call replaces that setting, and `build()` validates the complete policy.
+`new Cors(policy)` and scoped replacement validate and copy the supplied policy. The scope configurator accepts
+changes only during registration.
+
+| Accessor | Configured headers |
+| --- | --- |
+| `policy.allowedHeaders()` | Request headers permitted during preflight. |
 | `policy.exposedHeaders()` | Additional response headers browser scripts may read. |
 
-Both return immutable sets of `HttpHeaders`; `cors.policy()` returns a defensive copy of the owner's base policy.
-Keep a replacement policy in a variable when its header names are also needed elsewhere.
-
-An admitted OPTIONS preflight receives `204`, the configured cache lifetime and the required `Vary` fields without an OPTIONS handler.
-Shoostr selects the registered target using the requested method before authentication, CSRF and native session processing.
-Preflight requests exclude credentials, as defined in the [Fetch standard](https://fetch.spec.whatwg.org/#cors-protocol-and-credentials).
-It skips target conditions, local hooks and the target action; application header-admission hooks still run.
-Separately registered endpoints retain their own policy, and missing targets receive no policy from a matching group's path.
-
-| Preflight result                                                     | Status                |
-| -------------------------------------------------------------------- | --------------------- |
-| Registered target's selected policy permits sharing                  | `204`                 |
-| Selected policy denies sharing, or the registered target has no CORS | `403`                 |
-| Malformed CORS fields                                                | `400`                 |
-| No target for the requested path or method                           | Normal `404` or `405` |
-
-Actual cross-origin requests are checked independently, including after a cached preflight.
-Denied permissions receive `403` before the action, while malformed CORS input receives `400`.
-For an allowed origin, authentication failures and framework-rendered errors retain the applicable sharing and `Vary` headers, including after response reset.
-Denied origins receive no sharing grant. Requests without `Origin`, same-origin requests and ordinary OPTIONS requests retain normal routing.
-
-CORS controls browser response sharing, while [authentication](../authentication/) and [CSRF protection](../csrf/) control different risks.
-Excluding CORS removes its automatic grants and cross-origin rejection; it does not forbid requests to that endpoint.
-WebSockets use a separate explicit [handshake Origin check](../../websockets/managed/).
+Both accessors return immutable sets of `HttpHeaders`. Use `cors.policy()` for a defensive copy of the owner's
+base policy. Keep a replacement policy in a variable if another part of your application needs its header names.
 
 ## Example
 
-The policy permits `https://app.example` to make GET and POST requests, request the Authorization and Content-Type headers in preflight, and read `X-Request-Id` from an actual response.
-Its credential flag allows credentialed response sharing; it does not create a session or authenticate a request.
+The application policy shares responses with `https://app.example` for `GET` and `POST`. It lets preflights
+request `Authorization` and `Content-Type`, and lets scripts read `X-Request-Id` on actual responses.
+It enables credentialed sharing and sets a 600-second preflight cache lifetime.
 
-The `/reports` group replaces that policy with one for `https://reports.example` and `X-Report-Format`, without credentialed sharing or preflight caching.
-The original origin cannot read a report, and the report origin cannot read `/messages`.
-The `/health` endpoint excludes CORS while retaining ordinary HTTP access. An endpoint registered separately under `/reports` receives the application defaults rather than the group replacement.
+| Scope | Policy |
+| --- | --- |
+| Application defaults, including `/messages` | Uses the application policy above. |
+| `/reports` group | Replaces the default with `https://reports.example` and the `X-Report-Format` request header. Credentialed sharing and preflight caching are off. |
+| `/health` | Excludes CORS and remains accessible over ordinary HTTP. |
+| Separately registered `/reports/outside` (test fixture) | Uses the application defaults. |
+
+The report endpoint returns `403` to the application origin. The messages endpoint returns `403` to the report origin.
 
 <Code code={application} lang="java" title="CorsExample.java" />
 
 ## Test
 
-`TestServer` is the HTTP test fixture: it starts the application on an available loopback port and owns its shutdown.
+The tests start `CorsExample.application()` with `TestServer` on an available loopback port. The fixture owns
+application shutdown.
 
-The separate authentication fixture uses `AuthenticationExtension`, a request authenticator. Its callback receives the incoming `Request` and outgoing `Response`, and throws `AuthenticationRequiredException` to return a `401` challenge. This distinguishes an admitted preflight from permission to perform the operation.
+- Preflight tests check the response fields, complete policy replacement and rejected methods, origins and headers.
+- Routing tests check that missing targets receive no sharing grant. They also check the health exclusion and
+  application defaults on a separately registered route.
+- An authentication fixture throws `AuthenticationRequiredException` on the actual request. Preflight succeeds,
+  then the actual request receives `401` with the sharing headers.
 
-The tests verify preflight fields, complete policy replacement, rejected origins and request headers, and the absence of inherited grants on missing targets.
-They also check the health exclusion, application defaults on a separately registered endpoint, and authentication on actual requests after an admitted preflight.
-These HTTP checks establish the server's status and headers, not browser cookie delivery or browser enforcement of CORS.
+These HTTP tests check server status and headers. Browser enforcement and cookie delivery require browser tests.
 
 <Code code={test} lang="java" title="CorsExampleTest.java" />
 
 ## Continue
 
-Next, [Configure trusted proxies](../proxies/) to separate browser policy from trusted forwarding assertions.
+Next, [configure trusted proxies](../proxies/) to separate browser policy from trusted forwarding assertions.

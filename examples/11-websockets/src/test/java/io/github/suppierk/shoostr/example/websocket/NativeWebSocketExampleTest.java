@@ -2,307 +2,201 @@ package io.github.suppierk.shoostr.example.websocket;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import io.github.suppierk.shoostr.testing.TestServer;
-import java.io.ByteArrayOutputStream;
+import io.github.suppierk.shoostr.testing.TestWebSocket;
+import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.WebSocket;
 import java.net.http.WebSocketHandshakeException;
-import java.nio.ByteBuffer;
-import java.util.concurrent.BlockingQueue;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CompletionStage;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.LinkedBlockingQueue;
+import java.time.Duration;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
+@Timeout(15)
 class NativeWebSocketExampleTest {
-  private static WebSocket connect(HttpClient client, TestServer test, Messages messages)
-      throws Exception {
-    return client
-        .newWebSocketBuilder()
-        .header("Origin", "https://app.example")
-        .subprotocols("chat.v1", "chat.v2")
-        .buildAsync(
-            new URI("ws", test.baseUri().getRawAuthority(), "/native/lobby", null, null), messages)
-        .get(3, TimeUnit.SECONDS);
-  }
+    private static final Duration MESSAGE_TIMEOUT = Duration.ofSeconds(3);
 
-  @ParameterizedTest
-  @ValueSource(
-      strings = {
-        "",
-        "https://evil.example",
-        "null",
-        "not an origin",
-        "https://app.example, https://evil.example",
-        "duplicate"
-      })
-  @Timeout(10)
-  void rejectsMissingForeignAndAmbiguousOrigins(String origin) throws Exception {
-
-    try (var test = TestServer.start(NativeWebSocketExample.application());
-        var client = HttpClient.newHttpClient()) {
-      var builder = client.newWebSocketBuilder().subprotocols("chat.v2");
-      if ("duplicate".equals(origin)) {
-        builder.header("Origin", "https://app.example").header("Origin", "https://app.example");
-      } else if (!origin.isEmpty()) {
-        builder.header("Origin", origin);
-      }
-
-      var failure = assertFailureForRejectsMissingForeignAndAmbiguousOrigins(builder, test);
-
-      assertEquals(
-          403,
-          assertInstanceOf(WebSocketHandshakeException.class, failure.getCause())
-              .getResponse()
-              .statusCode());
-    }
-  }
-
-  private ExecutionException assertFailureForRejectsMissingForeignAndAmbiguousOrigins(
-      WebSocket.Builder builder, TestServer test) {
-    return assertThrows(
-        ExecutionException.class,
-        () ->
-            builder
-                .buildAsync(
-                    new URI("ws", test.baseUri().getRawAuthority(), "/native/lobby", null, null),
-                    new Messages())
-                .thenApply(
-                    socket -> {
-                      socket.abort();
-
-                      return socket;
-                    })
-                .get(3, TimeUnit.SECONDS));
-  }
-
-  @Test
-  @Timeout(10)
-  void selectsAnOfferedSubprotocolAndDemandsEachCompleteTextMessage() throws Exception {
-
-    try (var test = TestServer.start(NativeWebSocketExample.application());
-        var client = HttpClient.newHttpClient()) {
-      var messages = new Messages();
-      var socket = connect(client, test, messages);
-
-      try {
-        assertEquals("chat.v2", socket.getSubprotocol());
-
-        socket.sendText("hel", false).get(3, TimeUnit.SECONDS);
-        socket.sendText("lo", true).get(3, TimeUnit.SECONDS);
-        socket.sendText("again", true).get(3, TimeUnit.SECONDS);
-
-        assertEquals("lobby:hello", messages.text.poll(3, TimeUnit.SECONDS));
-        assertEquals("lobby:again", messages.text.poll(3, TimeUnit.SECONDS));
-      } finally {
-        socket.abort();
-      }
-    }
-  }
-
-  @Test
-  @Timeout(10)
-  void echoesBinaryAfterItsReceiveBufferIsReleasedAndContinuesReceiving() throws Exception {
-
-    try (var test = TestServer.start(NativeWebSocketExample.application());
-        var client = HttpClient.newHttpClient()) {
-      var messages = new Messages();
-      var socket = connect(client, test, messages);
-
-      try {
-        socket.sendBinary(ByteBuffer.wrap(new byte[] {0, 1}), false).get(3, TimeUnit.SECONDS);
-        socket.sendBinary(ByteBuffer.wrap(new byte[] {(byte) 255}), true).get(3, TimeUnit.SECONDS);
-
-        assertArrayEquals(new byte[] {0, 1, (byte) 255}, messages.binary.poll(3, TimeUnit.SECONDS));
-
-        socket.sendText("after binary", true).get(3, TimeUnit.SECONDS);
-
-        assertEquals("lobby:after binary", messages.text.poll(3, TimeUnit.SECONDS));
-      } finally {
-        socket.abort();
-      }
-    }
-  }
-
-  @ParameterizedTest
-  @ValueSource(strings = {"text", "binary"})
-  @Timeout(10)
-  void closesIncomingMessagesAboveTheConfiguredLimit(String type) throws Exception {
-
-    try (var test = TestServer.start(NativeWebSocketExample.application());
-        var client = HttpClient.newHttpClient()) {
-      var messages = new Messages();
-      var socket = connect(client, test, messages);
-
-      try {
-        if ("text".equals(type)) {
-          socket.sendText("a".repeat(65), true).get(3, TimeUnit.SECONDS);
-        } else {
-          socket.sendBinary(ByteBuffer.allocate(65), true).get(3, TimeUnit.SECONDS);
+    @ParameterizedTest
+    @MethodSource("rejectedOrigins")
+    void rejectsMissingForeignAndAmbiguousOrigins(List<String> origins) throws Exception {
+        try (var test = TestServer.start(NativeWebSocketExample.application())) {
+            assertUpgradeRejected(
+                test,
+                403,
+                handshake -> {
+                    handshake.subprotocols("chat.v2");
+                    origins.forEach(origin -> handshake.header("Origin", origin));
+                });
         }
-
-        assertEquals(1009, messages.closeCode.get(3, TimeUnit.SECONDS));
-      } finally {
-        socket.abort();
-      }
     }
-  }
 
-  @Test
-  @Timeout(10)
-  void acceptsMessagesAtTheLimitAndAcknowledgesNormalClosure() throws Exception {
-
-    try (var test = TestServer.start(NativeWebSocketExample.application());
-        var client = HttpClient.newHttpClient()) {
-      var messages = new Messages();
-      var socket = connect(client, test, messages);
-
-      try {
-        socket.sendText("a".repeat(64), true).get(3, TimeUnit.SECONDS);
-
-        assertEquals("lobby:" + "a".repeat(64), messages.text.poll(3, TimeUnit.SECONDS));
-
-        socket.sendBinary(ByteBuffer.allocate(64), true).get(3, TimeUnit.SECONDS);
-
-        assertArrayEquals(new byte[64], messages.binary.poll(3, TimeUnit.SECONDS));
-
-        socket.sendClose(WebSocket.NORMAL_CLOSURE, "Finished").get(3, TimeUnit.SECONDS);
-
-        assertEquals(1000, messages.closeCode.get(3, TimeUnit.SECONDS));
-      } finally {
-        socket.abort();
-      }
-    }
-  }
-
-  @ParameterizedTest
-  @ValueSource(ints = {32, 33})
-  @Timeout(10)
-  void limitsMultibyteTextByItsUtf8BytesRatherThanItsCharacterCount(int characters)
-      throws Exception {
-
-    try (var test = TestServer.start(NativeWebSocketExample.application());
-        var client = HttpClient.newHttpClient()) {
-      var messages = new Messages();
-      var socket = connect(client, test, messages);
-
-      try {
-        socket.sendText("é".repeat(characters), true).get(3, TimeUnit.SECONDS);
-        if (characters == 32) {
-          assertEquals("lobby:" + "é".repeat(32), messages.text.poll(3, TimeUnit.SECONDS));
-        } else {
-          assertEquals(1009, messages.closeCode.get(3, TimeUnit.SECONDS));
+    @ParameterizedTest
+    @ValueSource(strings = {"", "chat.v1"})
+    void rejectsHandshakeThatDoesNotOfferTheRequiredSubprotocol(String protocol) throws Exception {
+        try (var test = TestServer.start(NativeWebSocketExample.application())) {
+            assertUpgradeRejected(
+                test,
+                400,
+                handshake -> {
+                    handshake.header("Origin", "https://app.example");
+                    if (!protocol.isEmpty()) {
+                        handshake.subprotocols(protocol);
+                    }
+                });
         }
-      } finally {
-        socket.abort();
-      }
-    }
-  }
-
-  @ParameterizedTest
-  @ValueSource(strings = {"", "chat.v1"})
-  @Timeout(10)
-  void rejectsHandshakeThatDoesNotOfferTheRequiredSubprotocol(String protocol) throws Exception {
-
-    try (var test = TestServer.start(NativeWebSocketExample.application());
-        var client = HttpClient.newHttpClient()) {
-      var builder = client.newWebSocketBuilder().header("Origin", "https://app.example");
-      if (!protocol.isEmpty()) {
-        builder.subprotocols(protocol);
-      }
-
-      var failure =
-          assertFailureForRejectsHandshakeThatDoesNotOfferTheRequiredSubprotocol(builder, test);
-
-      var handshake = assertInstanceOf(WebSocketHandshakeException.class, failure.getCause());
-      assertEquals(400, handshake.getResponse().statusCode());
-    }
-  }
-
-  private ExecutionException assertFailureForRejectsHandshakeThatDoesNotOfferTheRequiredSubprotocol(
-      WebSocket.Builder builder, TestServer test) {
-    return assertThrows(
-        ExecutionException.class,
-        () ->
-            builder
-                .buildAsync(
-                    new URI("ws", test.baseUri().getRawAuthority(), "/native/lobby", null, null),
-                    new Messages())
-                .thenApply(
-                    socket -> {
-                      socket.abort();
-
-                      return socket;
-                    })
-                .get(3, TimeUnit.SECONDS));
-  }
-
-  private static final class Messages implements WebSocket.Listener {
-    private final BlockingQueue<String> text;
-    private final StringBuilder partial;
-
-    private final BlockingQueue<byte[]> binary;
-    private final ByteArrayOutputStream partialBinary;
-
-    private final CompletableFuture<Integer> closeCode;
-
-    private Messages() {
-      this.text = new LinkedBlockingQueue<>();
-      this.partial = new StringBuilder();
-
-      this.binary = new LinkedBlockingQueue<>();
-      this.partialBinary = new ByteArrayOutputStream();
-
-      this.closeCode = new CompletableFuture<>();
     }
 
-    @Override
-    public CompletionStage<?> onText(WebSocket socket, CharSequence data, boolean last) {
-      partial.append(data);
-      if (last) {
-        text.add(partial.toString());
-        partial.setLength(0);
-      }
+    @Test
+    void selectsAnOfferedSubprotocol() throws Exception {
+        try (var test = TestServer.start(NativeWebSocketExample.application());
+             var client = HttpClient.newHttpClient()) {
+            var socket = connectForSubprotocolCheck(test, client);
 
-      socket.request(1);
-
-      return CompletableFuture.completedFuture(null);
+            try {
+                assertEquals("chat.v2", socket.getSubprotocol());
+            } finally {
+                socket.abort();
+            }
+        }
     }
 
-    @Override
-    public CompletionStage<?> onBinary(WebSocket socket, ByteBuffer data, boolean last) {
-      var bytes = new byte[data.remaining()];
-      data.get(bytes);
-      partialBinary.writeBytes(bytes);
-      if (last) {
-        binary.add(partialBinary.toByteArray());
-        partialBinary.reset();
-      }
+    @Test
+    void demandsEachCompleteTextMessage() throws Exception {
+        try (var test = TestServer.start(NativeWebSocketExample.application());
+             var socket = connectToLobby(test)) {
+            socket.sendText("hel", false);
+            socket.sendText("lo", true);
+            socket.sendText("again");
 
-      socket.request(1);
-
-      return CompletableFuture.completedFuture(null);
+            assertEquals("lobby:hello", socket.receiveText(MESSAGE_TIMEOUT));
+            assertEquals("lobby:again", socket.receiveText(MESSAGE_TIMEOUT));
+        }
     }
 
-    @Override
-    public CompletionStage<?> onClose(WebSocket socket, int code, String reason) {
-      closeCode.complete(code);
+    @Test
+    void echoesBinaryAfterItsReceiveBufferIsReleasedAndContinuesReceiving() throws Exception {
+        try (var test = TestServer.start(NativeWebSocketExample.application());
+             var socket = connectToLobby(test)) {
+            socket.sendBinary(new byte[]{0, 1}, false);
+            socket.sendBinary(new byte[]{(byte) 255}, true);
 
-      return CompletableFuture.completedFuture(null);
+            assertArrayEquals(
+                new byte[]{0, 1, (byte) 255},
+                socket.receiveBinary(MESSAGE_TIMEOUT)
+            );
+
+            socket.sendText("after binary");
+
+            assertEquals("lobby:after binary", socket.receiveText(MESSAGE_TIMEOUT));
+        }
     }
 
-    @Override
-    public void onError(WebSocket socket, Throwable failure) {
-      closeCode.completeExceptionally(failure);
+    @ParameterizedTest
+    @ValueSource(strings = {"text", "binary"})
+    void closesIncomingMessagesAboveTheConfiguredLimit(String type) throws Exception {
+        try (var test = TestServer.start(NativeWebSocketExample.application());
+             var socket = connectToLobby(test)) {
+            if ("text".equals(type)) {
+                socket.sendText("a".repeat(65));
+            } else {
+                socket.sendBinary(new byte[65]);
+            }
+
+            assertEquals(1009, socket.receiveClose(MESSAGE_TIMEOUT).code());
+        }
     }
-  }
+
+    @Test
+    void acceptsMessagesAtTheLimitAndAcknowledgesNormalClosure() throws Exception {
+        try (var test = TestServer.start(NativeWebSocketExample.application());
+             var socket = connectToLobby(test)) {
+            socket.sendText("a".repeat(64));
+            assertEquals("lobby:" + "a".repeat(64), socket.receiveText(MESSAGE_TIMEOUT));
+
+            socket.sendBinary(new byte[64]);
+            assertArrayEquals(new byte[64], socket.receiveBinary(MESSAGE_TIMEOUT));
+
+            socket.sendClose(WebSocket.NORMAL_CLOSURE, "Finished");
+            assertEquals(1000, socket.receiveClose(MESSAGE_TIMEOUT).code());
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(ints = {
+        32,
+        33
+    })
+    void limitsMultibyteTextByItsUtf8BytesRatherThanItsCharacterCount(int characters) throws Exception {
+        try (var test = TestServer.start(NativeWebSocketExample.application());
+             var socket = connectToLobby(test)) {
+            socket.sendText("é".repeat(characters));
+
+            if (characters == 32) {
+                assertEquals("lobby:" + "é".repeat(32), socket.receiveText(MESSAGE_TIMEOUT));
+            } else {
+                assertEquals(1009, socket.receiveClose(MESSAGE_TIMEOUT).code());
+            }
+        }
+    }
+
+    private static void assertUpgradeRejected(
+        TestServer test,
+        int status,
+        Consumer<WebSocket.Builder> configureHandshake
+    ) {
+        var failure = assertThrows(
+            WebSocketHandshakeException.class,
+            () -> connectToLobby(test, configureHandshake)
+        );
+
+        assertEquals(status, failure.getResponse().statusCode());
+    }
+
+    private static Stream<List<String>> rejectedOrigins() {
+        return Stream.of(
+            List.of(),
+            List.of("https://evil.example"),
+            List.of("null"),
+            List.of("not an origin"),
+            List.of("https://app.example, https://evil.example"),
+            List.of("https://app.example", "https://app.example"));
+    }
+
+    private static WebSocket connectForSubprotocolCheck(TestServer test, HttpClient client)
+            throws Exception {
+        var target = URI.create("ws://" + test.baseUri().getRawAuthority() + "/native/lobby");
+
+        // The JDK client exposes the negotiated subprotocol directly.
+        return client.newWebSocketBuilder()
+            .header("Origin", "https://app.example")
+            .subprotocols("chat.v1", "chat.v2")
+            .buildAsync(target, new WebSocket.Listener() {})
+            .get(3, TimeUnit.SECONDS);
+    }
+
+    private static TestWebSocket connectToLobby(
+        TestServer test
+    ) throws IOException, InterruptedException {
+        return connectToLobby(test, handshake -> handshake
+            .header("Origin", "https://app.example")
+            .subprotocols("chat.v2"));
+    }
+
+    private static TestWebSocket connectToLobby(
+        TestServer test,
+        Consumer<WebSocket.Builder> configureHandshake
+    ) throws IOException, InterruptedException {
+        return test.openWebSocket("/native/{room}", path -> path
+            .pathParam("room", "lobby"), configureHandshake);
+    }
 }

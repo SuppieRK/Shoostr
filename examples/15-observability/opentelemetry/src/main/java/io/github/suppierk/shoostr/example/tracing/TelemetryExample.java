@@ -51,7 +51,7 @@ public final class TelemetryExample {
           // This endpoint remains untraced; extension selection belongs to individual
           // routes/groups.
           routes
-              .get("/health", (ignored, response) -> response.text("ok"))
+              .get("/health", (request, response) -> response.text("ok"))
               .get(
                   "/hello/{name}",
                   (request, response) ->

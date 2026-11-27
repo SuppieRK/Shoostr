@@ -1,0 +1,68 @@
+---
+title: Limit concurrent streams
+description: Cap active server-sent event streams with a Resilience4j semaphore bulkhead and hold each permit through HTTP completion.
+next:
+  label: Close the application
+  link: ../shutdown/
+---
+
+import {Code} from '@astrojs/starlight/components';
+import application from '../../../../../examples/12-lifecycle/src/main/java/io/github/suppierk/shoostr/example/lifecycle/StreamBulkheadExample.java?raw';
+import test from '../../../../../examples/12-lifecycle/src/test/java/io/github/suppierk/shoostr/example/lifecycle/StreamBulkheadExampleTest.java?raw';
+
+## Description
+
+A server-sent event stream keeps its HTTP exchange open while the handler waits for events or writes output.
+A waiting virtual thread can free its carrier to run other work while the exchange stays open.
+Set an admission limit to control how many streams the application serves at once. See [endpoint execution](../executors/).
+
+Add the `io.github.resilience4j:resilience4j-bulkhead` dependency. A semaphore bulkhead grants one permit per
+admitted exchange.
+
+- Set `maxConcurrentCalls` to the number of streams your workload can support at once.
+- Set `maxWaitDuration(Duration.ZERO)` to reject immediately when all permits are in use.
+
+The application owns the bulkhead, the producer and the response to a rejected request.
+
+## Example
+
+`/events` sends `ready`, waits for its producer, then sends the producer's text. `/health` runs on the same server
+outside the bulkhead and returns `healthy`.
+
+The SSE route's configuration callback receives `Lifecycle`, which registers behavior for that route.
+The `observe(...)` factory creates an `AtomicBoolean` flag and stores it as a request attribute for the admission hook.
+The returned `RequestObservation` captures the same flag and the bulkhead for use at completion.
+
+1. The `beforeRouteHandler(...)` hook acquires a permit and sets the flag before the handler starts.
+   If the bulkhead is full, the example maps `BulkheadFullException` to `503` and skips the handler.
+2. The handler streams with the permit held. The permit stays held after the handler returns and the observation's
+   invocation scope closes.
+3. After application cleanup and transport termination, including the final write, the terminal `complete(...)`
+   callback releases the permit if the hook acquired one.
+
+See [request lifecycle hooks](../hooks/).
+
+The application decides which routes share the bulkhead and how their producers stop.
+
+- The producer runs on the handler thread. Give it a way to return or cooperate with interruption during shutdown.
+- After a client disconnects, the permit stays held until the handler finishes and the transport terminates.
+- This bulkhead covers `/events` on this application instance. Set admission policy separately for native MCP callbacks.
+
+<Code code={application} lang="java" title="StreamBulkheadExample.java" />
+
+## Test
+
+`TestServer` starts the application from `StreamBulkheadExample.application(...)` on an available loopback port
+and owns its shutdown.
+One test holds 40 streams open with a 32-thread Jetty platform pool limit. It checks that `/health` still responds,
+the next stream gets `503`, and a new stream can open after the producers finish.
+
+The other tests check that the permit stays held through the final write. They also verify that a permit becomes
+available again after producer failure, after a disconnected stream's producer exits, and when shutdown signals
+a waiting producer. The deadlines tell the tests how long to wait for these results.
+
+<Code code={test} lang="java" title="StreamBulkheadExampleTest.java" />
+
+## Continue
+
+Next, [close the application](../shutdown/) to signal waiting producers before releasing their resources.

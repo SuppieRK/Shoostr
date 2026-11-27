@@ -2,44 +2,57 @@
 title: Share request-local state
 description: Share attributes during handling and retain snapshots without retaining the live request.
 next:
-  label: Keep state across requests
+  label: Keep session state and renew session identifiers
   link: ../../security/sessions/
 ---
 
-import { Code } from '@astrojs/starlight/components';
+import {Code} from '@astrojs/starlight/components';
 import application from '../../../../../examples/04-request/src/main/java/io/github/suppierk/shoostr/example/request/RequestStateExample.java?raw';
 import test from '../../../../../examples/04-request/src/test/java/io/github/suppierk/shoostr/example/request/RequestStateExampleTest.java?raw';
 
 ## Description
 
-A request attribute is an application value attached to one live request. It lets an earlier callback prepare information for the endpoint handler without putting that value in global or session state.
+Pass values from a hook to the endpoint handler without putting them in global or session state. A
+[request hook](../../lifecycle/hooks/) runs at a named phase of request handling. The attributes it sets belong to
+that exchange.
 
-A request hook is a callback registered at a named processing phase. This task uses a hook to attach a value and reads it in the handler. The attribute remains limited to that exchange.
+Set an attribute with `attribute(name, value)` and read it with `attribute(name)`. Keys are case-sensitive. Setting
+the same key again replaces its value. Assigning `null` removes the key.
 
-Attach values with request attributes so a hook can hand information to its endpoint. Keys are case-sensitive. Reassigning a key replaces its value, and assigning `null` removes it. Bindings belong to one request; they do not provide session state or communication with a later exchange.
+Keep the live `Request` on its owning thread and within the request-handling lifetime. Shoostr throws
+`IllegalStateException` if you access it from another thread or after that lifetime ends. Capture the values or
+snapshots you need while handling the request so you can use them later.
 
-Request access is confined to the active handler thread and lifetime.
-Do not retain the live `Request` or pass it to another thread; capture needed values and snapshots while handling the request instead.
-Parameter, header, and cookie collections are deeply immutable, but `attributeMap()` only copies the bindings: mutable application objects remain shared with the snapshot.
-Retaining those objects does not copy them or make them thread-safe.
-For an upgraded connection, use the detached values on [WebSocketConnection](../../websockets/managed/) rather than keeping its handshake request.
+Parameter, header, and cookie collections are deeply immutable snapshots you can keep after the exchange.
+`attributeMap()` returns an immutable copy of the bindings. The values are the original application objects,
+so changes to a mutable value are visible through the snapshot. If you share a mutable value across threads,
+coordinate access yourself.
+
+After a WebSocket upgrade, read detached values from [`WebSocketConnection`](../../websockets/managed/).
 
 ## Example
 
 The hook assigns a request ID and locale before the greeting handler runs.
-The handler reads an individual attribute for the response header, then passes an attribute snapshot to `greeting(...)` so that method needs no live request.
+The handler reads an individual attribute for the response header, then passes an attribute snapshot to `greeting(...)`
+so that method needs no live request.
 
 <Code code={application} lang="java" title="RequestStateExample.java" />
 
 ## Test
 
-`TestServer` is the HTTP test fixture: it starts the application on an available loopback port and owns its shutdown.
+The HTTP tests create the app with `RequestStateExample.application()`. `TestServer` starts it on an available
+loopback port and shuts it down when the fixture closes.
 
-The tests verify per-request isolation, replacement and removal, immutable snapshot bindings, and shared mutable values.
-They also check rejected access from another thread and confirm that a captured header snapshot remains usable after the response.
+Two requests to `/greeting` get different request IDs. The first selects French and the second gets the default
+English greeting. The attribute test replaces one binding and removes another. The snapshot keeps both original
+bindings, and a change to the original list is visible through it. Attempts to modify the snapshot map itself fail.
+
+A worker thread gets `IllegalStateException` when it tries to read the request's attributes or headers as maps
+or set an attribute. The header snapshot captured on the owning thread still has its original value after the
+response and a later request.
 
 <Code code={test} lang="java" title="RequestStateExampleTest.java" />
 
 ## Continue
 
-Next, [Keep state across requests](../../security/sessions/) to use an HTTP session when one exchange is not enough.
+When one exchange is not enough, learn to [keep session state and renew session identifiers](../../security/sessions/).

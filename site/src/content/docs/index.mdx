@@ -1,10 +1,31 @@
 ---
 title: Java web framework for HTTP APIs
-description: Build HTTP APIs with Shoostr, a Java 21 web framework on Jetty. Explore fluent routes, typed body handling, streaming and complete examples with HTTP tests.
+description: Build HTTP APIs with Shoostr, a Java 21 web framework on Jetty. Explore fluent routes, typed bodies, streaming, and complete examples with HTTP tests.
 template: splash
+head:
+  - tag: meta
+    attrs:
+      property: og:type
+      content: website
+  - tag: script
+    attrs:
+      type: application/ld+json
+    content: |
+      {
+        "@context": "https://schema.org",
+        "@type": "SoftwareSourceCode",
+        "name": "Shoostr",
+        "description": "A Java web framework for HTTP APIs built on Jetty.",
+        "url": "https://suppierk.github.io/Shoostr/",
+        "codeRepository": "https://github.com/SuppieRK/Shoostr",
+        "programmingLanguage": "Java",
+        "license": "https://www.apache.org/licenses/LICENSE-2.0"
+      }
 hero:
-  title: A Java web framework for HTTP APIs.
-  tagline: Define routes and handle requests through a fluent Java API. Build on Jetty and configure HTTP behavior in application code.
+  title: Your HTTP API, written in plain Java.
+  tagline: >-
+    Shoostr is a Java web framework built on <a href="https://jetty.org/">Jetty</a>.
+    Define routes, handle request bodies, and stream responses through a fluent Java API.
   actions:
     - text: Build your first endpoint
       link: start/first-request/
@@ -17,29 +38,25 @@ pagefind: false
   <section className="landing-section" aria-labelledby="why-shoostr">
     <h2 id="why-shoostr">Why Shoostr?</h2>
     <dl className="landing-benefits">
-      <div><dt>Define behavior through Java calls</dt><dd>Register handlers with a fluent API and keep request handling in application code. Follow the <a href="routing/methods/">method-routing example</a> from registration to HTTP response.</dd></div>
-      <div><dt>Work with Java values</dt><dd>Use your serialization code to convert request bodies into Java values and objects into responses. The <a href="json/codec/">JSON guide</a> follows a user payload from decoding to an HTTP response.</dd></div>
-      <div><dt>Keep related endpoint policy together</dt><dd>A route group shares a path prefix and behavior across related endpoints. Use groups to organize an API area, then give it an <a href="errors/exceptions/">error response policy</a>.</dd></div>
-      <div><dt>Configure the Jetty foundation</dt><dd>Set ordinary listener, timeout, and protocol choices through <a href="application/server-options/">application settings</a>. Use <a href="application/native-configuration/">native configuration callbacks</a> for advanced Jetty customization.</dd></div>
+      <div><dt>Routes are just Java</dt><dd>Path and handler live in a single call. No base classes to extend, no annotations to decode, no XML to chase. See the <a href="routing/methods/">method-routing example</a>.</dd></div>
+      <div><dt>Learn from code that runs</dt><dd>Each task guide pairs a complete app with its HTTP test. Copy it, change a route, and see which assertion catches you.</dd></div>
+      <div><dt>Bring your own JSON</dt><dd>Use the serialization library you need. The <a href="json/codec/">JSON guide</a> follows one user payload from decoding to the HTTP response.</dd></div>
+      <div><dt>Set the rules once</dt><dd><code>/admin</code> can fail differently from <code>/public</code> - group related routes under a shared prefix, then give the whole group its own <a href="errors/exceptions/">error responses</a>.</dd></div>
+      <div><dt>Built for live data too</dt><dd>Stream <a href="streaming/sse/">server-sent events</a> or exchange <a href="websockets/managed/">WebSocket</a> messages with the same API you use for plain endpoints.</dd></div>
+      <div><dt>Jetty: fully within reach</dt><dd>Listeners, timeouts and protocols are one call away. For anything deeper, configure Jetty before startup with <a href="application/native-configuration/">native configuration callbacks</a>.</dd></div>
     </dl>
   </section>
   <section className="landing-section" aria-labelledby="choose-task">
-    <h2 id="choose-task">Choose your next task.</h2>
+    <h2 id="choose-task">What do you want to build?</h2>
     <div className="landing-tasks">
-      <div><h3>Build an HTTP API</h3><p><a href="request/parameters/">Read parameters</a>, <a href="responses/bodies/">write a response</a>, or <a href="bodies/buffered/">accept a request body</a>. Follow the input through its handler to the response and its test.</p></div>
-      <div><h3>Send events and messages</h3><p>Use a streamed HTTP response to <a href="streaming/sse/">send server-sent events</a>, or an upgraded connection to <a href="websockets/managed/">exchange WebSocket messages</a>. Choose the interaction that fits your client.</p></div>
-      <div><h3>Add an integration</h3><p>Optional integrations connect a service to an existing library or protocol. Start with <a href="security/pac4j/">pac4j authentication</a>, <a href="observability/metrics/">Micrometer metrics</a>, <a href="openapi/documents/">OpenAPI descriptions</a>, or <a href="mcp/server/">MCP tools and resources</a>; follow the integration's registration and ownership model.</p></div>
+      <div><h3>Build an API</h3><p>Read <a href="request/parameters/">parameters</a>, accept a <a href="bodies/buffered/">request body</a>, and <a href="responses/bodies/">write the response</a>. Each guide follows the input from the handler to its test.</p></div>
+      <div><h3>Go real-time</h3><p>Push updates to clients with <a href="streaming/sse/">server-sent events</a>, or open a <a href="websockets/managed/">WebSocket</a> when messages need to flow both ways.</p></div>
+      <div><h3>Plug in the extras</h3><p>Add <a href="security/pac4j/">pac4j authentication</a>, <a href="observability/metrics/">Micrometer metrics</a>, <a href="openapi/documents/">OpenAPI descriptions</a>, or <a href="mcp/server/">MCP tools and resources</a>. Each guide shows where the integration registers and who owns what.</p></div>
     </div>
   </section>
-  <section className="landing-section" aria-labelledby="verify-behavior">
-    <h2 id="verify-behavior">Follow the explanation into an HTTP test.</h2>
-    <p>The task guides pair a complete application with its HTTP test, so you can inspect the same route definition and its response checks. The <a href="start/first-request/">first-request guide</a> follows that path from a text response to assertions over HTTP.</p>
-    <p>For performance evaluation, inspect the <a href="https://github.com/SuppieRK/Shoostr/blob/main/.github/benchmarks/README.md">measurement methods</a>, including their latency and memory limits.</p>
-  </section>
   <section className="landing-section" aria-labelledby="application-fit">
-    <h2 id="application-fit">Understand the application boundary.</h2>
-    <p>Shoostr requires Java 21 and uses Jetty for HTTP serving. It handles routes, request and response data, streaming and the phases from request processing to completion. Your application chooses its application libraries and policies, adding integrations where needed.</p>
-    <p>Shoostr is licensed under Apache 2.0. Public interfaces can change; review the relevant guides and <a href="lifecycle/shutdown/">resource-lifetime responsibilities</a> for your application.</p>
-    <p><a className="landing-next" href="start/first-request/">Build your first endpoint →</a></p>
+    <h2 id="application-fit">Before you start</h2>
+      <p><a href="start/libraries/">Install Shoostr with Maven or Gradle</a> in a Java 21 or later project. Shoostr is licensed under <a href="https://github.com/SuppieRK/Shoostr/blob/main/LICENSE">Apache 2.0</a>.</p>
+      {import.meta.env.SITE && <p><a href="llms.txt">Machine-readable guides</a></p>}
   </section>
 </div>

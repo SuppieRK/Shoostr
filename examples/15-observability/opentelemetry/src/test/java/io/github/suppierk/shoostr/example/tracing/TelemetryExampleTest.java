@@ -29,7 +29,7 @@ class TelemetryExampleTest {
         // An unsampled parent keeps this HTTP-only check independent of a trace backend.
         request ->
             request
-                .path("/hello/Ada")
+                .pathTemplate("/hello/{name}", path -> path.pathParam("name", "Ada"))
                 .header("traceparent", "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-00"),
         HttpResponse.BodyHandlers.ofString());
   }

@@ -2,131 +2,152 @@ package io.github.suppierk.shoostr.example.request;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
-
 import io.github.suppierk.shoostr.testing.TestServer;
+import org.junit.jupiter.api.Test;
+
 import java.io.Closeable;
 import java.io.IOException;
 import java.net.http.HttpResponse;
 import java.util.List;
-import org.junit.jupiter.api.Test;
 
 class HeadersCookiesExampleTest {
-  @Test
-  void distinguishesEmptyValuesFromMissingFields() throws Exception {
+    @Test
+    void distinguishesEmptyValuesFromMissingFields() throws Exception {
+        try (var test = TestServer.start(HeadersCookiesExample.application())) {
+            var missing = test.send(request ->
+                            request.path("/preferences"),
+                    HttpResponse.BodyHandlers.ofString()
+            );
 
-    try (var test = TestServer.start(HeadersCookiesExample.application())) {
-      var missing =
-          test.send(request -> request.path("/preferences"), HttpResponse.BodyHandlers.ofString());
+            assertEquals(200, missing.statusCode());
+            assertEquals("""
+                header=(missing)
+                headers=
+                headerMap=
+                cookie=(missing)
+                cookies=
+                cookieMap=
+                otherCookie=(missing)\
+                """,
+                missing.body()
+            );
 
-      assertEquals(200, missing.statusCode());
-      assertEquals(
-          """
-          header=(missing)
-          headers=
-          headerMap=
-          cookie=(missing)
-          cookies=
-          cookieMap=
-          otherCookie=(missing)\
-          """,
-          missing.body());
-
-      var empty =
-          test.send(
-              request ->
-                  request.path("/preferences").header("X-Label", "").header("Cookie", "theme="),
-              HttpResponse.BodyHandlers.ofString());
-
-      assertEquals(200, empty.statusCode());
-      assertEquals(
-          "header=\nheaders=\nheaderMap=\ncookie=\ncookies=\ncookieMap=\notherCookie=(missing)",
-          empty.body());
-    }
-  }
-
-  @Test
-  void exposesImmutableHeaderAndCookieCollections() throws Exception {
-    {
-      var app = HeadersCookiesExample.application();
-
-      try (Closeable appCleanup = app::close) {
-        app.routes()
-            .get(
-                "/snapshots",
-                (request, response) -> {
-                  var headers = request.headerMap();
-                  var cookies = request.cookieMap();
-
-                  assertEquals(List.of("one,two", "three"), headers.get("X-LABEL"));
-                  assertEquals(List.of("light", "dark"), cookies.get("theme"));
-
-                  var headerValues = headers.get("x-label");
-                  var selectedHeaders = request.headers("X-Label");
-                  final var cookieValues = cookies.get("theme");
-                  final var selectedCookies = request.cookies("theme");
-
-                  assertThrows(UnsupportedOperationException.class, headers::clear);
-                  assertThrows(UnsupportedOperationException.class, () -> headerValues.add("bad"));
-                  assertThrows(UnsupportedOperationException.class, selectedHeaders::clear);
-                  assertThrows(UnsupportedOperationException.class, cookies::clear);
-                  assertThrows(UnsupportedOperationException.class, () -> cookieValues.add("bad"));
-                  assertThrows(UnsupportedOperationException.class, selectedCookies::clear);
-
-                  response.text("checked");
-                });
-
-        try (var test = TestServer.start(app)) {
-          var response = sendResponseForExposesImmutableHeaderAndCookieCollections(test);
-
-          assertEquals(200, response.statusCode());
-          assertEquals("checked", response.body());
-        }
-      }
-    }
-  }
-
-  private HttpResponse<String> sendResponseForExposesImmutableHeaderAndCookieCollections(
-      TestServer test) throws IOException, InterruptedException {
-    return test.send(
-        request ->
-            request
-                .path("/snapshots")
-                .header("X-Label", "one,two")
-                .header("x-label", "three")
-                .header("Cookie", "theme=light; theme=dark"),
-        HttpResponse.BodyHandlers.ofString());
-  }
-
-  @Test
-  void preservesRepeatedFieldsCommaTextAndCookieSpelling() throws Exception {
-
-    try (var test = TestServer.start(HeadersCookiesExample.application())) {
-      var response = sendResponseForPreservesRepeatedFieldsCommaTextAndCookieSpelling(test);
-
-      assertEquals(200, response.statusCode());
-      assertEquals(
-          """
-          header=first,second
-          headers=first,second|third
-          headerMap=first,second|third
-          cookie=a+b%2F
-          cookies=a+b%2F|dark
-          cookieMap=a+b%2F|dark
-          otherCookie=upper\
-          """,
-          response.body());
-    }
-  }
-
-  private HttpResponse<String> sendResponseForPreservesRepeatedFieldsCommaTextAndCookieSpelling(
-      TestServer test) throws IOException, InterruptedException {
-    return test.send(
-        request ->
-            request
+            var empty = test.send(request -> request
                 .path("/preferences")
-                .header("X-Label", "first,second")
-                .header("x-label", "third")
-                .header("Cookie", "theme=a+b%2F; theme=dark; Theme=upper"),
-        HttpResponse.BodyHandlers.ofString());
-  }
+                .header("X-Label", "")
+                .header("Cookie", "theme="),
+                HttpResponse.BodyHandlers.ofString()
+            );
+
+            assertEquals(200, empty.statusCode());
+            assertEquals(
+                "header=\nheaders=\nheaderMap=\ncookie=\ncookies=\ncookieMap=\notherCookie=(missing)",
+                empty.body()
+            );
+        }
+    }
+
+    @Test
+    void exposesImmutableHeaderAndCookieCollections() throws Exception {
+        var app = HeadersCookiesExample.application();
+
+        try (Closeable appCleanup = app::close) {
+            app.routes().get("/snapshots", (request, response) -> {
+                var headers = request.headerMap();
+                var cookies = request.cookieMap();
+
+                assertEquals(
+                    List.of("one,two", "three"),
+                    headers.get("X-LABEL")
+                );
+                assertEquals(
+                    List.of("light", "dark"),
+                    cookies.get("theme")
+                );
+
+                var headerValues = headers.get("x-label");
+                var selectedHeaders = request.headers("X-Label");
+                final var cookieValues = cookies.get("theme");
+                final var selectedCookies = request.cookies("theme");
+
+                assertThrows(
+                    UnsupportedOperationException.class,
+                    headers::clear
+                );
+                assertThrows(
+                    UnsupportedOperationException.class,
+                    () -> headerValues.add("bad")
+                );
+                assertThrows(
+                    UnsupportedOperationException.class,
+                    selectedHeaders::clear
+                );
+                assertThrows(
+                    UnsupportedOperationException.class,
+                    cookies::clear
+                );
+                assertThrows(
+                    UnsupportedOperationException.class,
+                    () -> cookieValues.add("bad")
+                );
+                assertThrows(
+                    UnsupportedOperationException.class,
+                    selectedCookies::clear
+                );
+
+                response.text("checked");
+            });
+
+            try (var test = TestServer.start(app)) {
+                var response = sendResponseForExposesImmutableHeaderAndCookieCollections(test);
+
+                assertEquals(200, response.statusCode());
+                assertEquals("checked", response.body());
+            }
+        }
+    }
+
+    private HttpResponse<String> sendResponseForExposesImmutableHeaderAndCookieCollections(
+            TestServer test
+    ) throws IOException, InterruptedException {
+        return test.send(request -> request
+            .path("/snapshots")
+            .header("X-Label", "one,two")
+            .header("x-label", "three")
+            .header("Cookie", "theme=light; theme=dark"),
+            HttpResponse.BodyHandlers.ofString()
+        );
+    }
+
+    @Test
+    void preservesRepeatedFieldsCommaTextAndCookieSpelling() throws Exception {
+        try (var test = TestServer.start(HeadersCookiesExample.application())) {
+            var response = sendResponseForPreservesRepeatedFieldsCommaTextAndCookieSpelling(test);
+
+            assertEquals(200, response.statusCode());
+            assertEquals("""
+                header=first,second
+                headers=first,second|third
+                headerMap=first,second|third
+                cookie=a+b%2F
+                cookies=a+b%2F|dark
+                cookieMap=a+b%2F|dark
+                otherCookie=upper\
+                """,
+                response.body()
+            );
+        }
+    }
+
+    private HttpResponse<String> sendResponseForPreservesRepeatedFieldsCommaTextAndCookieSpelling(
+            TestServer test
+    ) throws IOException, InterruptedException {
+        return test.send(request -> request
+            .path("/preferences")
+            .header("X-Label", "first,second")
+            .header("x-label", "third")
+            .header("Cookie", "theme=a+b%2F; theme=dark; Theme=upper"),
+            HttpResponse.BodyHandlers.ofString()
+        );
+    }
 }

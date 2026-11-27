@@ -6,59 +6,89 @@ next:
   link: ../objects/
 ---
 
-import { Code } from '@astrojs/starlight/components';
+import {Code} from '@astrojs/starlight/components';
 import application from '../../../../../examples/11-websockets/src/main/java/io/github/suppierk/shoostr/example/websocket/ManagedWebSocketExample.java?raw';
 import test from '../../../../../examples/11-websockets/src/test/java/io/github/suppierk/shoostr/example/websocket/ManagedWebSocketExampleTest.java?raw';
 
 ## Description
 
-A WebSocket starts with an HTTP upgrade and then carries messages over a connection. Managed callbacks let application code handle complete messages without controlling native frame demand. `WebSocketConnection` is the handle used to send messages or close that accepted connection.
+A WebSocket starts with an HTTP handshake, then carries messages in both directions over one connection.
+Shoostr manages native frame demand and delivers complete messages to your callbacks. Use `WebSocketConnection`
+to send messages or close an accepted connection. This example replies to text and binary messages and keeps
+a separate counter for each connection.
 
-`ForbiddenException` rejects a disallowed handshake with `403` while it is still an HTTP exchange.
+- Register `routes.websocket(...)`. Text callbacks receive `String` values, and binary callbacks receive
+owned `byte[]` values.
+- The configuration callback runs once at registration time, before startup.
+Make shared state safe for concurrent access.
+- Callbacks for one connection run sequentially in the application's configured execution mode.
+Different connections can run concurrently. See [application execution mode](../../lifecycle/executors/).
+- Idle connections leave threads free for other work, and later callbacks can use a different thread.
+Keep message state with the connection.
 
-This task keeps per-connection state and responds to text and binary messages. The route's setup callback registers behavior before startup; connection callbacks run later as connections exchange messages. A rejected handshake can still return an HTTP error before the upgrade.
+To convert messages through a codec, use [object messages](../objects/).
 
-Register `routes.websocket(...)` to receive complete text as `String` and binary messages as owned `byte[]` values. Callbacks for one connection run sequentially under the [application execution mode](../../lifecycle/executors/); different connections can run concurrently. Idle state occupies no thread, and later callbacks may use a different one. Keep state per connection rather than in thread-local storage. Route configuration runs once at registration, so shared captures must be safe concurrently. This application uses a concurrent map of per-connection counters. For conversion through a codec, continue with [object messages](../objects/).
-
-Use `beforeUpgrade(...)` to reject a handshake through ordinary HTTP exception handling before the connection opens.
-This route requires exactly one `Origin` header matching `https://app.example`, rejecting missing or ambiguous values rather than treating them as trusted.
+Use `beforeUpgrade(...)` to reject a handshake through ordinary HTTP exception handling. This example accepts
+exactly one `Origin` value matching `https://app.example`. For any other result, it throws `ForbiddenException`
+and Shoostr sends `403` before the connection opens.
 
 :::note[Origin checks are not CORS]
-[CORS](../../security/cors/) controls which cross-origin HTTP responses browser scripts can read.
-The [WebSocket handshake](https://websockets.spec.whatwg.org/#opening-handshake) does not use CORS preflights or browser enforcement of `Access-Control-Allow-*` headers, so validate `Origin` on the server before upgrading.
-
-Shoostr skips HTTP CORS and HTTP CSRF for recognized WebSocket routes, including HTTP/2 extended CONNECT.
-Use an explicit `beforeUpgrade(...)` Origin check for browser admission; inherited authentication and native session handling still run before upgrade.
-
-Origin checking helps prevent connections initiated by untrusted browser pages, but it is not authentication: a non-browser client can supply that header.
-Protect private data with a separately [verified identity](../../security/authentication/); see the [WebSocket origin security model](https://www.rfc-editor.org/rfc/rfc6455.html#section-10.2) for the protocol distinction.
+- CORS governs which cross-origin HTTP responses browser scripts can read. Preflights and
+`Access-Control-Allow-*` headers belong to that flow. For a WebSocket handshake, validate `Origin` on the server.
+See [CORS](../../security/cors/) and the [WebSocket handshake](https://websockets.spec.whatwg.org/#opening-handshake).
+- Shoostr skips HTTP CORS and HTTP CSRF for recognized WebSocket handshakes, including HTTP/2 extended CONNECT.
+Check `Origin` explicitly in `beforeUpgrade(...)`. Configured authentication and native session handling still
+apply before the connection opens.
+- Origin checks help block connections from untrusted browser pages. A client outside the browser can supply
+its own header value, so require a verified identity for private data.
+See [authentication](../../security/authentication/)
+and the [WebSocket origin security model](https://www.rfc-editor.org/rfc/rfc6455.html#section-10.2).
 :::
 
 ## Example
 
-The `/rooms/{room}` endpoint replies with the room, that connection's text-message count, and the message; binary messages are echoed without changing the counter.
-Blank text receives `error: message required` without closing the connection or incrementing its counter.
-`WebSocketConnection` contains detached path and identity data and can outlive the handshake, but the handshake request and response cannot.
-`send(...)` waits for transport completion, not peer receipt, and copies outgoing binary arrays; an open-state check cannot guarantee that a later send will succeed.
+`/rooms/{room}` stores one text-message counter per connection in a concurrent map.
 
-Catch recoverable message errors inside the message callback so the connection can continue.
-An uncaught callback failure closes the connection with `1011` and a safe reason; `onError(...)` observes terminal failure rather than recovering it or rendering an HTTP response.
-Close and error observers remove counters during normal operation, and `afterClose(...)` clears any entries left when shutdown prevents those observers from running.
-Application shutdown cancels queued managed work and interrupts active callbacks without closing a caller-supplied native executor.
-Callbacks that ignore interruption can outlive application closure, so use the [lifecycle hooks](../../lifecycle/shutdown/) to signal waiting work before final resource disposal.
+- Nonblank text increments the counter. The reply includes the room, the new count and the message.
+- Binary messages are echoed. The counter stays the same.
+- Blank text gets `error: message required`. The connection stays open and the counter stays the same.
+
+Keep the HTTP request and response within the handshake's lifetime. `WebSocketConnection` can outlive the handshake.
+It keeps the path, the path parameters and the initial `Principal` reference.
+
+`send(...)` copies outgoing binary arrays and waits for the transport to finish the write. The peer can receive
+the message later. A connection can close between an `isOpen()` check and a send.
+
+- Catch recoverable message errors inside the callback so the connection can continue.
+- An unexpected exception in an opening or message callback closes the connection with `1011` and a generic reason.
+An `InterruptedException` uses `1001`. Use `onError(...)` to observe terminal failures.
+- Close and error observers remove counters during normal operation. `afterClose(...)` clears the remaining entries
+if shutdown prevents those observers from running.
+
+Application shutdown cancels queued managed work and interrupts active callbacks. A borrowed native executor
+keeps its original owner. Callbacks that ignore interruption can outlive application closure, so signal waiting
+work before disposing of its resources. See [application shutdown](../../lifecycle/shutdown/).
+
 For native demand, subprotocol selection, or message limits, use a [native WebSocket listener](../native/).
 
 <Code code={application} lang="java" title="ManagedWebSocketExample.java" />
 
 ## Test
 
-`TestServer` is the HTTP test fixture: it starts the application on an available loopback port and owns its shutdown.
+`TestServer` starts the application on an available loopback port. With `shoostr-test` you can
+use `openWebSocket(...)` to connect through the fixture's client. The test fills the `room` segment in the path
+callback and sets `Origin` in the handshake callback. Timed receives read complete messages in order, and the
+fixture closes any outstanding test sockets.
 
-The tests exchange fragmented messages through the JDK WebSocket client, check independent counters and continued handling after invalid input, and verify handshake denial and close frames.
-The failure fixture registers an extra route that throws, proving that private exception text does not reach the peer; these checks do not establish browser cookie delivery or Origin enforcement by a browser.
+The tests send fragmented text and binary messages, check independent counters and recovery after blank text,
+and verify `403` handshake denial and `1000` normal closure. An extra route throws during message handling.
+The next event must be a `1011` close with the generic reason `Processing failed`.
+
+The fixture uses the JDK client to exercise the server's handshake checks. Browser cookie delivery and browser
+handling of `Origin` require browser tests.
 
 <Code code={test} lang="java" title="ManagedWebSocketExampleTest.java" />
 
 ## Continue
 
-Next, [Handle typed WebSocket objects](../objects/) to decode message payloads through a codec.
+Next, [handle typed WebSocket objects](../objects/) to decode message payloads through a codec.

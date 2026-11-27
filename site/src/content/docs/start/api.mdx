@@ -1,0 +1,52 @@
+---
+title: Look up the Java API
+description: Find Shoostr's core Java types, published method signatures, overloads and exceptions, and the task guides that use them.
+---
+
+export const libraries = SHOOSTR_RELEASES.libraries;
+export const javadoc = (module, path = 'index.html') =>
+  `${import.meta.env.BASE_URL.replace(/\/$/, '')}/javadoc/${module}/${libraries[module]}/${path}`;
+export const prefix = 'io/github/suppierk/shoostr/';
+
+Use these Javadocs to check a released type's package, signatures, overloads and exceptions.
+They cover the releases in the [Maven and Gradle installation guide](../libraries/).
+Examples follow the project checkout and may include additions scheduled for a later release.
+
+## Core types
+
+| Type | Role | Guide |
+| --- | --- | --- |
+| <a href={javadoc('core', prefix + 'Shoostr.html')}><code>Shoostr</code></a> | Configures, starts and closes an HTTP application. | [First HTTP request](../first-request/) |
+| <a href={javadoc('core', prefix + 'Routes.html')}><code>Routes</code></a> | Registers endpoints and groups. | [Route groups](../../routing/groups/) |
+| <a href={javadoc('core', prefix + 'Handler.html')}><code>Handler</code></a> | Runs application code for an exchange. | [HTTP methods](../../routing/methods/) |
+| <a href={javadoc('core', prefix + 'Request.html')}><code>Request</code></a> | Reads the live incoming request. | [Request parameters](../../request/parameters/) |
+| <a href={javadoc('core', prefix + 'Response.html')}><code>Response</code></a> | Selects status, headers and output for a live exchange. | [Response bodies](../../responses/bodies/) |
+| <a href={javadoc('core', prefix + 'Lifecycle.html')}><code>Lifecycle</code></a> | Configures local hooks and selects extensions. | [Request hooks](../../lifecycle/hooks/) |
+| <a href={javadoc('core', prefix + 'Extension.html')}><code>Extension</code></a> | Defines provider setup and ownership methods. | [Create an extension](../../extensions/route-metadata/) |
+| <a href={javadoc('core', prefix + 'ApplicationExtension.html')}><code>ApplicationExtension</code></a> | Lets a provider supply application defaults. | [Create an extension](../../extensions/route-metadata/) |
+| <a href={javadoc('core', prefix + 'RouteExtension.html')}><code>RouteExtension</code></a> | Lets a provider supply settings and behavior for selected routes or groups. | [Create an extension](../../extensions/route-metadata/) |
+| <a href={javadoc('core', prefix + 'RequestObservation.html')}><code>RequestObservation</code></a> | Attaches request context around invocation and observes completion. | [Endpoint execution](../../lifecycle/executors/) |
+| <a href={javadoc('core', prefix + 'RequestOutcome.html')}><code>RequestOutcome</code></a> | Reports detached request status and failures after completion. | [Request hooks](../../lifecycle/hooks/) |
+| <a href={javadoc('core', prefix + 'Options.html')}><code>Options</code></a> | Configures listener, execution and resource limits before construction. | [Server options](../../application/server-options/) |
+| <a href={javadoc('core', prefix + 'Codec.html')}><code>Codec</code></a> | Converts between Java values and bytes. | [JSON codec](../../json/codec/) |
+| <a href={javadoc('core', prefix + 'Upload.html')}><code>Upload</code></a> | Gives request-scoped access to a submitted file. | [Multipart input](../../bodies/multipart/) |
+| <a href={javadoc('core', prefix + 'MultipartOptions.html')}><code>MultipartOptions</code></a> | Sets multipart parsing limits and storage thresholds. | [Multipart input](../../bodies/multipart/) |
+| <a href={javadoc('core', prefix + 'SseEvent.html')}><code>SseEvent</code></a> | Holds SSE data, a name, an ID and a retry hint. | [Server-sent events](../../streaming/sse/) |
+| <a href={javadoc('core', prefix + 'WebSocketConnection.html')}><code>WebSocketConnection</code></a> | Sends messages to an accepted WebSocket connection and closes it. | [Managed WebSockets](../../websockets/managed/) |
+| <a href={javadoc('http', prefix + 'http/MediaType.html')}><code>MediaType</code></a> | Names an HTTP representation's media type. | [Response bodies](../../responses/bodies/) |
+| <a href={javadoc('http', prefix + 'http/HttpHeaders.html')}><code>HttpHeaders</code></a> | Names HTTP fields for requests and responses. | [Response headers](../../responses/headers/) |
+| <a href={javadoc('http', prefix + 'http/HttpStatusCodes.html')}><code>HttpStatusCodes</code></a> | Provides named HTTP status values. | [Generated statuses](../../errors/statuses/) |
+| <a href={javadoc('test', prefix + 'testing/TestServer.html')}><code>TestServer</code></a> | Starts a loopback application for tests and owns shutdown. | [First HTTP request test](../first-request/#test) |
+
+## Module Javadocs
+
+| Artifact | Published Javadoc |
+| --- | --- |
+| `shoostr-core` | <a href={javadoc('core')}>{libraries.core}</a> |
+| `shoostr-http` | <a href={javadoc('http')}>{libraries.http}</a> |
+| `shoostr-test` | <a href={javadoc('test')}>{libraries.test}</a> |
+| `shoostr-pac4j` | <a href={javadoc('pac4j')}>{libraries.pac4j}</a> |
+| `shoostr-micrometer` | <a href={javadoc('micrometer')}>{libraries.micrometer}</a> |
+| `shoostr-opentelemetry` | <a href={javadoc('opentelemetry')}>{libraries.opentelemetry}</a> |
+| `shoostr-openapi` | <a href={javadoc('openapi')}>{libraries.openapi}</a> |
+| `shoostr-mcp` | <a href={javadoc('mcp')}>{libraries.mcp}</a> |

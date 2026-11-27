@@ -1,0 +1,109 @@
+---
+title: Install Shoostr with Maven or Gradle
+description: Add Shoostr to a Java 21 Maven or Gradle project. Find library versions, published releases and examples for importing the BOM.
+---
+
+import { Code } from '@astrojs/starlight/components';
+
+export const { libraries: published, bom: bomVersion, bomPublished } = SHOOSTR_RELEASES;
+export const coordinate = (module) => `io.github.suppierk:shoostr-${module}:${published[module]}`;
+export const bomCoordinate = `io.github.suppierk:shoostr-bom:${bomVersion}`;
+
+Install `shoostr-core` to serve HTTP and `shoostr-test` to test it over HTTP. Shoostr requires Java 21 or later.
+Shoostr's bill of materials, [`shoostr-bom`](#bill-of-materials), manages compatible library versions.
+Use your project's logging configuration and a test framework such as JUnit Jupiter.
+
+## Libraries
+
+These libraries are available on Maven Central under the group ID `io.github.suppierk`.
+[The Java API reference](../api/) lists method signatures and types for these releases.
+
+| Library | Published release | When to add it | Guide |
+| --- | --- | --- | --- |
+| `shoostr-core` | <code>{published.core}</code> | Serve HTTP routes and responses. | [First HTTP request](../first-request/) |
+| `shoostr-http` | <code>{published.http}</code> | Use HTTP protocol values independently. Core already includes it. | [HTTP methods](../../routing/methods/) |
+| `shoostr-test` | <code>{published.test}</code> | Run HTTP fixture tests. Use test scope. | [First HTTP request test](../first-request/#test) |
+| `shoostr-pac4j` | <code>{published.pac4j}</code> | Authenticate with a configured pac4j direct client. | [pac4j authentication](../../security/pac4j/) and [protected OpenAPI UI](../../openapi/ui/) |
+| `shoostr-micrometer` | <code>{published.micrometer}</code> | Record request metrics in your Micrometer registry. | [Micrometer metrics](../../observability/metrics/) |
+| `shoostr-opentelemetry` | <code>{published.opentelemetry}</code> | Trace requests with your OpenTelemetry SDK. | [OpenTelemetry tracing](../../observability/tracing/) |
+| `shoostr-openapi` | <code>{published.openapi}</code> | Describe operations or serve local Swagger UI assets. | [OpenAPI documents](../../openapi/documents/) and [OpenAPI UI](../../openapi/ui/) |
+| `shoostr-mcp` | <code>{published.mcp}</code> | Mount a native MCP server over Streamable HTTP. | [MCP server](../../mcp/server/), [security](../../mcp/security/) and [client interactions](../../mcp/interactions/) |
+
+Add only the integrations you intend to configure. Guide notes list additional third-party dependencies where needed.
+
+## Dependency examples
+
+### Maven
+
+Add these dependencies to your existing POM. Keep `shoostr-test` in test scope.
+
+<Code lang="xml" code={`<dependencies>
+    <dependency>
+        <groupId>io.github.suppierk</groupId>
+        <artifactId>shoostr-core</artifactId>
+        <version>${published.core}</version>
+    </dependency>
+    <dependency>
+        <groupId>io.github.suppierk</groupId>
+        <artifactId>shoostr-test</artifactId>
+        <version>${published.test}</version>
+        <scope>test</scope>
+    </dependency>
+</dependencies>`} />
+
+### Gradle (Groovy)
+
+<Code lang="groovy" code={`dependencies {
+    implementation '${coordinate('core')}'
+    testImplementation '${coordinate('test')}'
+}`} />
+
+### Gradle (Kotlin DSL)
+
+<Code lang="kotlin" code={`dependencies {
+    implementation("${coordinate('core')}")
+    testImplementation("${coordinate('test')}")
+}`} />
+
+## Bill of materials
+
+Import `shoostr-bom` once, then declare each library you use without a version. The BOM selects its own compatible
+library versions.
+
+{!bomPublished && <p>Use the explicit versions above until Maven Central lists BOM version <code>{bomVersion}</code>.</p>}
+
+### Import the BOM with Maven
+
+Add this import to your POM and remove the version elements from the Shoostr dependencies it manages.
+
+<Code lang="xml" code={`<dependencyManagement>
+    <dependencies>
+        <dependency>
+            <groupId>io.github.suppierk</groupId>
+            <artifactId>shoostr-bom</artifactId>
+            <version>${bomVersion}</version>
+            <type>pom</type>
+            <scope>import</scope>
+        </dependency>
+    </dependencies>
+</dependencyManagement>`} />
+
+### Import the BOM with Gradle (Groovy)
+
+<Code lang="groovy" code={`dependencies {
+    implementation platform('${bomCoordinate}')
+    implementation 'io.github.suppierk:shoostr-core'
+    testImplementation 'io.github.suppierk:shoostr-test'
+}`} />
+
+### Import the BOM with Gradle (Kotlin DSL)
+
+<Code lang="kotlin" code={`dependencies {
+    implementation(platform("${bomCoordinate}"))
+    implementation("io.github.suppierk:shoostr-core")
+    testImplementation("io.github.suppierk:shoostr-test")
+}`} />
+
+## Next step
+
+[Handle your first HTTP request](../first-request/) with core and the HTTP test fixture.

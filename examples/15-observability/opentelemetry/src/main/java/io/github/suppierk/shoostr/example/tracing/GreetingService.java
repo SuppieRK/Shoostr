@@ -29,7 +29,7 @@ final class GreetingService {
     var span = tracer.spanBuilder("greeting").setSpanKind(SpanKind.INTERNAL).startSpan();
 
     // Activate the child for nested calls; closing this scope restores the SERVER span.
-    try (var ignored = span.makeCurrent()) {
+    try (var childSpan = span.makeCurrent()) {
       return formatGreeting(name);
     } finally {
       // Closing a context scope does not finish its span; always end the operation separately.

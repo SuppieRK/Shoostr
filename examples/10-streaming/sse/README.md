@@ -144,8 +144,8 @@ attempting another event on it.
 
 Streams belong to the handler thread and finish when the handler returns. Do not retain the response/event writer, close
 the response yourself, or write from background tasks. These finite examples do not implement a periodic heartbeat
-service or unbounded producer. For general HTTP exception registration, continue
-with [exception fixture](../../08-errors/legacy-exceptions/README.md).
+service or unbounded producer. For general HTTP exception registration, see the
+[exception-handling guide](../../../site/src/content/docs/errors/exceptions.mdx).
 
 ## Tests and Docker
 

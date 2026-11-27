@@ -1,56 +1,82 @@
 ---
 title: Authenticate with a pac4j direct client
-description: Validate HTTP Basic credentials with a pac4j direct client, select the Shoostr adapter on a route group, and authorize a verified profile without creating sessions.
+description: Use a pac4j direct client to validate HTTP Basic credentials and authorize verified profiles on selected routes without creating sessions.
 next:
   label: Use native HTTP sessions
   link: ../sessions/
 ---
 
-import { Code } from '@astrojs/starlight/components';
+import {Code} from '@astrojs/starlight/components';
 import application from '../../../../../examples/14-security/src/main/java/io/github/suppierk/shoostr/example/authentication/Pac4jAuthenticationExample.java?raw';
 import test from '../../../../../examples/14-security/src/test/java/io/github/suppierk/shoostr/example/authentication/Pac4jAuthenticationExampleTest.java?raw';
 
 ## Description
 
-pac4j is a security library whose clients validate credentials and produce profiles. A direct client reads credentials from the current request, rather than redirecting a browser through a login callback flow.
-
-Shoostr's `Pac4j` adapter is an authenticator. The built-in `Lifecycle` configuration supplied to a route or group selects that instance with `withExtension(...)` and establishes shared setup automatically. This task configures the native client and authorizer before protecting the selected endpoints.
-
-Choose the pac4j adapter with a configured `DirectClient` for credentials carried by each request. A browser redirect-and-callback login flow needs a different integration approach.
+Use Shoostr's `Pac4j` adapter when each protected request carries its own credentials. A pac4j `DirectClient`
+reads those credentials from the current request and validates them to obtain a user profile. Browser login flows
+with redirects and callbacks use indirect clients and require a separate integration.
 
 :::note[Libraries required]
 - `io.github.suppierk:shoostr-pac4j` — Shoostr's pac4j adapter.
 - `org.pac4j:pac4j-http` — the `DirectBasicAuthClient` used in this example.
+
+See [Maven and Gradle installation](../../start/libraries/) for published Shoostr coordinates.
 :::
 
-The [`pac4j-http` client reference](https://www.pac4j.org/6.5.x/docs/clients/http.html) describes the available credential formats.
-Configure the client's authenticator before constructing `Pac4j` and do not mutate the client while the application serves requests.
+1. Configure the direct client's authenticator. For client types and credential formats, see the
+   [pac4j 6.6 HTTP client reference](https://www.pac4j.org/6.6.x/docs/clients/http.html).
+2. Create `Pac4j` with the configured client and a `WWW-Authenticate` challenge. This example also passes an
+   authorizer for the role check. Keep the client configuration fixed while the application serves requests.
+3. Call `lifecycle.withExtension(authentication)` on the `Lifecycle` supplied to the route or group configuration
+   callback. Shoostr sets up the adapter on first selection. For inheritance and exclusions, see
+   [route authentication](../authentication/).
 
-The adapter extracts and validates credentials, requires an unexpired profile, publishes its principal, and then calls the configured authorizer.
-Missing or rejected credentials receive the configured `401` challenge, while a verified profile denied by the authorizer receives `403`.
-Select the adapter instance on the protected group, following the [route authentication](../authentication/) selection rules.
+The adapter rejects duplicate `Authorization` fields before it calls the client. For requests that pass that
+check, it takes these steps in order.
+
+1. Ask the direct client to extract and validate the credentials.
+2. Obtain a profile from the validated credentials and check that it is unexpired.
+3. Attach the profile's principal to the request.
+4. Pass the profile to the configured authorizer.
+
+Missing or rejected credentials and missing or expired profiles receive `401` with the configured challenge.
+An authorizer that denies a verified profile causes `403`.
 
 ## Example
 
-The `/accounts/me` route returns the validated profile's name, and `/accounts/admin` additionally requires its `administrator` role.
-The explicit authenticator checks development-only accounts and assigns that role to `admin`; these fixed passwords are local fixtures, not a production identity store.
-Use HTTPS for HTTP Basic credentials outside a controlled local test and replace the fixture validation with your actual account policy.
+The example selects one adapter for the `/accounts` group. The authenticator verifies the local accounts and
+gives `admin` the `administrator` role.
 
-The adapter is stateless: it authenticates each protected request without creating a session or saving a profile in one, even when the application separately enables sessions.
-It does not implement pac4j's indirect-client login or callback flow.
-When a trusted proxy terminates TLS, pac4j's security context uses `request.isEffectivelySecure()`; configure [proxy trust](../proxies/) explicitly rather than trusting a forwarded scheme from any client.
+| Route | Result |
+| --- | --- |
+| `/accounts/me` | Returns the authenticated caller's name. |
+| `/accounts/admin` | Returns `permitted` for a caller with the `administrator` role. |
+
+The fixed passwords are for local tests. Replace the fixture with your application's credential validation.
+Use HTTPS for HTTP Basic credentials outside a controlled local test. See the [HTTP Basic security considerations](https://www.rfc-editor.org/rfc/rfc7617.html#section-4).
+
+Session and proxy settings belong to the application.
+
+- The adapter authenticates each protected request without creating a session or storing a profile in one,
+  even when the application enables sessions.
+- The pac4j security context uses `request.isEffectivelySecure()`. It uses the trusted forwarded protocol
+  when available and checks direct TLS otherwise. If a proxy terminates TLS, configure trust explicitly
+  before relying on the forwarded scheme. See [proxy trust](../proxies/).
 
 <Code code={application} lang="java" title="Pac4jAuthenticationExample.java" />
 
 ## Test
 
-`TestServer` is the HTTP test fixture: it starts the application on an available loopback port and owns its shutdown.
+The tests start `Pac4jAuthenticationExample.application()` with `TestServer` on an available loopback port.
+The fixture owns application shutdown.
 
-The tests exercise real credential extraction, validation, profile publication, and role authorization through HTTP, including missing, rejected, and duplicate credentials.
-A session-enabled fixture verifies that authenticated requests still leave session state absent.
+The tests send HTTP Basic credentials and check the resulting principal and role decision. Requests with
+missing, rejected or duplicate credentials receive `401`. A verified reader receives `403` at
+`/accounts/admin`, and a verified admin succeeds. With sessions enabled, the tests check that authentication
+sets no session cookie and a later request still has no session.
 
 <Code code={test} lang="java" title="Pac4jAuthenticationExampleTest.java" />
 
 ## Continue
 
-Next, [Use native HTTP sessions](../sessions/) to keep application state across browser requests.
+Next, [use native HTTP sessions](../sessions/) to keep application state across browser requests.

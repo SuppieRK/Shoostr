@@ -13,7 +13,8 @@ class MetricsExampleTest {
   void exposesTheCompletedRequestUnderItsRouteTemplate() throws Exception {
 
     try (var test = TestServer.start(MetricsExample.application())) {
-      assertEquals(200, test.send(request -> request.path("/hello/Ada")).statusCode());
+      assertEquals(200, test.send(
+          request -> request.pathTemplate("/hello/{name}", path -> path.pathParam("name", "Ada"))).statusCode());
 
       var scrape =
           test.send(request -> request.path("/metrics"), HttpResponse.BodyHandlers.ofString());
@@ -30,7 +31,9 @@ class MetricsExampleTest {
 
     try (var test = TestServer.start(MetricsExample.application())) {
       var response =
-          test.send(request -> request.path("/hello/Ada"), HttpResponse.BodyHandlers.ofString());
+          test.send(
+              request -> request.pathTemplate("/hello/{name}", path -> path.pathParam("name", "Ada")),
+              HttpResponse.BodyHandlers.ofString());
 
       assertAll(
           () -> assertEquals(200, response.statusCode()),

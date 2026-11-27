@@ -2,10 +2,10 @@ plugins {
 	id 'java-library'
 }
 
-version = '2026.11.21.0'
+version = '2026.11.27.0'
 
 dependencies {
-	api shoostrDependency('core', '2026.11.21.0')
+	api shoostrDependency('core', '2026.11.27.0')
 	api 'org.pac4j:pac4j-core:6.6.1'
 	testImplementation dependencies.project(':test')
 	testImplementation 'nl.jqno.equalsverifier:equalsverifier:4.5.2'

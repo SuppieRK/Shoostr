@@ -6,76 +6,90 @@ next:
   link: ../login-logout/
 ---
 
-import { Code } from '@astrojs/starlight/components';
+import {Code} from '@astrojs/starlight/components';
 import application from '../../../../../examples/14-security/src/main/java/io/github/suppierk/shoostr/example/authentication/CsrfProtectionExample.java?raw';
 import test from '../../../../../examples/14-security/src/test/java/io/github/suppierk/shoostr/example/authentication/CsrfProtectionExampleTest.java?raw';
 
 ## Description
 
-Cross-Site Request Forgery (CSRF) protection checks that a browser's state-changing request carries proof associated with its session. This is relevant when the browser sends authentication cookies automatically; the session cookie alone is not that proof.
+When a browser sends authentication cookies automatically, require a session-bound token for requests that change
+state. Cross-site request forgery (CSRF) protection checks that token and the request's source origin before the
+handler runs. This example uses `Csrf` to protect writes to a session preference and renewal of the session identifier.
 
-A native HTTP session stores state across requests. The `Csrf` provider adds the proof check to selected routes, using the built-in `Lifecycle` scope-configuration object to choose that instance. This task establishes the session dependency before protecting cookie-backed writes.
+1. Enable [native sessions](../sessions/). Startup fails if a protected endpoint has no session support.
+2. Create one `Csrf` instance. In the route or group configuration callback, select it on the supplied
+   `Lifecycle` with `lifecycle.withExtension(csrf)`. Shoostr handles shared setup on first selection.
+3. To protect registered routes by default, call `app.withExtension(csrf)` before registering them. Call
+   `lifecycle.withoutExtension(csrf)` on routes or groups you want to exclude.
 
-The example uses `BadRequestException` for application input that must receive `400`; the CSRF provider separately decides whether the proof permits a write.
+Child routes inherit the protection. Selecting the same instance again keeps one check. After an exclusion,
+a descendant can restore only the original instance.
 
-Enable [native sessions](../sessions/), create one `Csrf` provider and select it with `lifecycle.withExtension(csrf)` on the relevant browser routes. Shared setup is automatic. For application defaults, use `app.withExtension(csrf)` before routes are registered. Use `lifecycle.withoutExtension(csrf)` only for deliberate exclusions. Inheritance deduplicates the selected owner; even after exclusion, a child cannot replace it with a different instance. Startup fails for a protected endpoint without sessions instead of silently enabling session management.
+Deliver the value from `csrf.token(request)` in a response body or page. On an unsafe request, send it once in
+an `X-CSRF-Token` header or a `_csrf` form field. A request that uses both channels fails even if the values match.
+Shoostr stores the expected token in the native session and binds it to the current identifier. The session
+cookie carries that identifier. Protect it with HTTPS and suitable cookie attributes. Keep token responses out
+of shared caches and tokens out of URLs. See the
+[OWASP synchronizer-token guidance](https://cheatsheetseries.owasp.org/cheatsheets/Cross-Site_Request_Forgery_Prevention_Cheat_Sheet.html#synchronizer-token-pattern).
 
-Deliver `csrf.token(request)` in a response body or page, then submit that value through exactly one `X-CSRF-Token` header or `_csrf` form field on unsafe requests.
-The expected random token stays in the native session, bound to its current identifier; Shoostr does not issue a separate CSRF cookie.
-Keep token responses out of shared caches, keep proofs out of URLs, and protect the session cookie with HTTPS and suitable native cookie settings.
+A protected unsafe request needs an existing session, one valid token and an accepted source origin. By default,
+the source must match the effective target origin. Shoostr checks `Origin` first and uses `Referer` only when
+`Origin` is absent. It rejects missing, malformed, ambiguous or untrusted source information.
 
-Unsafe requests need an existing session, one valid proof and an accepted source origin.
-Do not submit both proof channels, even with the same value.
-The default source policy requires the target origin, using `Referer` only when `Origin` is absent; missing, ambiguous or foreign source information is rejected.
-For cross-origin scripts, configure additional exact origins through `Csrf.builder().trustedOrigins(...)` and a separate [CORS policy](../cors/).
-The builder accepts required-first varargs or a set, and `build()` validates the origin policy before it can be installed.
+To allow additional browser origins, use `Csrf.builder().trustedOrigins(...)` with exact HTTP(S) origins.
+Supply a first origin followed by optional varargs or pass a set. The builder validates them on `build()`.
+Cross-origin browser scripts also need a [CORS policy](../cors/).
 
-`Csrf` is also a mutable JavaBean for configuration loaders, with a public no-argument constructor and `trustedOrigins` getters and setters.
-An omitted or null value keeps the same-origin default without additional trusted origins.
-Selecting the extension copies its settings, so later edits to the source do not change application defaults or registered routes.
-Customize a selected copy through `app.withExtension(csrf, selected -> selected.setTrustedOrigins(origins))` or `lifecycle.withExtension(csrf).setTrustedOrigins(origins)` during registration.
-Selected copies stop accepting changes when registration finishes; the original source object remains mutable.
-Configure your chosen loader in the application.
+| Operation | Token behavior |
+| --- | --- |
+| `csrf.token(request)` | Creates a session if needed and returns a stable, unpredictable token for its current identifier. |
+| `request.renewSessionId()` | Keeps the session attributes and invalidates the old token immediately. The next `token(request)` call creates a token for the new identifier. |
+| `session.invalidate()` | Removes the session and its expected token. Obtain a new session and token before the next protected write. |
 
-| Operation                  | Token behavior                                                                                                                                      |
-| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `csrf.token(request)`      | Create a session if needed and return its stable, unpredictable token.                                                                              |
-| `request.renewSessionId()` | Retain native attributes but immediately make the old token invalid; the next `token(request)` call generates a fresh value for the new identifier. |
-| `session.invalidate()`     | Remove the session and its expected token; obtain a new session and proof in a later request.                                                       |
+Reuse a token while its issuing session identifier remains valid. Persistence and consistency across application
+instances depend on the configured native session store.
 
-A token can be reused while its issuing session identifier remains valid; it is not a one-use operation nonce.
-Renewal or invalidation ends that binding. Persistence and consistency across multiple application instances depend on the configured native session store.
-
-CSRF protection does not authenticate a caller.
-Application login/logout handlers coordinate credential verification and these native transitions, as shown in the [login and logout recipe](../login-logout/).
-Authentication runs before local admission hooks, including CSRF. A public login endpoint can exclude authentication while retaining CSRF verification before its credential handler.
-The [OWASP CSRF guidance](https://cheatsheetseries.owasp.org/cheatsheets/Cross-Site_Request_Forgery_Prevention_Cheat_Sheet.html#synchronizer-token-pattern) explains the synchronizer-token model used here.
+Add authentication to routes that require a verified identity. It runs before local admission hooks, including
+CSRF. A public login endpoint can exclude authentication and still verify CSRF before its credential handler.
+See the [login and logout recipe](../login-logout/) for credential verification and session transitions.
 
 :::caution[Keep untrusted scripts on a separate host]
 
-Do not serve untrusted executable HTML or JavaScript on the application's trusted origin.
-Same-origin scripts can obtain proofs and make requests with the user's cookies; route groups, extension instances and cookie names do not restrict those browser privileges.
-Use a separate origin on a separate host, with host-only cookies, when applications must not trust one another.
-Different ports create different origins but do not isolate cookies, and Cookie Path is not a security boundary, as described in [RFC 6265](https://www.rfc-editor.org/rfc/rfc6265.html#section-8.5).
+Serve executable HTML and JavaScript on the application's trusted origin only if you trust that code. Same-origin
+scripts can obtain tokens and make requests with the user's cookies across route groups, extension instances and
+cookie names.
+
+Use separate origins on separate hosts with host-only cookies for mutually untrusted applications. Cookie scope
+spans ports. Cookie `Path` controls where a browser sends the cookie, and same-origin scripts can still make requests
+to those paths. See [RFC 6265](https://www.rfc-editor.org/rfc/rfc6265.html#section-8.5).
 
 :::
 
 ## Example
 
-`/csrf-token` delivers a proof, and `/preferences` accepts a shared preference change only after verification succeeds.
-Keep mutations on unsafe methods because CSRF verification permits GET, HEAD, OPTIONS and TRACE.
+| Route | Behavior |
+| --- | --- |
+| `GET /csrf-token` | Returns the session token with `Cache-Control: no-store`. |
+| `GET /preferences` | Reads the session's theme or returns `unset`. |
+| `POST /preferences` | Verifies CSRF, then accepts `light` or `dark`. The handler throws `BadRequestException` for invalid or missing input, which returns `400`. |
+| `POST /session/renew` | Verifies CSRF against the current session, renews its identifier, and returns a fresh token with `Cache-Control: no-store`. |
+
+Keep state changes on unsafe methods. CSRF verification passes `GET`, `HEAD`, `OPTIONS` and `TRACE` without
+checking a token.
 
 <Code code={application} lang="java" title="CsrfProtectionExample.java" />
 
 ## Test
 
-`TestServer` is the HTTP test fixture: it starts the application on an available loopback port and owns its shutdown.
+The tests start `CsrfProtectionExample.application()` with `TestServer` on an available loopback port.
+The fixture owns application shutdown.
 
-The tests exercise both proof channels and reject invalid session, proof and origin combinations before a write.
-They also verify that renewal rejects the old proof.
+They verify token reuse, `Cache-Control: no-store` and both proof channels over HTTP. Missing or invalid
+sessions, tokens or origins return `403` before a write. The tests also cover `Referer` fallback, an unselected
+route and rejection of the previous token after renewal.
 
 <Code code={test} lang="java" title="CsrfProtectionExampleTest.java" />
 
 ## Continue
 
-Next, [Coordinate login and logout](../login-logout/) to combine credential verification, session state and write protection.
+Next, [coordinate login and logout](../login-logout/) to combine credential verification, session state and write protection.

@@ -11,10 +11,11 @@ import org.junit.jupiter.api.Test;
 class HelloExampleTest {
   @Test
   void servesTheDocumentedHelloResponse() throws Exception {
-
     try (var test = TestServer.start(HelloExample.application())) {
-      var response =
-          test.send(request -> request.path("/hello"), HttpResponse.BodyHandlers.ofString());
+      var response = test.send(request ->
+          request.path("/hello"),
+          HttpResponse.BodyHandlers.ofString()
+      );
 
       assertAll(
           () -> assertEquals(200, response.statusCode()),
@@ -22,7 +23,9 @@ class HelloExampleTest {
           () ->
               assertEquals(
                   "text/plain; charset=utf-8",
-                  response.headers().firstValue(HttpHeaders.CONTENT_TYPE.value()).orElseThrow()));
+                  response.headers()
+                          .firstValue(HttpHeaders.CONTENT_TYPE.value())
+                          .orElseThrow()));
     }
   }
 }

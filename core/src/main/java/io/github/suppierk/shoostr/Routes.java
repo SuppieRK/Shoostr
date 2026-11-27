@@ -217,21 +217,40 @@ public final class Routes {
    * @return this scope
    * @throws NullPointerException if either argument is null
    * @throws IllegalStateException if startup or closure has ended registration
+   * @throws IllegalArgumentException if the callback requires a typed registration view
    */
   public <E extends Exception> Routes exception(
       Class<E> type, ExceptionHandler<? super E> handler) {
+    registerException(type, handler, false);
+    return this;
+  }
+
+  /**
+   * Registers a renderer in the shared scope map after checking the registration view.
+   *
+   * @param type directly thrown exception family
+   * @param handler renderer receiving the original failure
+   * @param codecBacked whether the caller registered through the typed view
+   * @param <E> exception type
+   */
+  private <E extends Exception> void registerException(
+      Class<E> type, ExceptionHandler<? super E> handler, boolean codecBacked) {
     runUnderLock(
         lock,
         () -> {
           requireMutable();
           Objects.requireNonNull(type);
           Objects.requireNonNull(handler);
+          if (!codecBacked && handler instanceof ExceptionHandler.Typed<?>) {
+            throw new IllegalArgumentException(
+                "Register typed exception handlers through Routes.Typed");
+          }
+
           errors.put(
               type,
               (failure, request, response) ->
                   handler.handle(type.cast(failure), request, response));
         });
-    return this;
   }
 
   /**
@@ -2359,10 +2378,8 @@ public final class Routes {
     }
 
     /**
-     * Registers a renderer for this whole typed scope, including earlier endpoints and descendants.
-     * Uses the same scope inheritance and local-before-app selection as ordinary Routes. The
-     * renderer receives the original Request and Response; codec-backed instances remain available
-     * through their normal restricted inheritance without an additional renderer interface.
+     * Registers an existing exception handler for this scope and its descendants, including earlier
+     * endpoints. Statically typed exception lambdas can use the codec-backed overload.
      *
      * @param type directly thrown exception family
      * @param handler renderer receiving the original failure
@@ -2371,9 +2388,24 @@ public final class Routes {
      */
     public <E extends Exception> Typed exception(
         Class<E> type, ExceptionHandler<? super E> handler) {
-      routes.exception(type, handler);
+      routes.registerException(type, handler, true);
 
       return this;
+    }
+
+    /**
+     * Registers a renderer with codec-backed request and response helpers for this scope and its
+     * descendants, including earlier endpoints. Uses the same scope inheritance and
+     * local-before-app selection as ordinary route exception handlers.
+     *
+     * @param type directly thrown exception family
+     * @param handler renderer receiving the original failure and exchange
+     * @param <E> exception type
+     * @return this scope
+     */
+    public <E extends Exception> Typed exception(
+        Class<E> type, ExceptionHandler.Typed<? super E> handler) {
+      return exception(type, (ExceptionHandler<? super E>) handler);
     }
 
     /**

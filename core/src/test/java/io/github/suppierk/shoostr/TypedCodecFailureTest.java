@@ -143,6 +143,33 @@ class TypedCodecFailureTest {
   }
 
   @Test
+  void returnsSafeErrorWhenTypedRendererCannotEncodeItsBody() throws Exception {
+    var app = new Shoostr();
+    var codec = createCodecForPreservesEncodeFailureClassification(new IOException("private"));
+
+    try (Closeable cleanup = app::close) {
+      app.codec(codec)
+          .routes()
+          .exception(
+              BadRequestException.class,
+              (failure, request, response) -> response.body(MediaType.APPLICATION_JSON, "error"))
+          .get(
+              "/fail",
+              (request, response) -> {
+                throw new BadRequestException("invalid input");
+              });
+
+      try (var test = TestServer.start(app)) {
+        var response =
+            test.send(request -> request.path("/fail"), HttpResponse.BodyHandlers.ofString());
+
+        assertEquals(500, response.statusCode());
+        assertEquals("Internal Server Error", response.body());
+      }
+    }
+  }
+
+  @Test
   void keepsStagedBodyAndHeadersWhenCodecThrows() throws Exception {
     var failure = new IOException("unavailable");
     var codec = createCodecForKeepsStagedBodyAndHeadersWhenCodecThrows(failure);

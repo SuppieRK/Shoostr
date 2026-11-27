@@ -36,8 +36,8 @@ variables, parameters and static fields are outside this rule. There are no supp
 
 The validation job runs `ciBuild` and MCP conformance. `ciBuild` retains all project
 checks and assembles libraries and benchmark projects. Example compilation remains
-necessary for Java tests and coverage; the selected container matrix owns example
-packaging. The ordinary local `build` command still assembles all projects.
+necessary for Java tests. The selected container matrix owns example packaging.
+The ordinary local `build` command still assembles all projects.
 Trusted runs include Sonar in the same Gradle invocation, so analysis reuses test
 results without republishing the consumer fixture and rerunning core tests.
 
@@ -90,8 +90,11 @@ Changing core's version does not change MCP's declared dependency. The first pub
 of MCP also needs compatible core and HTTP publications. Include an unpublished dependency
 by giving it a stable version and using that version in the dependent library.
 
-The [installation reference](site/src/content/docs/start/libraries.md) shows published
-core and test coordinates.
+The [installation reference](site/src/content/docs/start/libraries.mdx) and Java API reference
+use the same published versions. The site build selects each configured Gradle version when
+Maven Central lists it and uses Central's latest release otherwise. The BOM owns its version
+and artifact pins in `bom/build.gradle`. Update a pin deliberately and bump the BOM version
+whenever its published constraints change.
 
 1. Compare each library with its own last successful publication. Review production
    inputs, dependency changes and shared build changes. Set selected artifact versions
@@ -107,8 +110,8 @@ core and test coordinates.
    plugin signs and publishes the batch.
 5. Check the workflow result and its `central-publication-<run-id>` artifact. The plugin
    logs the deployment ID and waits for `PUBLISHED`. Verify the selected coordinates resolve
-   from Central before updating installation examples. Public consumer checks and release
-   notes are maintainer tasks.
+   from Central before rebuilding the documentation. Public consumer checks and release notes
+   are maintainer tasks.
 
 Publication runs are serialized. Do not rerun a failed publication workflow as an upload
 retry. Inspect the plugin logs and deployment in the Central Portal first: a lost response
@@ -389,12 +392,10 @@ bundle third-party notices under `META-INF/licenses/swagger-ui-5.35.1/`.
 
 ## Example container validation
 
-The standalone `ExampleApplication.java` launchers execute in the selected Docker matrix,
-outside the JUnit JVM measured by JaCoCo. Their exact paths are excluded only from Sonar coverage
-attribution. All source-analysis rules and the zero-open-issues check still apply to them;
-factory and framework coverage remain subject to the existing quality gate. The Dockerfile and
-Jib paths require observable startup, resource-configuration, HTTP/protocol and graceful-exit
-checks. These are behavioral checks, not measured JaCoCo line or branch coverage.
+Sonar analysis excludes the example projects, including their tests. The Java build runs
+example tests, and the selected Docker matrix runs the standalone `ExampleApplication.java`
+launchers. Both Dockerfile and Jib images must pass startup, resource-configuration,
+HTTP or protocol behavior, and graceful-exit checks.
 
 Every runnable Gradle example has its own Dockerfile and Compose file. Jib is configured
 only for example applications through `config/gradle/example-container.gradle`.
@@ -416,7 +417,7 @@ bounded public HTTP/protocol checks. An empty or unknown selection fails. These 
 complement ordinary JUnit tests; they do not replace the observability backend tests,
 MCP Inspector checks or official MCP conformance suite.
 
-Pushes to `main` and manual CI runs build all 22 examples through both distribution and
+Pushes to `main` and manual CI runs build all registered examples through both distribution and
 Jib images. Pull requests select examples from changed files. Changes under an example
 folder select that example; shared library, build and CI changes select the full matrix.
 Unrelated site, root documentation and benchmark changes skip containers. Nested example

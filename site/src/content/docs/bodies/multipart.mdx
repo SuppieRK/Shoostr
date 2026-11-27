@@ -6,59 +6,97 @@ next:
   link: ../persist-upload/
 ---
 
-import { Code } from '@astrojs/starlight/components';
+import {Code} from '@astrojs/starlight/components';
 import application from '../../../../../examples/05-bodies/src/main/java/io/github/suppierk/shoostr/example/bodies/MultipartExample.java?raw';
 import test from '../../../../../examples/05-bodies/src/test/java/io/github/suppierk/shoostr/example/bodies/MultipartExampleTest.java?raw';
 
 ## Description
 
-A multipart request carries separately named parts, usually form fields and uploaded files. Shoostr exposes text fields through form accessors and file parts as `Upload` values. Each upload belongs to the current request until its content is explicitly persisted.
+Read text fields and uploaded files from the same multipart request. Shoostr exposes each file part as an `Upload`
+that belongs to the current request.
 
-This task inspects submitted fields and files inside the handler. `MultipartOptions` configures parsing limits as part of the application's `Options`; it does not decide where your application keeps accepted files.
+This example reads fields and files inside the handler. `MultipartOptions` sets parsing limits and temporary
+storage. Your application chooses where to save accepted files.
 
-Create `new MultipartOptions()` and configure its bean properties before application construction.
-Set the per-file limit before lowering the aggregate limit below the current per-file limit; increase the aggregate first when raising the per-file limit above it.
-Setters reject invalid values without changing the previous setting. Null restores the selected default if it remains compatible with the other limits.
-`Shoostr` copies these settings when it is constructed, so later changes affect only subsequent applications. Do not mutate them concurrently with construction.
+Create a `MultipartOptions` object, configure it, and pass it to `Options.setMultipart(...)` before constructing
+`Shoostr`. The per-file limit cannot exceed the aggregate limit. Lower the per-file limit first if the new
+aggregate limit would fall below it. Raise the aggregate limit first if the new per-file limit would exceed it.
+An invalid setter call leaves the previous value in place. Passing `null` restores a property's default if it
+fits the other limits.
 
-Read a text field with `formParam()` and its first named upload with `file()`. Choose `files(name)` for every upload under one name, or `files()` for the complete grouped collection. A submitted empty filename still represents a file part. When the request is not multipart, file accessors return empty results. Query and URL-encoded input use the separate [parameter accessors](../../request/parameters/).
+`Shoostr` copies the settings during construction. Keep them fixed while it makes that copy. Later changes apply
+only to future applications.
 
-Multipart parsing reads and validates the complete body before exposing fields or uploads.
-It cannot be combined with [buffered or streamed input](../buffered/).
-Text fields accept an absent content type or `text/plain`, with UTF-8 decoding; unsupported media types or charsets produce `415`, and malformed multipart input produces `400`.
-Unlike URL-encoded forms, multipart fields preserve literal `+` characters.
+| To read | Use |
+| --- | --- |
+| The first text value under a name | `formParam(name)` |
+| The first upload under a name | `file(name)` |
+| Every upload under one name, in arrival order | `files(name)` |
+| All uploads, grouped by name | `files()` |
+
+An empty filename still identifies a file part. The file accessors return empty results for a non-multipart request.
+See [request parameters](../../request/parameters/) for query and URL-encoded form input.
+
+Shoostr parses the entire multipart body and validates each part's required metadata before exposing fields or
+uploads. Switching between multipart parsing and [buffered or streamed input](../buffered/) throws
+`IllegalStateException`.
+
+Text fields accept an absent `Content-Type` or `text/plain`. Use UTF-8 if you declare a charset. Shoostr decodes
+text as UTF-8 and preserves literal `+` characters.
+
+| Problem | Response status |
+| --- | --- |
+| Unsupported text field media type or charset | `415` |
+| Malformed multipart input | `400` |
+| Configured size or part-count limit exceeded | `413` |
 
 An upload and its content streams are available only during the handler.
 Read them there, or [save the upload](../persist-upload/) before handing its content to later work.
-Shoostr removes unretained temporary files when the exchange completes, which can occur after the client receives its response.
+Shoostr removes unretained temporary files when the exchange completes,
+which can occur after the client receives its response.
 During the handler lifetime, valid zero-length content reads return `0`, including at EOF.
 
 ## Example
 
 The endpoint reads a title and summarizes the `document` uploads, including their exact bytes as hexadecimal text.
-Its per-part limit makes this small binary read bounded; for a raw-body checksum without whole-body buffering, use [streamed input](../streaming-input/).
-Submitted filenames are metadata, not trusted filesystem paths.
+The per-part limit bounds each binary read. To checksum a raw request body without buffering it, use
+[streamed input](../streaming-input/).
 
-The configured limits are 8,192 bytes for the complete multipart body, 1,024 bytes per part, eight parts, and 1,024 header bytes per part.
-Limit overflow produces `413`.
-The per-part byte limit also applies to text fields, and the aggregate limit includes multipart boundaries and headers.
-Multipart uses `maxParts`, not the query and URL-encoded `maxParameters` limit; its aggregate limit is separate from `maxRequestBytes`.
+Treat submitted filenames as metadata. Choose a filesystem path in application code when saving a file.
 
-The application creates the selected temporary directory before startup.
-A file part larger than 128 bytes spills to that directory; the threshold selects storage rather than rejecting the upload or limiting total request memory.
+The example sets the following parsing limits.
+
+| Limit | Value |
+| --- | --- |
+| Complete multipart body | 8,192 bytes |
+| Each file or text part | 1,024 bytes |
+| Number of parts | 8 |
+| Headers per part | 1,024 bytes |
+
+The aggregate limit includes multipart boundaries and headers. Multipart parsing counts parts with `maxParts`.
+Queries and URL-encoded forms use `maxParameters`. Multipart's aggregate limit is separate from `maxRequestBytes`.
+
+The application creates the temporary directory before startup. A file part larger than 128 bytes spills to that
+directory. This threshold selects storage for each file part. The parser uses the limits in the table to decide
+whether to reject the request.
 
 <Code code={application} lang="java" title="MultipartExample.java" />
 
 ## Test
 
-`TestServer` is the HTTP test fixture: it starts the application on an available loopback port and owns its shutdown.
+The HTTP tests create the app with `MultipartExample.application(directory)`. `TestServer` starts it on an available
+loopback port and shuts it down when the fixture closes.
 
-The tests send real multipart bodies, including binary bytes and repeated file fields, then check the configured limits and body-mode conflicts.
-Awaitility is an additional test library used to wait for exchange cleanup without assuming that receiving the response ends the exchange.
-The spill test inspects temporary files during the handler and waits for their removal afterward.
+The tests send real multipart bodies with text fields, repeated files, binary content, and an empty filename. They
+exercise all four parsing limits, check `400` for malformed part metadata and `415` for unsupported text field
+representations, and verify that multipart parsing blocks buffered and streamed reads.
+
+The spill test counts temporary files inside the handler. A 128-byte file creates none and a 129-byte file creates
+one. The test uses Awaitility, an additional test library, to wait for temporary files to disappear after the
+response. A separate test checks that application construction rejects a file path or `null` as the storage directory.
 
 <Code code={test} lang="java" title="MultipartExampleTest.java" />
 
 ## Continue
 
-Next, [Keep an uploaded file](../persist-upload/) to transfer accepted file content to application ownership.
+Next, [keep an uploaded file](../persist-upload/) to transfer accepted file content to application ownership.

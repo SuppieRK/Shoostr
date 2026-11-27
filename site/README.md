@@ -60,6 +60,14 @@ The [documentation guide](../CONTRIBUTING.md#documentation)
 owns the writing rules. Its [build and preview section](../CONTRIBUTING.md#build-and-preview)
 covers `/Shoostr/` hosting and the automated browser checks.
 
+The [version loader](dependency-versions.mjs) reads each module's `build.gradle`. Keep one literal `version`
+assignment per module. The loader selects that version if Maven Central lists it and uses Central's latest release
+otherwise. The installation examples, Java API reference and versioned Javadoc paths share this selection.
+
+The build downloads the selected Javadoc archives and verifies their Maven Central checksums. During development,
+opening a Javadoc page downloads the archive for that module. A Gradle version change refreshes the selection.
+Builds with `SITE_URL` also generate the machine-readable documentation from the rendered guides.
+
 ## Languages
 
 English is the default language and uses the existing URLs without an `/en/` prefix. The `root` entry

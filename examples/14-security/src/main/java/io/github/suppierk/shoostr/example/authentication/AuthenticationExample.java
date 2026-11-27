@@ -43,7 +43,7 @@ public final class AuthenticationExample {
         .routes(
             routes -> {
               routes
-                  .get("/public", (ignored, response) -> response.text("public"))
+                  .get("/public", (request, response) -> response.text("public"))
                   // Select that same extension instance for the /private route group only.
                   .path(
                       "/private",
@@ -55,7 +55,7 @@ public final class AuthenticationExample {
                                     response.text(request.principal().orElseThrow().getName()))
                             .get(
                                 "/admin",
-                                (ignoredRequest, response) ->
+                                (request, response) ->
                                     response.text("admin operation allowed"));
                       },
                       lifecycle -> lifecycle.withExtension(auth));

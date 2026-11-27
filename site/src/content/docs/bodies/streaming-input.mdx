@@ -6,43 +6,59 @@ next:
   link: ../../streaming/output/
 ---
 
-import { Code } from '@astrojs/starlight/components';
+import {Code} from '@astrojs/starlight/components';
 import application from '../../../../../examples/05-bodies/src/main/java/io/github/suppierk/shoostr/example/bodies/StreamingInputExample.java?raw';
 import test from '../../../../../examples/05-bodies/src/test/java/io/github/suppierk/shoostr/example/bodies/StreamingInputExampleTest.java?raw';
 
 ## Description
 
-Streamed input lets a handler consume a request body incrementally instead of first collecting the whole body in memory. The input stream belongs to the active request and advances as it is read.
+Process a request body as it arrives, without holding the whole body in memory. This example updates a checksum
+as it reads each chunk.
 
-This task computes a checksum from arriving bytes and returns the result. Choose this approach when processing can happen chunk by chunk; use a buffered body when the handler needs one complete text or byte value.
+Use streamed input when the handler can process data in chunks. Use a [buffered body](../buffered/) when it needs
+the complete text or byte array.
 
-Read `input()` as bytes arrive and update the checksum incrementally. Calling `input()` again returns the same stream at its current position. It does not rewind the body. Choosing streamed input excludes buffered reads and multipart parsing for that request.
+Open the stream with `input()` and process bytes as you read them. Calling `input()` again returns the same stream
+at its current position.
 
-The stream belongs to the active handler and is closed during framework finalization, so finish reading within that lifetime rather than handing it to detached work.
-The configured request-byte limit applies as bytes are consumed, including skipped bytes.
-Opening a stream or stopping early does not validate the unread remainder of an unknown-length body.
+Once you select streamed input, switching to buffered reads or multipart parsing throws `IllegalStateException`.
 
-For a fixed-size prefix, `input().readNBytes(n)` returns after `n` bytes arrive or the body ends.
-Once it has those bytes, it does not wait for a later chunk.
-During the handler lifetime, valid zero-length reads return `0` without waiting for content, including at EOF.
+Read the stream on the handler's thread during the request-handling lifetime. Shoostr closes the stream during
+request finalization.
+
+Bytes you read or skip count toward the configured request-byte limit. Opening the stream or stopping early leaves
+the unread part of an unknown-length body unchecked by that limit.
+
+To read a fixed-size prefix, call `input().readNBytes(n)`. It returns as soon as it reads `n` bytes or reaches
+the end of the body. A valid zero-length `read(...)` returns `0` immediately, even at the end of the stream.
 
 ## Example
 
-The endpoint calculates SHA-256 with a per-request digest and a bounded transfer buffer, then returns the checksum only after successful consumption.
-It uses the default 1 MiB input limit; excessive declared length is rejected before the handler, while an unknown-length overflow produces `413` during reading.
-See [buffered bodies](../buffered/) for the body-mode comparison and [server options](../../application/server-options/) for general limit configuration.
+The endpoint computes SHA-256 with a per-request digest and a bounded transfer buffer. It returns the checksum
+after reading the entire body successfully.
+
+The example uses the default 1 MiB input limit. Shoostr returns `413` before the handler runs if the declared
+length exceeds that limit. For an unknown-length body, reading past the limit fails and produces `413`.
+
+See [buffered bodies](../buffered/) for the body-mode comparison and [server options](../../application/server-options/)
+for general limit configuration.
 
 <Code code={application} lang="java" title="StreamingInputExample.java" />
 
 ## Test
 
-`TestServer` is the HTTP test fixture: it starts the application on an available loopback port and owns its shutdown.
+The HTTP tests create the app with `StreamingInputExample.application()`. `TestServer` starts it on an available
+loopback port and shuts it down when the fixture closes.
 
-The tests check known checksums, empty and multi-buffer input, exact-limit success, and overflow with both fixed-length and chunked requests.
-Additional HTTP handlers verify stream position and rejected attempts to switch body modes.
+The tests check known checksums for empty input, `abc`, and a body larger than the transfer buffer. Both
+fixed-length and chunked requests succeed at exactly 1 MiB and return `413` with one extra byte.
+
+Test-only handlers check that calling `input()` again returns the same stream and the next read picks up where
+the previous one stopped. They also check that buffered text, bytes, URL-encoded form reads, and multipart
+parsing throw `IllegalStateException` after streaming access starts.
 
 <Code code={test} lang="java" title="StreamingInputExampleTest.java" />
 
 ## Continue
 
-Next, [Stream a finite response](../../streaming/output/) to write output incrementally as well.
+Next, [stream a finite response](../../streaming/output/) to write output incrementally as well.

@@ -7,66 +7,65 @@ import io.github.suppierk.shoostr.http.HttpCharacters;
 import io.github.suppierk.shoostr.http.HttpMethods;
 import io.github.suppierk.shoostr.http.HttpStatusCodes;
 import io.github.suppierk.shoostr.http.MediaType;
+
 import java.nio.charset.StandardCharsets;
 
-/** Sends finite responses with explicit statuses, encodings and body rules. */
+/**
+ * Sends finite responses with explicit statuses, encodings and body rules.
+ */
 public final class ResponseBodyExample {
-  /** Prevents construction of this example factory. */
-  private ResponseBodyExample() {}
+    /**
+     * Creates an unstarted application with
+     * a 64-byte finite response limit.
+     *
+     * @return application owned by its caller
+     */
+    public static Shoostr application() {
+        var options = options();
 
-  /**
-   * Creates an unstarted application with a 64-byte finite response limit.
-   *
-   * @return application owned by its caller
-   */
-  public static Shoostr application() {
-    var options = options();
+        return new Shoostr(options).routes(routes -> routes
+            .post("/messages", (request, response) -> response
+                .status(HttpStatusCodes.CREATED.value())
+                .text("café")
+            )
+            .get("/bytes", (request, response) -> response
+                .body(
+                    MediaType.APPLICATION_OCTET_STREAM,
+                    new byte[]{0, 1, 127, (byte) HttpCharacters.MAX_UNSIGNED_BYTE_VALUE}
+                )
+            )
+            // The selected charset controls both text encoding
+            // and Content-Type metadata.
+            .get("/latin1", (request, response) -> response
+                .text("café", StandardCharsets.ISO_8859_1))
+            .get("/message", (request, response) -> response
+                .text("café"))
+            // Reuse GET's representation;
+            // HEAD keeps its headers but sends no body bytes.
+            .route(
+                HttpMethods.HEAD,
+                "/message",
+                (request, response) -> response.text("café")
+            )
+            // Leave the body unset for 204 instead of
+            // asking completion to discard content.
+            .delete("/messages", (request, response) -> response
+                .status(HttpStatusCodes.NO_CONTENT.value())));
+    }
 
-    return new Shoostr(options)
-        .routes(
-            routes ->
-                routes
-                    .post(
-                        "/messages",
-                        (ignored, response) ->
-                            response.status(HttpStatusCodes.CREATED.value()).text("café"))
-                    .get(
-                        "/bytes",
-                        (ignoredRequest, response) ->
-                            response.body(
-                                MediaType.APPLICATION_OCTET_STREAM,
-                                new byte[] {0, 1, 127, (byte) HttpCharacters.MAX_UNSIGNED_BYTE_VALUE}))
-                    // The selected charset controls both text encoding and Content-Type metadata.
-                    .get(
-                        "/latin1",
-                        (ignoredRequest, response) ->
-                            response.text("café", StandardCharsets.ISO_8859_1))
-                    .get("/message", (ignoredRequest, response) -> response.text("café"))
-                    // Reuse GET's representation; HEAD keeps its headers but sends no body bytes.
-                    .route(
-                        HttpMethods.HEAD,
-                        "/message",
-                        (ignoredRequest, response) -> response.text("café"))
-                    // Leave the body unset for 204 instead of asking completion to discard content.
-                    .delete(
-                        "/messages",
-                        (ignoredRequest, response) ->
-                            response.status(HttpStatusCodes.NO_CONTENT.value())));
-  }
+    /**
+     * Configures the listener and resource policy used by this application.
+     *
+     * @return detached serving options
+     */
+    private static Options options() {
+        var options = new Options();
+        options.setMaxRequestBytes(1024);
+        options.setMaxResponseBytes(64);
+        options.setStreamBufferBytes(512);
+        options.setMaxParameters(1000);
+        options.setMultipart(new MultipartOptions());
 
-  /**
-   * Configures the listener and resource policy used by this application.
-   *
-   * @return detached serving options
-   */
-  private static Options options() {
-    var options = new Options();
-    options.setMaxRequestBytes(1024);
-    options.setMaxResponseBytes(64);
-    options.setStreamBufferBytes(512);
-    options.setMaxParameters(1000);
-    options.setMultipart(new MultipartOptions());
-
-    return options;
-  }
+        return options;
+    }
 }

@@ -55,7 +55,7 @@ public final class MetricsExample {
               .get(
                   "/metrics",
                   // Micrometer produces Prometheus text; this is an ordinary Shoostr HTTP handler.
-                  (ignored, response) ->
+                  (request, response) ->
                       response.body(
                           "text/plain; version=0.0.4; charset=utf-8",
                           registry.scrape().getBytes(StandardCharsets.UTF_8)));

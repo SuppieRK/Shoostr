@@ -274,10 +274,3 @@ Sources: [published runner](https://registry.npmjs.org/@modelcontextprotocol/con
 [dated requirements](https://github.com/modelcontextprotocol/conformance/blob/f44482ba17df816d3176962a11cdf36aec9bda00/requirements/2025-11-25.yaml),
 [runner CLI](https://github.com/modelcontextprotocol/conformance/blob/f44482ba17df816d3176962a11cdf36aec9bda00/src/index.ts),
 [SDK session](https://github.com/modelcontextprotocol/java-sdk/blob/v2.1.0/mcp-core/src/main/java/io/modelcontextprotocol/spec/McpStreamableServerSession.java).
-
-## Application library composition
-
-[McpOperationsExample](src/main/java/io/github/suppierk/shoostr/example/mcp/McpOperationsExample.java)
-and [its test](src/test/java/io/github/suppierk/shoostr/example/mcp/McpOperationsExampleTest.java)
-compose a Resilience4j callable bulkhead and a caller-owned Reactor scheduler.
-See the [consumer contract](../../site/src/content/docs/mcp/server.mdx#compose-blocking-tools-with-resilience4j).

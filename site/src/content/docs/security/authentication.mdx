@@ -6,56 +6,76 @@ next:
   link: ../pac4j/
 ---
 
-import { Code } from '@astrojs/starlight/components';
+import {Code} from '@astrojs/starlight/components';
 import application from '../../../../../examples/14-security/src/main/java/io/github/suppierk/shoostr/example/authentication/RouteAuthenticationExample.java?raw';
 import test from '../../../../../examples/14-security/src/test/java/io/github/suppierk/shoostr/example/authentication/RouteAuthenticationExampleTest.java?raw';
 
 ## Description
 
-Authentication verifies credentials and establishes a request's identity. Authorization then decides whether that identity may perform an operation. In Shoostr, a principal is the identity value attached to a request after your authenticator has verified it.
+On a protected route, missing or invalid credentials receive a `401` challenge. If the caller has a verified identity
+and lacks permission for the operation, return `403`.
 
-An extension contributes reusable application behavior. `ApplicationExtension<C>` supports application defaults and `RouteExtension<C>` supports scoped selection; `C` names the provider's settings type. `AuthenticationExtension` implements both roles and acts as the request's authentication handler. Route callbacks receive a `Lifecycle` object; selecting the authenticator there protects that route or group.
+Authentication verifies credentials and establishes who is making the request. Your authenticator attaches that
+identity to the request as a principal. Authorization decides what the principal may do.
 
-The authenticator callback receives the incoming `Request` and outgoing `Response`, just as an endpoint handler does.
+Implement `handle(request, response)` on an `AuthenticationExtension`. Shoostr calls it with the live `Request`
+and `Response` before local and application admission hooks and the endpoint handler.
 
-This task distinguishes missing or invalid credentials from an authenticated permission denial. The example's credential lookup is a test fixture, rather than a production identity system.
+1. Validate the credentials in `handle(...)`. If they are missing or invalid, throw
+   `AuthenticationRequiredException(challenge)` to send `401` with a `WWW-Authenticate` header.
+2. Assign the verified identity with `request.principal(...)`. The principal records the identity your
+   authenticator established. Your code is responsible for verifying the credentials.
+3. Check whether that identity may perform the operation. In this example, the admin endpoint throws
+   `ForbiddenException` to return `403` when a verified caller lacks permission.
 
-Implement the authenticator with `AuthenticationExtension`, which combines both activation roles with a `Handler`. The provider participates in application lifetime and supplies a dedicated authentication step before endpoint work.
+Shoostr supplies the final `configure(...)` implementation. The authenticator combines `ApplicationExtension`
+for application-wide defaults with `RouteExtension` for selection on a route or group.
 
-Implement `handle(request, response)` to validate credentials and establish the request's identity.
-Shoostr supplies the final `configure(...)` implementation; selecting the instance with `lifecycle.withExtension(authentication)` requires authentication in that scope.
-The selected authenticator runs before local and application admission hooks and the endpoint handler.
+Use the [`Lifecycle` supplied to a route or group configuration callback](../../extensions/route-metadata/#description)
+to select the authenticator for that scope.
 
-In the route or group configuration callback, use the supplied [`Lifecycle`](../../extensions/route-metadata/#description) object to select the instance through `lifecycle.withExtension(authentication)`. Its first selection establishes application-owned setup automatically; a group's selection is inherited by its child routes.
-To protect registered endpoints by default, use `app.withExtension(authentication)` before registering routes, then use `lifecycle.withoutExtension(authentication)` on a public endpoint or group.
-A deeper `withExtension(authentication)` restores the same owner; exclusion does not permit substituting another authenticator.
-Several authenticator instances can protect separate scopes in one application, but each endpoint can require only one distinct instance; conflicting selections are rejected during registration.
-
-Validate the supplied credentials before assigning `request.principal(...)`, because a principal is the identity established by your policy, not proof that Shoostr has independently checked a token.
-Use `AuthenticationRequiredException(challenge)` for a `401` response with `WWW-Authenticate`, and `ForbiddenException` when a verified identity lacks permission for the operation.
+- Call `lifecycle.withExtension(authentication)` to protect the route or group. Shoostr sets up the authenticator
+  on first selection and owns its cleanup. Child routes inherit the group's selection.
+- To protect routes by default, call `app.withExtension(authentication)` before registering routes. Call
+  `lifecycle.withoutExtension(authentication)` on a public route or group to exclude that instance.
+- Call `lifecycle.withExtension(authentication)` in a descendant to restore the same instance. The original
+  instance remains the only authenticator that branch can select after exclusion.
+- Separate scopes can use different authenticators. Each endpoint can require at most one instance,
+  and Shoostr rejects conflicting selections during registration.
 
 ## Example
 
-The example leaves `/public` unprotected, requires an identity for `/private/me`, and permits only the `admin` identity at `/private/admin`.
-Its fixed bearer tokens are development fixtures, not production secrets or an OAuth server; replace that lookup with real credential validation, including the validity and permission checks your token format requires.
-Protect bearer tokens with HTTPS outside a controlled local test, as described in [Bearer Token Usage](https://www.rfc-editor.org/rfc/rfc6750.html#section-2.1).
+The example protects the `/private` group and checks for the `admin` identity on one of its endpoints.
 
-The authenticator accepts one Authorization field, rejects ambiguous credentials, and publishes a principal only for a recognized token.
-Shoostr owns the installed authenticator's lifecycle; the handler reads the verified principal without retaining its live request.
-For a configured third-party direct client and role authorizer, use the [pac4j adapter](../pac4j/).
-For browser login backed by a native session, see [Log in and log out with session cookies](../login-logout/).
+| Route | Access |
+| --- | --- |
+| `/public` | Public |
+| `/private/me` | Any identity verified by the authenticator |
+| `/private/admin` | Only the verified `admin` identity |
+
+The authenticator requires exactly one `Authorization` header and assigns a principal only for a recognized bearer
+token. The endpoint handlers read that principal during the request.
+
+The fixed bearer tokens are for local tests. Replace the lookup with credential validation and the permission checks
+your token format requires. Serve deployed bearer-token requests over HTTPS. See [Bearer Token Usage](https://www.rfc-editor.org/rfc/rfc6750.html#section-5.3).
+
+For a configured credential client and role authorizer, see the [pac4j adapter](../pac4j/).
+For browser login backed by a native session, see [log in and log out with session cookies](../login-logout/).
 
 <Code code={application} lang="java" title="RouteAuthenticationExample.java" />
 
 ## Test
 
-`TestServer` is the HTTP test fixture: it starts the application on an available loopback port and owns its shutdown.
+The tests start `RouteAuthenticationExample.application()` with `TestServer` on an available loopback port.
+The fixture owns application shutdown.
 
-The tests distinguish missing or invalid credentials from an authenticated permission denial, verify inherited protection on both private routes, and confirm that an unselected route remains public.
-They also check duplicate credentials and the Bearer scheme's case and spacing rules through real HTTP requests.
+HTTP requests with missing, invalid or duplicate credentials get a `401` challenge on both private routes.
+A valid token identifies the caller at `/private/me`. On `/private/admin`, a verified reader gets `403` and
+a verified admin succeeds. The public endpoint still responds to a request with invalid credentials.
+The tests also verify mixed-case `Bearer` and multiple spaces between the scheme and token.
 
 <Code code={test} lang="java" title="RouteAuthenticationExampleTest.java" />
 
 ## Continue
 
-Next, [Authenticate with pac4j](../pac4j/) to connect a configured credential client.
+Next, [authenticate with pac4j](../pac4j/) to connect a configured credential client.

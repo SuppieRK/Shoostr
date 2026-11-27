@@ -4,75 +4,79 @@ import io.github.suppierk.shoostr.MultipartOptions;
 import io.github.suppierk.shoostr.Options;
 import io.github.suppierk.shoostr.Shoostr;
 import io.github.suppierk.shoostr.http.exceptions.BadRequestException;
+
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Objects;
-import org.eclipse.jetty.server.ServerConnector;
 
-/** Transfers uploaded content to application-owned storage. */
+/**
+ * Transfers uploaded content to application-owned storage.
+ */
 public final class PersistUploadExample {
-  /** Prevents construction of this example factory. */
-  private PersistUploadExample() {}
+    /**
+     * Creates an unstarted application that saves uploads
+     * under generated filenames.
+     *
+     * @param directory directory for temporary uploads and retained files
+     * @return application owned by its caller;
+     * saved files remain owned by the application
+     * @throws IOException if the directory cannot be created
+     */
+    public static Shoostr application(Path directory) throws IOException {
+        var storage = Files.createDirectories(
+            Objects.requireNonNull(directory).toAbsolutePath().normalize()
+        );
+        var configuredOptions = options(storage);
 
-  /**
-   * Creates an unstarted application that saves uploads under generated filenames.
-   *
-   * @param directory directory for temporary uploads and retained files
-   * @return application owned by its caller; saved files remain owned by the application
-   * @throws IOException if the directory cannot be created
-   */
-  public static Shoostr application(Path directory) throws IOException {
-    var storage =
-        Files.createDirectories(Objects.requireNonNull(directory).toAbsolutePath().normalize());
-    var configuredOptions = options(storage);
+        return new Shoostr(configuredOptions).routes(routes -> routes
+            .post("/documents", (request, response) -> {
+                var upload = request
+                    .file("document")
+                    .orElseThrow(() -> new BadRequestException("Missing document"));
 
-    return new Shoostr(configuredOptions)
-        .modifyServer(
-            nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0))
-        .routes(
-            routes ->
-                routes.post(
-                    "/documents",
-                    (request, response) -> {
-                      var upload =
-                          request
-                              .file("document")
-                              .orElseThrow(() -> new BadRequestException("Missing document"));
+                // Generate the storage name;
+                // an uploaded filename is not a trusted path.
+                var destination = Files.createTempFile(
+                    storage,
+                    "upload-",
+                    ".bin"
+                );
 
-                      // Generate the storage name; an uploaded filename is not a trusted path.
-                      var destination = Files.createTempFile(storage, "upload-", ".bin");
+                try {
+                    // Retained content becomes application-owned
+                    // beyond this request's cleanup.
+                    upload.persistTo(destination);
+                } catch (IOException | RuntimeException failure) {
+                    try {
+                        // Remove the reserved destination without
+                        // hiding the original failure.
+                        Files.deleteIfExists(destination);
+                    } catch (IOException cleanup) {
+                        failure.addSuppressed(cleanup);
+                    }
 
-                      try {
-                        // Retained content becomes application-owned beyond this request's cleanup.
-                        upload.persistTo(destination);
-                      } catch (IOException | RuntimeException failure) {
-                        try {
-                          // Remove the reserved destination without hiding the original failure.
-                          Files.deleteIfExists(destination);
-                        } catch (IOException cleanup) {
-                          failure.addSuppressed(cleanup);
-                        }
+                    throw failure;
+                }
 
-                        throw failure;
-                      }
+                response.status(201)
+                        .text(destination.getFileName().toString());
+            }));
+    }
 
-                      response.status(201).text(destination.getFileName().toString());
-                    }));
-  }
+    /**
+     * Configures the listener and resource policy used by this application.
+     *
+     * @param storage application setting
+     * @return detached serving options
+     */
+    private static Options options(Path storage) {
+        var multipart = new MultipartOptions();
+        multipart.setTemporaryDirectory(storage);
 
-  /**
-   * Configures the listener and resource policy used by this application.
-   *
-   * @param storage application setting
-   * @return detached serving options
-   */
-  private static Options options(Path storage) {
-    var multipart = new MultipartOptions();
-    multipart.setTemporaryDirectory(storage);
-    var configuredOptions = new Options();
-    configuredOptions.setMultipart(multipart);
-
-    return configuredOptions;
-  }
+        var configuredOptions = new Options();
+        configuredOptions.setMultipart(multipart);
+        configuredOptions.setPort(0);
+        return configuredOptions;
+    }
 }

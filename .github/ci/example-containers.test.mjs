@@ -21,9 +21,10 @@ if (process.argv.includes('--matrix')) {
   if (!Object.hasOwn(process.env, 'EXAMPLE')) {
     for (const [label, files, selected] of [
       ['one example', ['examples/01-hello/src/main/java/Hello.java'], ['hello-example']],
-      ['nested example', ['examples/03-routing/legacy-requests/Dockerfile'], ['routing-example', 'requests-example']],
+      ['nested example', ['examples/10-streaming/sse/Dockerfile'], ['sse-example']],
       ['directory boundary', ['examples/01-hello-other/file'], examples.map(example => example.project)],
       ['shared library', ['core/src/main/java/Request.java'], examples.map(example => example.project)],
+      ['BOM build', ['bom/build.gradle'], examples.map(example => example.project)],
       ['shared build', ['config/gradle/example-container.gradle'], examples.map(example => example.project)],
       ['wrapper', ['gradle/wrapper/gradle-wrapper.properties'], examples.map(example => example.project)],
       ['root build', ['settings.gradle'], examples.map(example => example.project)],
@@ -162,11 +163,8 @@ function behaviorProbes() {
   'resources-example': ['/download', 'name\nAda\nGrace\n'],
   'lifecycle-example': ['/ready', 'ready'],
   'extensions-example': ['/health', 'ok'],
-  'requests-example': ['/greetings/Ada', 'Hello, Ada!'],
   'sse-example': ['/events', /data: starting\r?\n\r?\ndata: complete/],
   'websocket-example': ['/', 'WebSocket endpoints: /echo, /rooms/{room}, /numbers'],
-  'exceptions-example': ['/app-failure', 'Application failure', {}, 500],
-  'json-errors-example': ['/users', '{"name":"Ada"}', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"name":"Ada"}' }, 201],
   'authentication-example': ['/public', 'public'],
   'static-streaming-example': ['/download', 'name\nAda\nGrace\n'],
   'openapi-example': ['/health', 'healthy'],
@@ -201,7 +199,7 @@ function matrixExamples() {
 }
 
 function selectedExamples(files) {
-  const shared = /^(core|http|test|pac4j|micrometer|opentelemetry|openapi|mcp|build-logic|config|gradle|\.github\/ci)\//;
+  const shared = /^(bom|core|http|test|pac4j|micrometer|opentelemetry|openapi|mcp|build-logic|config|gradle|\.github\/ci)\//;
   const rootBuild = /^(build\.gradle|settings\.gradle|gradle\.properties|gradlew|gradlew\.bat|\.dockerignore|\.github\/workflows\/ci\.yml)$/;
   if (files.some(file => shared.test(file) || rootBuild.test(file)
     || (file.startsWith('examples/') && !examples.some(example => file.startsWith(example.directory + '/'))))) return examples;

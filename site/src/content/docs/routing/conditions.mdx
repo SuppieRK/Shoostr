@@ -2,7 +2,7 @@
 title: Control availability with conditional routes
 description: Make routes conditional on a live flag or request predicate without changing their registration.
 next:
-  label: Follow request lifecycle hooks
+  label: Run request lifecycle hooks and observe completion
   link: ../../lifecycle/hooks/
 ---
 
@@ -12,15 +12,19 @@ import test from '../../../../../examples/03-routing/src/test/java/io/github/sup
 
 ## Description
 
-A conditional route is registered at startup but considered available only when its condition accepts a request. The condition selects availability; it does not verify credentials or grant permission.
+Switch a route on or off while the application is running. Register the route once, then use a live flag or a request
+condition to control its availability. For credential and permission checks, see how to
+[require authentication for routes and groups](../../security/authentication/).
 
-This task uses both an application flag and a request predicate. Nested conditions form part of the route's match, so their order determines whether a later condition is evaluated.
+Use `when(...)` to register routes under a condition. A `BooleanSupplier` reads an application flag. A
+`Predicate<Request>` checks the current request.
 
-Register availability with `when(...)`. A `BooleanSupplier` reads an application flag; a `Predicate<Request>` evaluates the current request. Nested conditions run from the outer scope inward and stop when one returns false.
+Shoostr selects a route by method and path. After the request passes admission checks, including any required
+authentication, Shoostr evaluates the selected route's conditions from the outer scope inward. On the first `false`,
+it returns `404` with `Cache-Control: no-store` and skips any other matching route.
 
-Conditions run after route selection and admission, so a false result ends selection with `404` and `Cache-Control: no-store` rather than trying another matching route.
-Registration and method discovery remain unchanged: an unavailable route can still contribute methods to a generated `405` response's `Allow` header.
-Use these conditions for availability, not as a replacement for authentication or authorization.
+Method discovery uses the registered routes. An unavailable route can still contribute its method to the `Allow`
+header in a generated `405` response.
 
 ## Example
 
@@ -31,13 +35,19 @@ The catch-all handles other preview paths, but is not retried when the selected 
 
 ## Test
 
-`TestServer` is the HTTP test fixture: it starts the application on an available loopback port and owns its shutdown.
+The HTTP tests create the app with `ConditionalRoutesExample.application(...)`. `TestServer` starts it on an available
+loopback port and shuts it down when the fixture closes.
 
-The malformed query makes inner evaluation observable: it receives `404` with the flag disabled, but `400` when the request condition attempts to decode it.
-This checks short-circuiting, not an exemption from transport validation.
+The live-flag test gets `404`, `200`, and `404` from the same running app as it flips the flag on and off. With the flag
+on, the route still requires `preview=true`. The catch-all test checks that `/preview/latest` returns `404` while
+`/preview/other` still reaches the fallback. `PUT /preview/latest` gets `405` with `GET` and `POST` in `Allow` even
+when the conditional routes are unavailable. A separate test checks that the example factory rejects a null flag.
+
+The test for evaluation order sends `preview=%FF`. With the flag off, the request receives `404` before the inner
+condition reads the query. With the flag on, the inner condition tries to decode the value and produces `400`.
 
 <Code code={test} lang="java" title="ConditionalRoutesExampleTest.java" />
 
 ## Continue
 
-Next, [Follow request lifecycle hooks](../../lifecycle/hooks/) to observe the phases around a matched handler.
+Next, [run request lifecycle hooks and observe completion](../../lifecycle/hooks/) to see what each hook can access.

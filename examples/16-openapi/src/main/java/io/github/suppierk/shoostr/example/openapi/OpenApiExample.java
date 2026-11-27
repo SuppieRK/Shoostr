@@ -102,7 +102,7 @@ public final class OpenApiExample {
               routes
                   .get(
                       "/health",
-                      (ignored, response) -> response.text("healthy"),
+                      (request, response) -> response.text("healthy"),
                       lifecycle ->
                           lifecycle
                               .withExtension(docs)
@@ -116,7 +116,7 @@ public final class OpenApiExample {
                         group
                             .get(
                                 "/",
-                                (ignoredRequest, response) ->
+                                (request, response) ->
                                     response.text("Use a numeric user ID"),
                                 lifecycle ->
                                     lifecycle
@@ -125,7 +125,7 @@ public final class OpenApiExample {
                                         .response(200, "Plain text help", MediaType.TEXT_PLAIN))
                             .get(
                                 "/{id:[0-9]+}",
-                                (ignoredRequest, response) ->
+                                (request, response) ->
                                     response.body(
                                         MediaType.APPLICATION_JSON,
                                         Json31.mapper()
@@ -165,7 +165,7 @@ public final class OpenApiExample {
                   // Authentication is configured separately.
                   .get(
                       "/admin/ping",
-                      (ignoredRequest, response) -> response.text("pong"),
+                      (request, response) -> response.text("pong"),
                       lifecycle -> {
                         lifecycle.withExtension(security);
                         lifecycle
@@ -181,7 +181,7 @@ public final class OpenApiExample {
                       conditional ->
                           conditional.get(
                               "/dev-only",
-                              (ignoredRequest, response) ->
+                              (request, response) ->
                                   response.text("Conditional development route"),
                               lifecycle ->
                                   lifecycle

@@ -61,28 +61,28 @@ final class CompatibilityFixtures {
         tool(
             "test_simple_text",
             NO_ARGUMENTS,
-            (ignored, ignoredCallToolRequest) ->
+            (exchange, callToolRequest) ->
                 McpSchema.CallToolResult.builder()
                     .addTextContent("Welcome to Shoostr's MCP example.")
                     .build()),
         tool(
             "test_image_content",
             NO_ARGUMENTS,
-            (ignoredMcpSyncServerExchange, ignoredCallToolRequest) ->
+            (exchange, callToolRequest) ->
                 McpSchema.CallToolResult.builder()
                     .content(List.of(McpSchema.ImageContent.builder(PNG, PNG_TYPE.value()).build()))
                     .build()),
         tool(
             "test_audio_content",
             NO_ARGUMENTS,
-            (ignoredMcpSyncServerExchange, ignoredCallToolRequest) ->
+            (exchange, callToolRequest) ->
                 McpSchema.CallToolResult.builder()
                     .content(List.of(McpSchema.AudioContent.builder(WAV, "audio/wav").build()))
                     .build()),
         tool(
             "test_embedded_resource",
             NO_ARGUMENTS,
-            (ignoredMcpSyncServerExchange, ignoredCallToolRequest) ->
+            (exchange, callToolRequest) ->
                 McpSchema.CallToolResult.builder()
                     .content(
                         List.of(
@@ -98,7 +98,7 @@ final class CompatibilityFixtures {
         tool(
             "test_multiple_content_types",
             NO_ARGUMENTS,
-            (ignoredMcpSyncServerExchange, ignoredCallToolRequest) ->
+            (exchange, callToolRequest) ->
                 McpSchema.CallToolResult.builder()
                     .content(
                         List.of(
@@ -116,7 +116,7 @@ final class CompatibilityFixtures {
         tool(
             "test_error_handling",
             NO_ARGUMENTS,
-            (ignoredMcpSyncServerExchange, ignoredCallToolRequest) ->
+            (exchange, callToolRequest) ->
                 McpSchema.CallToolResult.builder()
                     .isError(true)
                     .addTextContent("Demonstration rejected: no parcel was created or changed.")
@@ -124,7 +124,7 @@ final class CompatibilityFixtures {
         tool(
             "test_tool_with_logging",
             NO_ARGUMENTS,
-            (exchange, ignoredCallToolRequest) -> {
+            (exchange, callToolRequest) -> {
               // The SDK exchange sends protocol notifications to the connected MCP client.
               for (var message :
                   List.of(
@@ -187,7 +187,7 @@ final class CompatibilityFixtures {
         tool(
             "test_elicitation_sep1034_defaults",
             NO_ARGUMENTS,
-            (exchange, ignoredCallToolRequest) -> {
+            (exchange, callToolRequest) -> {
               var result =
                   exchange.createElicitation(
                       McpSchema.ElicitFormRequest.builder(
@@ -202,7 +202,7 @@ final class CompatibilityFixtures {
         tool(
             "test_elicitation_sep1330_enums",
             NO_ARGUMENTS,
-            (exchange, ignoredCallToolRequest) -> {
+            (exchange, callToolRequest) -> {
               var result =
                   exchange.createElicitation(
                       McpSchema.ElicitFormRequest.builder(
@@ -217,7 +217,7 @@ final class CompatibilityFixtures {
         tool(
             "json_schema_2020_12_tool",
             jsonSchema(),
-            (ignoredMcpSyncServerExchange, ignoredCallToolRequest) ->
+            (exchange, callToolRequest) ->
                 McpSchema.CallToolResult.builder()
                     .addTextContent("Parcel delivery schema example; no shipment was created.")
                     .build()));
@@ -321,7 +321,7 @@ final class CompatibilityFixtures {
                 .description("A short guide to the three MCP feature types")
                 .mimeType(MediaType.TEXT_PLAIN.value())
                 .build(),
-            (ignoredMcpSyncServerExchange, request) ->
+            (exchange, request) ->
                 McpSchema.ReadResourceResult.builder(
                         List.of(
                             McpSchema.TextResourceContents.builder(
@@ -336,7 +336,7 @@ final class CompatibilityFixtures {
                 .description("An eight-by-eight blue and amber image generated for this example")
                 .mimeType(PNG_TYPE.value())
                 .build(),
-            (ignoredMcpSyncServerExchange, request) ->
+            (exchange, request) ->
                 McpSchema.ReadResourceResult.builder(
                         List.of(
                             McpSchema.BlobResourceContents.builder(request.uri(), PNG)
@@ -348,7 +348,7 @@ final class CompatibilityFixtures {
                 .description("A fixed status resource that accepts subscriptions")
                 .mimeType(MediaType.TEXT_PLAIN.value())
                 .build(),
-            (ignoredMcpSyncServerExchange, request) ->
+            (exchange, request) ->
                 McpSchema.ReadResourceResult.builder(
                         List.of(
                             McpSchema.TextResourceContents.builder(
@@ -371,7 +371,7 @@ final class CompatibilityFixtures {
                 .description("An illustrative parcel record containing the supplied identifier")
                 .mimeType(MediaType.APPLICATION_JSON.value())
                 .build(),
-            (ignoredMcpSyncServerExchange, request) -> {
+            (exchange, request) -> {
               var uri = request.uri();
               var id = uri.substring("test://template/".length(), uri.lastIndexOf('/'));
 
@@ -417,7 +417,7 @@ final class CompatibilityFixtures {
             McpSchema.Prompt.builder("test_simple_prompt")
                 .description("Ask the client to explain the MCP feature types")
                 .build(),
-            (ignoredMcpSyncServerExchange, ignoredGetPromptRequest) ->
+            (exchange, getPromptRequest) ->
                 McpSchema.GetPromptResult.builder(
                         List.of(
                             McpSchema.PromptMessage.builder(
@@ -437,7 +437,7 @@ final class CompatibilityFixtures {
                         McpSchema.PromptArgument.builder("arg1").required(true).build(),
                         McpSchema.PromptArgument.builder("arg2").required(true).build()))
                 .build(),
-            (ignoredMcpSyncServerExchange, request) ->
+            (exchange, request) ->
                 McpSchema.GetPromptResult.builder(
                         List.of(
                             McpSchema.PromptMessage.builder(
@@ -457,7 +457,7 @@ final class CompatibilityFixtures {
                 .arguments(
                     List.of(McpSchema.PromptArgument.builder("resourceUri").required(true).build()))
                 .build(),
-            (ignoredMcpSyncServerExchange, request) ->
+            (exchange, request) ->
                 McpSchema.GetPromptResult.builder(
                         List.of(
                             McpSchema.PromptMessage.builder(
@@ -468,7 +468,7 @@ final class CompatibilityFixtures {
             McpSchema.Prompt.builder("test_prompt_with_image")
                 .description("Present the example's generated checkerboard to the client")
                 .build(),
-            (ignoredMcpSyncServerExchange, ignoredGetPromptRequest) ->
+            (exchange, getPromptRequest) ->
                 McpSchema.GetPromptResult.builder(
                         List.of(
                             McpSchema.PromptMessage.builder(

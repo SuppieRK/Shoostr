@@ -5,11 +5,13 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
-
 import io.github.suppierk.shoostr.ApplicationExtension;
 import io.github.suppierk.shoostr.Lifecycle;
 import io.github.suppierk.shoostr.Shoostr;
 import io.github.suppierk.shoostr.testing.TestServer;
+import org.eclipse.jetty.server.ServerConnector;
+import org.junit.jupiter.api.Test;
+
 import java.io.Closeable;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -22,136 +24,132 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
-import org.eclipse.jetty.server.ServerConnector;
-import org.junit.jupiter.api.Test;
 
 class ShutdownExampleTest {
-  @Test
-  void servesTrafficBeforeFinalCleanupRuns() throws Exception {
-    var disposed = new AtomicInteger();
+    @Test
+    void servesTrafficBeforeFinalCleanupRuns() throws Exception {
+        var disposed = new AtomicInteger();
 
-    try (var test = TestServer.start(ShutdownExample.application(disposed::incrementAndGet))) {
-      var response =
-          test.send(request -> request.path("/ready"), HttpResponse.BodyHandlers.ofString());
+        try (var test = TestServer.start(ShutdownExample.application(disposed::incrementAndGet))) {
+            var response = test.send(request -> request
+                .path("/ready"),
+                HttpResponse.BodyHandlers.ofString());
 
-      assertEquals(200, response.statusCode());
-      assertEquals("ready", response.body());
-      assertEquals(0, disposed.get());
+            assertEquals(200, response.statusCode());
+            assertEquals("ready", response.body());
+            assertEquals(0, disposed.get());
+        }
+
+        assertEquals(1, disposed.get());
     }
 
-    assertEquals(1, disposed.get());
-  }
+    @Test
+    void signalsWaitingRequestsBeforeDisposingTheirResources() throws Exception {
+        var entered = new CountDownLatch(1);
+        var disposed = new AtomicInteger();
+        var app = ShutdownExample.application(disposed::incrementAndGet);
 
-  @Test
-  void signalsWaitingRequestsBeforeDisposingTheirResources() throws Exception {
-    var entered = new CountDownLatch(1);
-    var disposed = new AtomicInteger();
-
-    {
-      var app = ShutdownExample.application(disposed::incrementAndGet);
-
-      try (Closeable appCleanup = app::close;
-          var client = HttpClient.newHttpClient()) {
-        app.modifyServer(server -> server.setStopTimeout(5_000));
-        app.modifyServer(
+        try (Closeable appCleanup = app::close;
+             var client = HttpClient.newHttpClient()) {
+            app.modifyServer(server -> server.setStopTimeout(5_000));
+            app.modifyServer(
             server -> {
-              for (var connector : server.getConnectors()) {
-                ((ServerConnector) connector).setPort(0);
-              }
+                for (var connector : server.getConnectors()) {
+                    ((ServerConnector) connector).setPort(0);
+                }
             });
-        app.beforeRouteHandler((ignored, ignoredResponse) -> entered.countDown());
+            app.beforeRouteHandler((request, response) -> entered.countDown());
 
-        app.start();
+            app.start();
 
-        var response =
-            sendResponseForSignalsWaitingRequestsBeforeDisposingTheirResources(client, app);
+            var response = sendResponseForSignalsWaitingRequestsBeforeDisposingTheirResources(client, app);
 
-        assertTrue(entered.await(5, TimeUnit.SECONDS));
+            assertTrue(entered.await(5, TimeUnit.SECONDS));
 
+            app.close();
+
+            assertEquals(200, response.get(5, TimeUnit.SECONDS).statusCode());
+            assertEquals("stopping", response.get().body());
+            assertEquals(1, disposed.get());
+        }
+    }
+
+    private CompletableFuture<HttpResponse<String>> sendResponseForSignalsWaitingRequestsBeforeDisposingTheirResources(
+            HttpClient client,
+            Shoostr app
+    ) {
+        return client.sendAsync(
+            HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/wait-for-shutdown"))
+                .timeout(Duration.ofSeconds(10))
+                .build(),
+            HttpResponse.BodyHandlers.ofString());
+    }
+
+    @Test
+    void closesUnstartedApplicationsOnlyOnceInDocumentedOrder() throws Exception {
+        var events = new ArrayList<String>();
+        var app = ShutdownExample.application(() -> events.add("resource"));
+        app.beforeClose(() -> events.add("signal-1"));
+        app.beforeClose(() -> events.add("signal-2"));
+        app.afterClose(() -> events.add("cleanup-1"));
+        app.afterClose(() -> events.add("cleanup-2"));
+        app.close();
         app.close();
 
-        assertEquals(200, response.get(5, TimeUnit.SECONDS).statusCode());
-        assertEquals("stopping", response.get().body());
-        assertEquals(1, disposed.get());
-      }
+        assertEquals(
+            List.of(
+                "signal-1",
+                "signal-2",
+                "cleanup-2",
+                "cleanup-1",
+                "resource"
+            ),
+            events
+        );
+        assertThrows(IllegalStateException.class, app::start);
     }
-  }
 
-  private CompletableFuture<HttpResponse<String>>
-      sendResponseForSignalsWaitingRequestsBeforeDisposingTheirResources(
-          HttpClient client, Shoostr app) {
-    return client.sendAsync(
-        HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/wait-for-shutdown"))
-            .timeout(Duration.ofSeconds(10))
-            .build(),
-        HttpResponse.BodyHandlers.ofString());
-  }
+    @Test
+    void releasesResourcesWhenStartupFailsAfterRouteCompilation() throws Exception {
+        var disposed = new AtomicInteger();
+        var app = new Shoostr().afterClose(disposed::incrementAndGet);
 
-  @Test
-  void closesUnstartedApplicationsOnlyOnceInDocumentedOrder() throws Exception {
-    var events = new ArrayList<String>();
-    var app = ShutdownExample.application(() -> events.add("resource"));
-    app.beforeClose(() -> events.add("signal-1"));
-    app.beforeClose(() -> events.add("signal-2"));
-    app.afterClose(() -> events.add("cleanup-1"));
-    app.afterClose(() -> events.add("cleanup-2"));
-    app.close();
-    app.close();
+        try (Closeable appCleanup = app::close) {
+            app.withExtension(new ApplicationExtension<>() {
+                @Override
+                public Object configure(Lifecycle lifecycle, Object inherited) {
+                    return this;
+                }
 
-    assertEquals(List.of("signal-1", "signal-2", "cleanup-2", "cleanup-1", "resource"), events);
-    assertThrows(IllegalStateException.class, app::start);
-  }
-
-  @Test
-  void releasesResourcesWhenStartupFailsAfterRouteCompilation() throws Exception {
-    var disposed = new AtomicInteger();
-
-    {
-      var app = new Shoostr().afterClose(disposed::incrementAndGet);
-
-      try (Closeable appCleanup1 = app::close) {
-        app.withExtension(
-            new ApplicationExtension<Object>() {
-              @Override
-              public Object configure(Lifecycle lifecycle, Object inherited) {
-                return this;
-              }
-
-              @Override
-              public void beforeStart() {
-                throw new IllegalStateException("startup failed");
-              }
+                @Override
+                public void beforeStart() {
+                    throw new IllegalStateException("startup failed");
+                }
             });
 
-        assertThrows(IllegalStateException.class, app::start);
+            assertThrows(IllegalStateException.class, app::start);
+            assertEquals(1, disposed.get());
+            assertThrows(IllegalStateException.class, app::start);
+        }
+
         assertEquals(1, disposed.get());
-        assertThrows(IllegalStateException.class, app::start);
-      }
     }
 
-    assertEquals(1, disposed.get());
-  }
+    @Test
+    void disposesApplicationResourcesBeforeRethrowingSignallingError() throws Exception {
+        var disposed = new AtomicInteger();
+        var failure = assertThrows(AssertionError.class, () -> fail("Signalling failed"));
+        var app = ShutdownExample.application(disposed::incrementAndGet);
 
-  @Test
-  void disposesApplicationResourcesBeforeRethrowingSignallingError() throws Exception {
-    var disposed = new AtomicInteger();
-
-    var failure = assertThrows(AssertionError.class, () -> fail("Signalling failed"));
-
-    {
-      var app = ShutdownExample.application(disposed::incrementAndGet);
-
-      try (Closeable appCleanup2 = app::close) {
-        app.beforeClose(
-            () -> {
-              throw failure;
+        try (Closeable appCleanup = app::close) {
+            app.beforeClose(() -> {
+                throw failure;
             });
 
-        assertSame(failure, assertThrows(AssertionError.class, app::close));
-        assertEquals(1, disposed.get());
-      }
-    }
+            assertSame(failure, assertThrows(AssertionError.class, app::close));
+            assertEquals(1, disposed.get());
+        }
 
-    assertEquals(1, disposed.get());
-  }
+        assertEquals(1, disposed.get());
+    }
 }

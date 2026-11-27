@@ -2,48 +2,71 @@
 title: Inspect the client address and request metadata
 description: Distinguish raw URLs and logical authority from the direct connection, effective client address, and assigned identity.
 next:
-  label: Resolve forwarded metadata
+  label: Trust proxy headers and resolve forwarded metadata
   link: ../../security/proxies/
 ---
 
-import { Code } from '@astrojs/starlight/components';
+import {Code} from '@astrojs/starlight/components';
 import application from '../../../../../examples/04-request/src/main/java/io/github/suppierk/shoostr/example/request/MetadataExample.java?raw';
 import test from '../../../../../examples/04-request/src/test/java/io/github/suppierk/shoostr/example/request/MetadataExampleTest.java?raw';
 
 ## Description
 
-Request metadata describes the exchange being handled: its method, protocol, URL and selected route. The selected route template is different from the concrete URL when it contains captured values.
+A request can name an `https` URL over a plain connection. Shoostr exposes the request URI, the direct connection,
+and the identity your application assigns as separate values.
 
-This task inspects those values inside a handler. Keep raw URL text separate from decoded parameters, and distinguish metadata about the physical connection from assertions supplied by a proxy.
+This example reads request metadata inside a handler. Choose the accessor based on what you need to know.
 
-Inspect the selected exchange with `method()`, `protocol()`, `path()` and `routePattern()`. The last value is the registered template before captured identifiers are substituted. For URL text, `url()` omits the query and fragment, `fullUrl()` keeps the raw query, and `queryString()` returns it without `?`. These are different from decoded parameters: the routing `path()` can differ from the encoded URL spelling, as the test demonstrates with `/inspect/caf%C3%A9`.
+| Question | Accessors | What you get |
+| --- | --- | --- |
+| What method and HTTP version arrived? | `method()`, `protocol()` | Values such as `GET` and `HTTP/1.1`. |
+| Which route matched? | `routePattern()` | The registered route template with its placeholders intact. |
+| What path did the router use? | `path()` | Jetty's canonical routing path. Its spelling can differ from the encoded URL path. |
+| What URL did the transport expose? | `url()`, `fullUrl()`, `queryString()` | `url()` omits the query and fragment. `fullUrl()` keeps the raw query. `queryString()` returns just the raw query, without `?`. |
+| What logical destination does the request name? | `scheme()`, `authority()`, `serverName()`, `serverPort()` | The URI scheme, normalized authority, and logical host and port, with transport defaults or fallbacks where applicable. |
+| What does the direct connection report? | `localAddress()`, `remoteAddress()`, `isSecure()` | The local and peer socket addresses and whether the direct connection uses TLS. |
+| What is the effective client address? | `clientAddress()` | The effective IP socket address, when available. |
+| Did Shoostr apply trusted forwarding? | `effectiveUrl()`, `isForwarded()` | The effective full URL and whether Shoostr applied trusted forwarding metadata. |
+| What identity did the application assign? | `principal()` | The principal assigned by the application's authentication logic, when present. |
 
-The request authority, server name, and server port describe the logical destination, which can differ from `localAddress()` and `remoteAddress()` on the actual connection.
-Neither the request authority nor an effective URL establishes a trusted application origin.
-Use `isSecure()` for direct transport security: a URI scheme or forwarding header alone does not prove that this connection uses TLS.
+For `/inspect/caf%C3%A9`, `routePattern()` returns `/inspect/{name}`, `path()` returns `/inspect/café`, and
+`pathParam("name")` returns `café`. The URL accessors preserve the encoded path spelling.
+
+Check `isSecure()` to determine whether the direct connection uses TLS. Neither the request authority nor the
+effective URL establishes a trusted application origin.
 
 ## Example
 
 This inspection endpoint reports the metadata without consuming the body or decoding the query.
 Keep diagnostic endpoints restricted if you add sensitive application data to their output.
 
-Trusted forwarding is disabled by default, so `effectiveUrl()` equals `fullUrl()` and `isForwarded()` is false.
-The effective client address from `clientAddress()` then defaults to the direct IP peer; forwarding headers do not change it without an explicit trust policy.
-Configure [trusted proxy metadata](../../security/proxies/) explicitly when the application sits behind a proxy.
-Likewise, `principal()` only reads an identity explicitly assigned by [authentication logic](../../security/authentication/)—it does not authenticate credentials or infer a user from headers.
+Trusted forwarding is disabled by default. In this example, `effectiveUrl()` equals `fullUrl()`, `isForwarded()`
+returns `false`, and `clientAddress()` reports the direct IP peer. Configure [trusted proxy metadata](../../security/proxies/)
+when your application needs to use a proxy's forwarding headers.
+
+Use [authentication logic](../../security/authentication/) to verify credentials and assign an identity. The endpoint
+reports `anonymous` when no principal has been assigned.
 
 <Code code={application} lang="java" title="MetadataExample.java" />
 
 ## Test
 
-`TestServer` is the HTTP test fixture: it starts the application on an available loopback port and owns its shutdown.
+The HTTP tests create the app with `MetadataExample.application()`. `TestServer` starts it on an available loopback
+port and shuts it down when the fixture closes.
 
-The tests compare raw URL spelling with decoded captures, verify ignored forwarding and identity-like headers, and distinguish a requested authority from the listener address.
-They select HTTP/1.1 explicitly when asserting that protocol name.
-Copy needed values or [snapshots](../state/) before the request's handler lifetime ends.
+A raw-socket test sends an absolute request target starting with `https://docs.example:8443`. Shoostr reports `https`
+as the URI scheme and `docs.example:8443` as the authority. The local and remote addresses still describe the plain
+socket connection and `isSecure()` returns `false`.
+
+Another test sends `Forwarded`, `X-Forwarded-For`, `X-Forwarded-Proto`, and `X-User`. The effective URL and client
+address still reflect the direct request, and the endpoint reports an anonymous caller. The remaining tests compare
+raw URL spelling with decoded captures, check that an absent query stays absent, and read a malformed query as raw
+text. The URL test selects HTTP/1.1 explicitly before asserting the protocol name.
+
+Copy needed values or [snapshots](../state/) before the request-handling lifetime ends.
 
 <Code code={test} lang="java" title="MetadataExampleTest.java" />
 
 ## Continue
 
-Next, [Resolve forwarded metadata](../../security/proxies/) to trust client assertions only from selected proxies.
+Next, [trust proxy headers and resolve forwarded metadata](../../security/proxies/) for requests from selected proxies.

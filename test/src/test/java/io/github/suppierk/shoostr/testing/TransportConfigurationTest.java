@@ -18,6 +18,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.GeneralSecurityException;
 import java.security.KeyStore;
+import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
@@ -192,7 +193,10 @@ class TransportConfigurationTest {
       tls.setKeyStore(store);
       tls.setKeyStorePassword("changeit");
     });
-    app.routes().get("/value", (ignoredRequest, response) -> response.text("verified TLS"));
+    app.routes()
+        .get("/value", (ignoredRequest, response) -> response.text("verified TLS"))
+        .websocket(
+            "/socket", events -> events.onOpen(connection -> connection.send("verified WSS")));
 
     try (var test =
         TestServer.startOnPortRange(
@@ -205,6 +209,10 @@ class TransportConfigurationTest {
       assertEquals("verified TLS", reply.body());
       assertEquals(HttpClient.Version.HTTP_2, reply.version());
       assertTrue(reply.sslSession().isPresent());
+
+      try (var socket = test.openWebSocket("/socket")) {
+        assertEquals("verified WSS", socket.receiveText(Duration.ofSeconds(3)));
+      }
     }
   }
 

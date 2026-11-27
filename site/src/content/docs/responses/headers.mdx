@@ -6,44 +6,65 @@ next:
   link: ../redirects/
 ---
 
-import { Code } from '@astrojs/starlight/components';
+import {Code} from '@astrojs/starlight/components';
 import application from '../../../../../examples/06-responses/src/main/java/io/github/suppierk/shoostr/example/responses/ResponseHeadersExample.java?raw';
 import test from '../../../../../examples/06-responses/src/test/java/io/github/suppierk/shoostr/example/responses/ResponseHeadersExampleTest.java?raw';
 
 ## Description
 
-Response headers describe the representation or give the client additional protocol metadata. A header can have one value or repeated occurrences, so replacing a field and appending a value are different operations.
+Use `setHeader(...)` to replace a field's values and `addHeader(...)` to append a separate field. When you read
+the values back, each field stays separate and any commas inside it stay part of its value.
 
-This task changes those fields before output is committed. `HttpHeaders` provides named header constants; the response methods also accept names supplied as strings.
+Field names are case-insensitive, including in snapshots. Pass a string directly or get the wire name from an
+`HttpHeaders` constant with `value()`.
 
-Replace a response field with `setHeader(name, value)`, append an occurrence with `addHeader(...)`, or delete its occurrences with `removeHeader(name)`. Field names are case-insensitive, so a different spelling still addresses the same header.
+| To | Use |
+| --- | --- |
+| Replace all current values with one | `setHeader(name, value)` |
+| Append a separate field | `addHeader(name, value)` |
+| Remove every occurrence | `removeHeader(name)` |
+| Read the first value | `header(name)` returns `null` when the field is absent. |
+| Read every value in order | `headers(name)` returns an empty list when the field is absent. |
+| Snapshot all fields | `headerMap()` |
 
-Read the first value with `header(name)`, all values with `headers(name)`, or a complete snapshot with `headerMap()`.
-The first-value getter returns null when the field is absent; the collection accessors return immutable snapshots that do not change with later response mutations.
-Repeated fields preserve separate values without splitting comma-separated content.
+`headers(name)` and `headerMap()` return immutable snapshots. Later changes to the response leave them intact.
+
+Shoostr manages `Content-Length` and `Transfer-Encoding` as part of HTTP framing. Setting, appending, or removing
+either field through the response header API throws `IllegalArgumentException`.
 
 ## Example
 
-The `/headers` endpoint captures two `Link` fields in a snapshot before appending another, replacing a mode field and removing a temporary field.
+The `/headers` endpoint captures two `Link` fields in a snapshot before appending another,
+replacing a mode field and removing a temporary field.
 Its body returns both the current values and the unchanged snapshot values.
 `HttpHeaders` supplies standard names and also supports explicit custom names through `HttpHeaders.of(...)`.
 
-`HttpHeaders.of(name)` validates a custom field name and preserves its spelling; it does not register the name. `HttpHeaders.httpHeader(name)` looks up built-in wire names case-insensitively and returns an empty Optional for unknown names. Constants also include historical and reserved entries: availability does not make a field suitable for outbound use, and the reserved `CLOSE` field must not be sent.
-
-Set headers before output is committed, and inspect the live response only on its handler thread and within its lifetime.
-Shoostr owns framing fields such as `Content-Length` and `Transfer-Encoding`; attempts to set, append or remove them are rejected rather than overriding transport behavior.
-For the distinction between repeated fields and their combined interpretation, see [HTTP field lines](https://www.rfc-editor.org/rfc/rfc9110.html#section-5.2).
+Set headers before the response commits. Access the live `Response` only on its owning thread and during the
+request-handling lifetime. See [HTTP field lines](https://www.rfc-editor.org/rfc/rfc9110.html#section-5.2) for how
+recipients interpret repeated fields.
 
 <Code code={application} lang="java" title="ResponseHeadersExample.java" />
 
+`HttpHeaders.of(name)` validates a custom name and preserves its spelling without registering it.
+`HttpHeaders.httpHeader(name)` looks up built-in wire names case-insensitively and returns an empty `Optional` for
+an unknown name. The lookup includes historical and reserved entries. The reserved `CLOSE` name identifies a
+connection option. Keep it out of response fields.
+
 ## Test
 
-`TestServer` is the HTTP test fixture: it starts the application on an available loopback port and owns its shutdown.
+The HTTP tests create the app with `ResponseHeadersExample.application()`. `TestServer` starts it on an available
+loopback port and shuts it down when the fixture closes.
 
-The tests verify replacement and removal, separate repeated fields, case-insensitive inspection, stable immutable snapshots, and rejection of framing changes.
+The client receives three separate `Link` fields. The first keeps both comma-separated members in one value.
+`X-Mode` changes to `ready` and `X-Temporary` is removed, while the earlier snapshot still holds `draft` and two
+`Link` fields.
+
+The snapshot test checks case-insensitive lookup, a missing field, and immutability of both the map and its lists.
+The framing test checks that all three mutation methods reject `Content-Length` and `Transfer-Encoding` with
+`IllegalArgumentException`. Shoostr still sends `Content-Length: 7` for the test response.
 
 <Code code={test} lang="java" title="ResponseHeadersExampleTest.java" />
 
 ## Continue
 
-Next, [Redirect a request](../redirects/) to choose a destination and navigation status.
+Next, [redirect a request](../redirects/) to choose a destination and redirect status.

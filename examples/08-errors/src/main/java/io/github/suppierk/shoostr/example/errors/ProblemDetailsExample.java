@@ -1,58 +1,81 @@
 package io.github.suppierk.shoostr.example.errors;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.github.suppierk.shoostr.Codec;
 import io.github.suppierk.shoostr.Shoostr;
 import io.github.suppierk.shoostr.http.ProblemDetails;
 import io.github.suppierk.shoostr.http.exceptions.NotFoundException;
+
+import java.io.IOException;
 import java.net.URI;
+import java.util.Objects;
 
-/** Encodes application-owned problem data as an explicit error response. */
+/**
+ * Encodes application-owned problem data as an explicit error response.
+ */
 public final class ProblemDetailsExample {
-  /** Prevents construction of this example factory. */
-  private ProblemDetailsExample() {}
+    /**
+     * Creates an unstarted application.
+     *
+     * @return application owned by its caller
+     */
+    public static Shoostr application() {
+        return new Shoostr()
+            .codec(new JacksonCodec())
+            .routes(routes -> routes
+                .exception(
+                    NotFoundException.class,
+                    (exception, request, response) -> {
+                        // Supply public detail independently of the exception's message.
+                        var problem = missingItemProblem();
 
-  /**
-   * Creates an unstarted application.
-   *
-   * @return application owned by its caller
-   */
-  public static Shoostr application() {
-    var mapper = new ObjectMapper();
+                        response
+                            .status(404)
+                            .body("application/problem+json", problem.toMap());
+                    })
+                .get("/items/42", (request, response) -> {
+                    throw new NotFoundException("Private storage diagnostics for item 42");
+                }));
+    }
 
-    return new Shoostr()
-        .exception(
-            NotFoundException.class,
-            (ignored, ignoredRequest, response) -> {
-              // Publish application-selected detail, not the exception's private diagnostics.
-              var problem = missingItemProblem();
+    /**
+     * Describes the missing item without exposing private storage diagnostics.
+     *
+     * @return public problem details for item 42
+     */
+    private static ProblemDetails missingItemProblem() {
+        return ProblemDetails.builder()
+            .type(URI.create("about:blank"))
+            .title("Not Found")
+            .status(404)
+            .detail("Item \"42\" was not found.")
+            .instance(URI.create("/items/42"))
+            .extension("itemId", 42)
+            .build();
+    }
 
-              // The payload's status field does not set the HTTP status or media type.
-              response
-                  .status(404)
-                  .body("application/problem+json", mapper.writeValueAsBytes(problem.toMap()));
-            })
-        .routes(
-            routes ->
-                routes.get(
-                    "/items/42",
-                    (ignoredRequest, ignoredResponse) -> {
-                      throw new NotFoundException("Private storage diagnostics for item 42");
-                    }));
-  }
+    /** Converts JSON using Jackson for the typed handlers. */
+    private static final class JacksonCodec implements Codec {
+        private final ObjectMapper mapper;
 
-  /**
-   * Describes the missing item without exposing private storage diagnostics.
-   *
-   * @return public problem details for item 42
-   */
-  private static ProblemDetails missingItemProblem() {
-    return ProblemDetails.builder()
-        .type(URI.create("about:blank"))
-        .title("Not Found")
-        .status(404)
-        .detail("Item \"42\" was not found.")
-        .instance(URI.create("/items/42"))
-        .extension("itemId", 42)
-        .build();
-  }
+        /** Creates the mapper before the application starts. */
+        private JacksonCodec() {
+            this.mapper = new ObjectMapper();
+        }
+
+        /** {@inheritDoc} */
+        @Override
+        public <T> T read(byte[] source, Class<T> type) throws IOException {
+            return Objects.requireNonNull(
+                mapper.readValue(source, type),
+                "Expected a JSON value"
+            );
+        }
+
+        /** {@inheritDoc} */
+        @Override
+        public byte[] write(Object value) throws IOException {
+            return mapper.writeValueAsBytes(value);
+        }
+    }
 }

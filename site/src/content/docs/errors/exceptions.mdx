@@ -1,6 +1,9 @@
 ---
 title: Handle thrown application and route group exceptions
 description: Register application and route group exception handlers, select the most specific mapping, and recover safely before response commitment.
+head:
+  - tag: title
+    content: Handle application and route exceptions | Shoostr
 next:
   label: Return Problem Details
   link: ../problem-details/
@@ -9,50 +12,68 @@ prev:
   link: ../../json/codec/
 ---
 
-import { Code } from '@astrojs/starlight/components';
+import {Code} from '@astrojs/starlight/components';
 import application from '../../../../../examples/08-errors/src/main/java/io/github/suppierk/shoostr/example/errors/ExceptionHandlingExample.java?raw';
 import test from '../../../../../examples/08-errors/src/test/java/io/github/suppierk/shoostr/example/errors/ExceptionHandlingExampleTest.java?raw';
 
 ## Description
 
-An exception renderer turns a handler failure into an HTTP response. You can register an application default and override it for a route group. The renderer receives the same `Request` and `Response` used for the exchange, so it can choose a public status, headers and body.
+Set an error response once for the application or a group of routes. In this example, a missing `name` gets
+`400` at `/input` and `409` at `/group/input`, where the group has its own renderer. A renderer receives the
+exchange's original `Request` and `Response` and can set the status, headers and body.
 
-Recovery depends on response commitment: once headers or body output have been sent, they cannot be replaced with a new error response. This task demonstrates both policy selection and that boundary. Shoostr's HTTP exception types, including `BadRequestException`, carry a proposed error status.
+Throw an `HttpException` subtype such as `BadRequestException` when you know the HTTP status for a failure.
+`HttpClientException` and `HttpServerException` carry `4xx` and `5xx` statuses, respectively. Other unhandled
+exceptions produce `500`. The default body uses the status reason and keeps diagnostic exception text private.
+The [HEAD and finite-response limits](../../responses/bodies/) still apply.
 
-For a failure with a known HTTP status, throw an `HttpException` subtype such as `BadRequestException`. The `HttpClientException` and `HttpServerException` families carry `4xx` and `5xx` statuses; other unhandled exceptions produce `500`. Register a renderer when that default representation does not suit the API. Default output exposes the safe status reason rather than diagnostic exception text, subject to [HEAD and finite-response limits](../../responses/bodies/).
+To customize the error response, register a renderer with `app.exception(...)` for the application or
+`routes.exception(...)` for a route scope and its descendants.
 
-Register a route group exception handler with `routes.exception(...)` to render failures from that scope and its descendants.
-Use `app.exception(...)` for an application-wide renderer.
-A matching scoped renderer takes precedence over application renderers; within the merged scope map, the most specific exception class wins.
-A child replaces an inherited mapping for the same class, but a narrower inherited mapping still beats a broader child mapping.
-Matching uses the directly thrown exception, not its cause chain.
+- A matching renderer from the route scope takes precedence over an application-wide renderer.
+- Among the scope's own and inherited mappings, the most specific matching exception class wins.
+- A child replaces an inherited mapping for the same class. An inherited mapping for a more specific class
+  still wins over a broader mapping in the child.
+- Shoostr matches the directly thrown exception and ignores its cause chain.
 
-Finish registration before startup.
-An application rejects a duplicate mapping for the same class, while another registration in the same route scope replaces that scope's mapping.
-Scope registration also covers endpoints defined earlier; it does not configure only the last endpoint in a fluent chain.
+Finish registration before startup. Shoostr rejects a second application-wide renderer for the same exception class.
+Registering the same class again in a route scope replaces that scope's mapping.
+
+A scope mapping covers every endpoint in the scope, including endpoints registered earlier in a fluent chain.
 
 ## Example
 
-The application renderer replaces a failed checkout's staged body and private header, while route and group renderers select different responses for invalid input.
-The number handler lets `NumberFormatException` reach its specific renderer; `/recover` handles that recoverable input error directly instead.
-The built-in and unhandled routes demonstrate default error responses without exposing diagnostics.
+When `/checkout` fails, Shoostr discards its staged body and private header before the application renderer
+writes the error response. The `/number` handler lets `NumberFormatException` reach its specific renderer.
+The `/recover` handler catches that exception itself. The built-in and unhandled routes show the default
+error responses.
 
-Before response commitment, Shoostr clears failed application output and initializes the error status before invoking the renderer; framework-required metadata can remain.
-If that renderer fails before commitment, Shoostr uses its safe `500` fallback without trying another renderer.
-After response commitment, failure aborts the output rather than sending a second error response.
-The [streaming recipe](../../streaming/output/) covers output buffering, source cleanup and the handler-owned writer lifetime.
-For generated `404` and `405` output, use [status renderers](../statuses/); for structured errors, see [Problem Details JSON](../problem-details/).
+Sending the status and headers commits the response. From that point, the status, headers and any body bytes
+already sent are final.
+
+| When the exception escapes                                  | What Shoostr does                                                                                                                       |
+| ----------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| The handler throws before commitment and a renderer matches | Clears staged application output and sets the initial error status before calling the renderer. Framework-required metadata can remain. |
+| The renderer throws before commitment                       | Sends the safe `500` fallback and skips any other renderer.                                                                             |
+| The handler or renderer throws after commitment             | Aborts the response.                                                                                                                    |
+
+The [streaming recipe](../../streaming/output/) covers buffering, source cleanup and the handler-owned writer
+lifetime. Use [status renderers](../statuses/) for generated `404` and `405` responses. Use
+[Problem Details JSON](../problem-details/) for structured errors.
 
 <Code code={application} lang="java" title="ExceptionHandlingExample.java" />
 
 ## Test
 
-`TestServer` is the HTTP test fixture: it starts the application on an available loopback port and owns its shutdown.
+`TestServer` starts the app from `ExceptionHandlingExample.application()` on an available loopback port and
+shuts it down when the fixture closes.
 
-The tests cover scope selection, inheritance and specificity, local recovery, safe defaults, discarded private output, failed rendering, and the commitment boundary through real HTTP requests.
+The HTTP tests check which renderer wins when scopes inherit or override mappings. They cover local recovery,
+safe default responses and the removal of private staged output. They also check the `500` fallback when a
+renderer throws and verify that a failure after commitment aborts the stream.
 
 <Code code={test} lang="java" title="ExceptionHandlingExampleTest.java" />
 
 ## Continue
 
-Next, [Return Problem Details](../problem-details/) to give API errors a standard representation.
+Next, [return Problem Details](../problem-details/) to give API errors a standard representation.

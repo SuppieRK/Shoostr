@@ -2,50 +2,72 @@
 title: Read request parameters
 description: Read path captures, query values, and URL-encoded form fields without merging their sources.
 next:
-  label: Write response bodies
+  label: Send text, bytes or a HEAD response
   link: ../../responses/bodies/
 prev:
   label: Match paths and capture parameters
   link: ../../routing/patterns/
 ---
 
-import { Code } from '@astrojs/starlight/components';
+import {Code} from '@astrojs/starlight/components';
 import application from '../../../../../examples/04-request/src/main/java/io/github/suppierk/shoostr/example/request/ParametersExample.java?raw';
 import test from '../../../../../examples/04-request/src/test/java/io/github/suppierk/shoostr/example/request/ParametersExampleTest.java?raw';
 
 ## Description
 
-A route can capture values from its path, while a client can send additional values in the query string or a form body. These are separate input sources, even when they contain the same name.
+Shoostr keeps path captures, query values, and URL-encoded form fields separate, even when they share a name.
 
-This task reads each source through the handler's `Request` and returns the observed values. Decide whether the application needs a first value or all repeated values before choosing an accessor; presence and an empty submitted value are different states.
+This example reads each source from the handler's `Request`. Choose an accessor based on where the value comes from
+and how many values you need.
 
-Use `pathParam(...)` or `pathParamMap()` for values captured by the selected route. Read query values and form fields separately. Their singular accessors return a first value, plural accessors retain arrival order, and `queryParamMap()` and `formParamMap()` expose all decoded entries. Names are case-sensitive. A supplied empty value is present; an absent name produces an empty `Optional` or collection.
+| Source | First value by name | All values for one name, in arrival order | All entries       |
+|--------|---------------------|-------------------------------------------|-------------------|
+| Path   | `pathParam(...)`    | One capture per name                      | `pathParamMap()`  |
+| Query  | `queryParam(...)`   | `queryParams(...)`                        | `queryParamMap()` |
+| Form   | `formParam(...)`    | `formParams(...)`                         | `formParamMap()`  |
 
-Query and URL-encoded form decoding use UTF-8 and convert `+` to a space, whereas path captures preserve a literal `+`.
-Decoding happens once: a query value of `%2520` becomes `%20`, not a space; the default transport rejects that double-encoded spelling in a path.
+Names are case-sensitive. A submitted empty value is present. A lookup by an absent name returns an empty `Optional`
+or list.
+
+Queries and URL-encoded forms use UTF-8 and decode `+` as a space. Path captures keep a literal `+`. Decoding happens
+once. A query value of `%2520` becomes the literal text `%20`. The default transport rejects that double-encoded
+spelling in a path.
+
 See [path matching](../../routing/patterns/) for pattern syntax and route selection.
-For raw text or bytes, see [request bodies](../../bodies/buffered/); use [multipart fields and files](../../bodies/multipart/) for file uploads.
+For raw text or bytes, see [request bodies](../../bodies/buffered/);
+use [multipart fields and files](../../bodies/multipart/) for file uploads.
 
 ## Example
 
-The GET handler reads the category and search tags, while the POST handler reads tags from a URL-encoded body and reports query tags separately.
-Send form input as `application/x-www-form-urlencoded`, with either no charset parameter or a supported UTF-8 declaration.
+The `GET` handler reads the category and search tags,
+while the `POST` handler reads tags from a URL-encoded body and reports query tags separately.
+Send form input as `application/x-www-form-urlencoded`,
+with either no charset parameter or a supported UTF-8 declaration.
 
-Query and form parsing happens on access, but requesting any value validates that whole collection.
-Malformed encoding or too many pairs produces `400`; an oversized form body produces `413`, and missing or unsupported form representation metadata produces `415`.
-The transport can reject invalid requests before these accessors run.
+The first access to a query value or URL-encoded form field validates the entire query or form. One malformed value
+rejects the whole collection, even if you asked for a different name. Shoostr returns `400` for malformed encoding
+or too many pairs and `413` when the form body exceeds the size limit. A missing or unsupported content type or an
+unsupported charset results in `415`. The transport can reject invalid requests before these accessors run.
 
 <Code code={application} lang="java" title="ParametersExample.java" />
 
 ## Test
 
-`TestServer` is the HTTP test fixture: it starts the application on an available loopback port and owns its shutdown.
+The HTTP tests create the app with `ParametersExample.application()`. `TestServer` starts it on an available loopback
+port and shuts it down when the fixture closes.
 
-The tests cover decoded names and values, repeated and empty input, query/form separation, and rejected representations.
-The returned maps and lists are immutable snapshots; see [request-local state](../state/) for their lifetime and how they differ from attribute snapshots.
+The tests check that a path like `/search/caf%C3%A9+books` yields `café+books`
+and that repeated values keep their order.
+They cover decoded names, case-sensitive lookups, empty versus absent values, and separation between form and query
+values. The single-decoding test checks `%2520` in a query and its rejection in a path by the default transport.
+
+The invalid input tests check that a malformed value rejects the whole query or form. They also check the `415`
+responses for a missing content type, an unsupported media type, or an unsupported charset. Another test checks
+that the parameter maps and the query and form value lists are immutable snapshots. See
+[request-local state](../state/) for snapshot lifetime and how attribute snapshots differ.
 
 <Code code={test} lang="java" title="ParametersExampleTest.java" />
 
 ## Continue
 
-Next, [Write response bodies](../../responses/bodies/) to choose what the handler returns.
+Next, learn to [send text, bytes or a HEAD response](../../responses/bodies/) from a handler.

@@ -1,0 +1,19 @@
+version = '2026.11.27.0'
+
+// Keep the platform's pins independent of versions chosen for future library releases.
+publicationDependencies.put('http', '2026.11.27.0')
+publicationDependencies.put('core', '2026.11.27.0')
+publicationDependencies.put('test', '2026.11.27.0')
+publicationDependencies.put('pac4j', '2026.11.27.0')
+publicationDependencies.put('micrometer', '2026.11.27.0')
+publicationDependencies.put('opentelemetry', '2026.11.27.0')
+publicationDependencies.put('openapi', '2026.11.27.0')
+publicationDependencies.put('mcp', '2026.11.27.0')
+
+dependencies {
+	constraints {
+		publicationDependencies.each { module, pinnedVersion ->
+			api "io.github.suppierk:shoostr-${module}:${pinnedVersion}"
+		}
+	}
+}

@@ -31,12 +31,19 @@ plugins {
 }
 
 allprojects {
+	repositories { mavenCentral() }
+
 	if (!projectDir.toPath().startsWith(rootProject.file('examples').toPath())) {
 		apply plugin: 'com.diffplug.spotless'
 
 		spotless {
 			groovyGradle { greclipse() }
 		}
+	}
+	if (name == 'bom') {
+		apply plugin: 'java-platform'
+		group = 'io.github.suppierk'
+		return
 	}
 	apply plugin: 'checkstyle'
 	apply plugin: 'java'
@@ -52,8 +59,6 @@ allprojects {
 	}
 
 	tasks.withType(Test).configureEach { useJUnitPlatform() }
-
-	repositories { mavenCentral() }
 
 	checkstyle {
 		toolVersion = '14.4.0'
@@ -77,7 +82,7 @@ allprojects {
 
 project(':core') { dependencies { testImplementation gradleTestKit() } }
 
-subprojects { targetProject ->
+configure(subprojects.findAll { it.name != 'bom' }) { targetProject ->
 	apply plugin: 'java'
 	if (name != 'microbenchmarks') {
 		apply from: rootProject.file('config/gradle/nullaway.gradle')
@@ -118,7 +123,7 @@ subprojects { targetProject ->
 
 spotless {
 	groovyGradle {
-		target '*.gradle', 'build-logic/*.gradle', 'config/gradle/*.gradle', 'core/src/test/resources/published-consumer/*.gradle'
+		target '*.gradle', 'bom/*.gradle', 'build-logic/*.gradle', 'config/gradle/*.gradle', 'core/src/test/resources/published-consumer/*.gradle'
 	}
 	java {
 		target 'build-logic/src/**/*.java', 'config/checkstyle/tests/**/*.java', 'core/src/test/resources/published-consumer/**/*.java'
@@ -159,7 +164,7 @@ def checkstyleGoogle = tasks.register('checkstyleGoogle', Checkstyle) {
 	configProperties = ['org.checkstyle.google.severity': 'error']
 }
 subprojects {
-	if (!projectDir.toPath().startsWith(rootProject.file('examples').toPath())) {
+	if (name != 'bom' && !projectDir.toPath().startsWith(rootProject.file('examples').toPath())) {
 		sourceSets.configureEach { sourceSet ->
 			checkstyleGoogle.configure { source sourceSet.allJava }
 		}
@@ -194,12 +199,11 @@ tasks.named('assemble') {
 
 def frameworkModules = frameworkModuleNames()
 def frameworkProjects = frameworkModules.collect { project(":${it}") }
-ext.publicationLibraries = frameworkModules
+ext.publicationLibraries = frameworkModules + 'bom'
 apply from: 'config/gradle/publication.gradle'
 def exampleProjects = subprojects.findAll {
 	it.projectDir.toPath().startsWith(file('examples').toPath())
 }
-def sonarProjects = frameworkProjects + exampleProjects
 
 
 tasks.register('ciBuild') {
@@ -232,7 +236,7 @@ configure(frameworkProjects) { library ->
 	}
 }
 
-configure(sonarProjects) {
+configure(frameworkProjects + exampleProjects) {
 	apply plugin: 'jacoco'
 	jacoco { toolVersion = '0.8.16' }
 	tasks.named('jacocoTestReport', JacocoReport) {
@@ -255,7 +259,7 @@ tasks.register('mutationTest') {
 	dependsOn frameworkModules.collect { ":${it}:pitest" }
 }
 
-configure(subprojects.findAll { !(it in sonarProjects) }) {
+configure(subprojects.findAll { !(it in frameworkProjects) }) {
 	sonar { skipProject = true }
 }
 
@@ -266,65 +270,32 @@ sonar {
 		property 'sonar.host.url', 'https://sonarcloud.io'
 		property 'sonar.gradle.skipCompile', 'true'
 		property 'sonar.qualitygate.wait', 'true'
-		property 'sonar.exclusions', '.github/benchmarks/**,.github/ci/*.test.mjs'
-		// Standalone launchers run in the required Docker matrix, outside the JaCoCo JVM.
-		// Keep all source rules and factory/framework coverage checks enabled.
-		property 'sonar.coverage.exclusions', [
-			'examples/02-application/src/main/java/io/github/suppierk/shoostr/example/application/ExampleApplication.java',
-			'examples/03-routing/src/main/java/io/github/suppierk/shoostr/example/routing/ExampleApplication.java',
-			'examples/04-request/src/main/java/io/github/suppierk/shoostr/example/request/ExampleApplication.java',
-			'examples/05-bodies/src/main/java/io/github/suppierk/shoostr/example/bodies/ExampleApplication.java',
-			'examples/06-responses/src/main/java/io/github/suppierk/shoostr/example/responses/ExampleApplication.java',
-			'examples/07-json/src/main/java/io/github/suppierk/shoostr/example/json/ExampleApplication.java',
-			'examples/08-errors/src/main/java/io/github/suppierk/shoostr/example/errors/ExampleApplication.java',
-			'examples/09-resources/src/main/java/io/github/suppierk/shoostr/example/resources/ExampleApplication.java',
-			'examples/12-lifecycle/src/main/java/io/github/suppierk/shoostr/example/lifecycle/ExampleApplication.java',
-			'examples/13-extensions/src/main/java/io/github/suppierk/shoostr/example/extensions/ExampleApplication.java',
-		].join(',')
-		property 'sonar.issue.ignore.multicriteria',
-				'exampleResourceOwnership,nonFunctionalExtensionFixture,asynchronousSessionReclamation'
-		// Example factories transfer resource ownership to callers; retain every other rule.
-		property 'sonar.issue.ignore.multicriteria.exampleResourceOwnership.ruleKey', 'java:S2095'
-		property 'sonar.issue.ignore.multicriteria.exampleResourceOwnership.resourceKey',
-				'examples/**/src/main/java/**'
-		// Extension has no abstract methods, so this startup-failure fixture cannot be a lambda.
-		property 'sonar.issue.ignore.multicriteria.nonFunctionalExtensionFixture.ruleKey', 'java:S9357'
-		property 'sonar.issue.ignore.multicriteria.nonFunctionalExtensionFixture.resourceKey',
-				'examples/12-lifecycle/src/test/java/io/github/suppierk/shoostr/example/lifecycle/ShutdownExampleTest.java'
-		// Bounded HTTP polling observes asynchronous session-capacity reclamation after expiry.
-		property 'sonar.issue.ignore.multicriteria.asynchronousSessionReclamation.ruleKey', 'java:S2925'
-		property 'sonar.issue.ignore.multicriteria.asynchronousSessionReclamation.resourceKey',
-				'examples/17-mcp/src/test/java/io/github/suppierk/shoostr/example/mcp/McpSecurityExampleTest.java'
+		property 'sonar.exclusions', '.github/benchmarks/**,.github/ci/*.test.mjs,examples/**'
+		property 'sonar.test.exclusions', 'examples/**'
 		property 'sonar.tests', sourceSets.test.allSource.srcDirs.findAll {
 			it.exists()
 		} +
 		fileTree('.github/ci') { include '*.test.mjs' }.files
 		property 'sonar.javascript.lcov.reportPaths', rootProject.file('build/reports/ci/lcov.info').absolutePath
-		property 'sonar.coverage.jacoco.xmlReportPaths', sonarProjects.collect {
+		property 'sonar.coverage.jacoco.xmlReportPaths', frameworkProjects.collect {
 			it.layout.buildDirectory.file('reports/jacoco/test/jacocoTestReport.xml').get().asFile.absolutePath
 		}.join(',')
 	}
 }
 
 tasks.named('sonar') {
-	dependsOn sonarProjects.collect { it.tasks.named('jacocoTestReport') }
+	dependsOn frameworkProjects.collect { it.tasks.named('jacocoTestReport') }
 }
 
-configure([
-	project(':http'),
-	project(':core'),
-	project(':test'),
-	project(':pac4j'),
-	project(':micrometer'),
-	project(':opentelemetry'),
-	project(':openapi'),
-	project(':mcp')
-]) {
+configure(publicationLibraries.collect { project(":${it}") }) {
+	def platform = plugins.hasPlugin('java-platform')
 	apply plugin: 'com.vanniktech.maven.publish.base'
 	base { archivesName = "shoostr-${project.name}" }
-	java {
-		withSourcesJar()
-		withJavadocJar()
+	if (!platform) {
+		java {
+			withSourcesJar()
+			withJavadocJar()
+		}
 	}
 	mavenPublishing {
 		coordinates(project.group.toString(), "shoostr-${project.name}", null)
@@ -337,11 +308,12 @@ configure([
 	publishing {
 		publications {
 			mavenJava(MavenPublication) {
-				from components.java
+				from components.getByName(platform ? 'javaPlatform' : 'java')
 				artifactId = "shoostr-${project.name}"
 				pom {
 					name = "Shoostr ${project.name}"
-					description = "Shoostr ${project.name} library for explicit Java HTTP applications"
+					description = platform ? 'A compatible set of Shoostr library versions' :
+							"Shoostr ${project.name} library for explicit Java HTTP applications"
 					url = 'https://github.com/SuppieRK/Shoostr'
 					licenses {
 						license {

@@ -17,25 +17,27 @@ import test from '../../../../../examples/01-hello/src/test/java/io/github/suppi
 
 This first application answers `GET /hello` with `Hello, Shoostr!` as plain text. Follow one request from registration to its handler, then verify the response over HTTP.
 
-A `Shoostr` instance is the application: it holds the serving configuration and the routes registered before startup. A **route** associates an HTTP method and path with a **handler**, the Java callback that performs the work. Shoostr passes that callback a `Request` for incoming data and a `Response` for the outgoing status, headers and body.
+A `Shoostr` instance is the application: it holds the serving configuration and the routes registered before startup. A **route** associates an HTTP method and path with a **handler**, the Java callback that performs the work. Shoostr passes that callback a `Request` for incoming data and a `Response` for the outgoing status, headers and body. This endpoint runs on Shoostr core alone, with no additional integration.
 
-Here, `routes(...)` supplies the registration view, `get(...)` binds the GET path, and `response.text(...)` prepares the text response. No additional integration is needed for this endpoint.
+Here, `routes(...)` supplies the registration view, `get(...)` binds the `HTTP GET` path, and `response.text(...)` prepares the text response.
 
-Use Shoostr core in a Java 21 project with your existing SLF4J logging configuration. The [library reference](../libraries/) covers application and test dependencies when you need it. Public interfaces can change.
+Use Shoostr core in a Java 21 project with your existing SLF4J logging configuration. See
+[install Shoostr with Maven or Gradle](../libraries/) for both application and test dependencies.
+Public interfaces can change.
 
 ## Example
 
-The complete class below separates configuration from startup. `application()` returns an unstarted application; `main(...)` starts its listener. Constructing the application also registers its JVM shutdown hook, so normal JVM shutdown closes a launched application. A caller managing an instance directly must close it, including an instance that never starts.
+The complete class below separates configuration from startup. `application()` returns an unstarted application; `main(...)` starts its listener.
 
-The default listener accepts traffic on all IPv4 interfaces at port `8080`, rather than only on loopback. The HTTP test below uses its own loopback listener.
+The default listener accepts traffic on all IPv4 interfaces at port `8080`, not only loopback. Constructing the application also registers a JVM shutdown hook, so normal JVM shutdown closes a launched application. A caller managing an instance directly must close it, including an instance that never starts.
 
 <Code code={application} lang="java" title="HelloExample.java" />
 
 ## Test
 
-`TestServer` is Shoostr's HTTP test fixture. It starts the configured application on an available loopback port and owns its shutdown. The test sends a real request to `/hello` and checks the status, text and content type. `HttpHeaders` supplies named HTTP header constants used by the assertion.
+The launcher and the test both call `HelloExample.application()`, so the behavior being explained is also the behavior being checked.
 
-The application and test are shown as complete Java classes throughout these guides. The test exercises the same application factory as the launcher, so the behavior being explained is also the behavior being checked.
+`TestServer`, Shoostr's HTTP test fixture, starts that application on an available loopback port and shuts it down when the fixture closes. The test sends `GET /hello` over HTTP and checks the status, body and content type.
 
 <Code code={test} lang="java" title="HelloExampleTest.java" />
 
