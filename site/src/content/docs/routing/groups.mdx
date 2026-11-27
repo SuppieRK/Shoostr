@@ -15,25 +15,31 @@ import test from '../../../../../examples/03-routing/src/test/java/io/github/sup
 
 ## Description
 
-A route group gives related endpoints a shared path prefix and inherited behavior. A `Routes` value is a registration view for that scope, so the same registration method can be reused under different prefixes.
+Group related endpoints under a common prefix and configure them once. Child routes inherit the group's configuration.
 
-The configuration callback receives `Lifecycle`, Shoostr's built-in scope-configuration object. Register local request hooks directly on it. A before-handler hook runs after matching and any required authentication, before the endpoint handler; the example uses it to add a header. Child routes inherit that behavior.
+Use `path(...)` to create a group. Its registration callback receives a `Routes` value for that group.
+Pass the same registration method to several groups to reuse the endpoint definitions.
+Each prefix is relative to its parent, even when it starts with `/`. A group with the prefix `/v1` inside `/api`
+registers routes under `/api/v1`.
 
-An extension is an optional integration with its own settings or lifetime. The grouping example creates no extension: it configures the group's built-in request hooks directly.
+Use an empty prefix to share configuration without adding a path segment. To register an endpoint at the group's prefix,
+use `get(handler)`. Use `get("/", handler)` for the separate endpoint with a trailing slash.
 
-Create a common prefix with `path(...)`, then pass a registration method when several groups share endpoint definitions. Prefixes are relative to their parent even if they start with `/`: combining `/api` and `/v1` registers `/api/v1`.
-
-An empty prefix creates a pathless group: its configuration applies to its routes without adding a URL segment.
-Within a group, `get(handler)` registers the group's own endpoint, while `get("/", handler)` registers the distinct trailing-slash endpoint.
+The configuration callback receives a `Lifecycle` value. Call `beforeRouteHandler(...)` on it to add a request hook
+that child routes inherit. The hook runs after route matching and any required authentication, before the endpoint
+handler. You can also [register an exception renderer](../../errors/exceptions/) for the group.
 
 ## Example
 
-The `notes(...)` method is reused under `/api/v1/notes` and `/api/v2/notes`.
-Both groups inherit the API header, but only the second receives the version header; the pathless status group and public sibling remain outside that configuration.
-The nested account route also reads parameters captured by both parent and child paths.
+The example uses `notes(...)` to register the same endpoints under `/api/v1/notes` and `/api/v2/notes`.
+Both groups inherit the hook that sets `X-API`. The `/api/v2/notes` group adds a hook that sets `X-Version`.
+The pathless group sets `X-Group` on `/status`. The `/public` route belongs to the root scope.
+The nested account route reads `accountId` from its parent path and `id` from its own path.
 
-Group configuration runs before its registration callback, and the registration callbacks run before the application starts rather than for each request.
-The response-header hooks below demonstrate inherited configuration without changing the endpoint definitions.
+Shoostr runs each group's configuration callback before its registration callback. Both run during setup, before the
+application starts. The hooks they register run during request handling.
+
+<Code code={application} lang="java" title="RouteGroupsExample.java" />
 
 Registration and configuration callbacks run synchronously on the calling thread under the application's shared registration lock.
 Registration calls from other threads wait until the complete callback returns, including its nested groups.
@@ -44,16 +50,17 @@ Closing from another thread waits for the callback to finish before ending regis
 
 Route scopes share application-owned registration state and have no separate cleanup operation.
 
-<Code code={application} lang="java" title="RouteGroupsExample.java" />
-
 ## Test
 
-`TestServer` is the HTTP test fixture: it starts the application on an available loopback port and owns its shutdown.
+The HTTP tests create the app with `RouteGroupsExample.application()`. `TestServer` starts it on an available loopback
+port and shuts it down when the fixture closes.
 
-The tests verify reuse across both prefixes, distinguish group endpoints from trailing-slash endpoints, and check inherited headers without leaking child configuration into siblings.
+The tests send requests to both versions of `/notes` and check that `/api/v1/notes/` reaches a separate handler.
+They verify that group headers stay within their scopes and that the account route reads both captures. Requests such
+as `/v1/notes` return `404`, confirming that Shoostr resolves `/v1` relative to `/api`.
 
 <Code code={test} lang="java" title="RouteGroupsExampleTest.java" />
 
 ## Continue
 
-Next, [Read and write JSON](../../json/codec/) to connect typed body conversion to your handlers.
+Next, [read and write JSON](../../json/codec/) to use Java values in your request and response bodies.

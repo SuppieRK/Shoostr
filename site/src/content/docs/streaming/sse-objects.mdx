@@ -6,42 +6,59 @@ next:
   link: ../../websockets/managed/
 ---
 
-import { Code } from '@astrojs/starlight/components';
+import {Code} from '@astrojs/starlight/components';
 import application from '../../../../../examples/10-streaming/sse/src/main/java/io/github/suppierk/shoostr/example/sse/TypedSseExample.java?raw';
 import test from '../../../../../examples/10-streaming/sse/src/test/java/io/github/suppierk/shoostr/example/sse/TypedSseExampleTest.java?raw';
 
 ## Description
 
-Object events combine server-sent event framing with application-provided serialization. A `Codec` converts a Java value to bytes; the typed event writer places its UTF-8 text into an SSE data frame.
+Send a Java value as SSE data. Your `Codec` encodes the value as bytes, and the event writer reads those bytes
+as UTF-8 before framing the text as an SSE event. This example sends progress updates as JSON.
 
-This task uses the typed route-registration view returned after configuring that codec. `Response.Typed` is the response view carrying that codec. Its `Response.EventStream.Typed` adds `sendObject(...)` to the ordinary event operations. Encoding a value does not add event history or replay behavior.
+1. Call `app.codec(codec)` before startup. It returns a `Shoostr.Typed` view for registering routes that use
+   the codec. See [configure a codec](../../json/codec/).
+2. In that view's `.routes(...)` callback, register the GET endpoint with `routes.sse(...)`.
+   The handler receives a `Response.Typed`.
+3. Call `response.startEventStream()` to get a `Response.EventStream.Typed`.
+4. Call `sendObject(value)` to encode the value, write the data fields and flush the event.
 
-Register `routes.sse(...)` on the typed view obtained from a configured [codec](../../json/codec/). `Response.Typed.startEventStream()` supplies a `Response.EventStream.Typed`; `sendObject(value)` encodes the value before adding data fields and flushing its event. Ordinary strings, `SseEvent` values, comments and heartbeats bypass the codec. The [base SSE guide](../sse/) explains names, IDs and replay.
+The same writer accepts strings, `SseEvent` values, comments and heartbeats. Those calls bypass the codec.
+The application still owns event history and replay. See the [SSE guide](../sse/) for names, IDs and replay.
 
 :::note[Object events require UTF-8 text]
-Use a codec that produces UTF-8 text, such as JSON, for SSE object output.
-Unlike binary WebSocket messages, an SSE event cannot carry an arbitrary binary serialization directly.
-The client still receives text event data and must decode that representation itself.
+Use a codec that produces text, such as JSON. Encode binary values as UTF-8 text before sending them as
+events. The client parses that representation from the event data.
 :::
 
-Malformed UTF-8 or a codec failure writes no part of that event, but `startEventStream()` has already committed the HTTP headers and any earlier events remain sent.
-The writer belongs to the handler thread and cannot be retained after the handler returns; the [streaming lifetime and backpressure rules](../output/) also apply.
+- `sendObject(...)` writes the event only after the codec succeeds and its output passes UTF-8 validation.
+- `startEventStream()` has already committed the HTTP headers. Any events sent before an encoding failure
+  remain sent.
+
+Use the writer on the handler thread while the handler is active.
+See the [streaming lifetime and backpressure rules](../output/).
 
 ## Example
 
-The `/progress` endpoint sends `Progress(10)` and `Progress(100)` as JSON data events, with an initial comment and a heartbeat between the data frames.
-Its output-only codec supports this numeric model, not arbitrary JSON objects, and the record constructor rejects percentages outside `0`–`100`.
+The `/progress` endpoint sends four frames in order.
+
+1. The comment `ready`.
+2. `Progress(10)` as JSON data.
+3. A heartbeat.
+4. `Progress(100)` as JSON data.
+
+`ProgressCodec` encodes only `Progress` values because this endpoint sends a single kind of update.
+The record accepts percentages from `0` through `100`.
 
 <Code code={application} lang="java" title="TypedSseExample.java" />
 
 ## Test
 
-`TestServer` is the HTTP test fixture: it starts the application on an available loopback port and owns its shutdown.
-
-The test checks the HTTP status, event-stream content type, and exact JSON data frames alongside the comment and heartbeat.
+`TestServer` starts the application from `TypedSseExample.application()` on an available loopback port
+and owns its shutdown. The test checks the `200` status, the `text/event-stream; charset=utf-8` content type,
+and the exact wire output for the comment, both JSON events and the heartbeat.
 
 <Code code={test} lang="java" title="TypedSseExampleTest.java" />
 
 ## Continue
 
-Next, [Handle WebSocket messages](../../websockets/managed/) to use a connection that carries messages in both directions.
+Next, [handle WebSocket messages](../../websockets/managed/) to use a connection that carries messages in both directions.

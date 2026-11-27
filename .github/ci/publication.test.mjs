@@ -48,6 +48,16 @@ test('Central lookup errors fail instead of selecting an artifact for upload', a
   assert.deepEqual(await selectProjects([http]), [http]);
 });
 
+test('a BOM release requires its pinned versions even when current library versions differ', async () => {
+  const bom = library('bom', '2026.11.27.0', { core: core.version, http: http.version });
+  const nextCore = library('core', '2026.11.25.0', { http: http.version });
+  const published = project => [core, http].some(item => item.name === project.name && item.version === project.version);
+
+  assert.deepEqual(await selectProjects([http, nextCore, bom], async project => published(project)), [nextCore, bom]);
+  await assert.rejects(selectProjects([http, nextCore, bom], async project => project.name === 'http'),
+    /Unpublished dependency: core:2026.11.5.0/);
+});
+
 test('stages binaries in order and delegates the selected batch to one plugin invocation', async t => {
   const directory = mkdtempSync(join(tmpdir(), 'shoostr-publication-'));
   const previous = process.cwd();

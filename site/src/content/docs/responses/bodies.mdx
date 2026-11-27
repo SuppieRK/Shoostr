@@ -2,42 +2,56 @@
 title: Send text, bytes or a HEAD response
 description: Set a response status, encode text with a selected charset or send existing bytes, and return empty or HEAD responses.
 next:
-  label: Read request bodies
+  label: Read request body text and bytes
   link: ../../bodies/buffered/
 prev:
   label: Read request parameters
   link: ../../request/parameters/
 ---
 
-import { Code } from '@astrojs/starlight/components';
+import {Code} from '@astrojs/starlight/components';
 import application from '../../../../../examples/06-responses/src/main/java/io/github/suppierk/shoostr/example/responses/ResponseBodyExample.java?raw';
 import test from '../../../../../examples/06-responses/src/test/java/io/github/suppierk/shoostr/example/responses/ResponseBodyExampleTest.java?raw';
 
 ## Description
 
-An HTTP response combines a status, headers and a body. Text helpers encode a Java string; a byte-body helper sends bytes that your application already encoded. `MediaType` describes those bytes, including any declared charset.
+Choose how to send the response body. Use `text(value)` for UTF-8, `text(value, charset)` for a different encoding,
+or `body(...)` for bytes your application already encoded. Set the status with `status(...)`, for example
+`status(HttpStatusCodes.CREATED.value())` for `201`.
 
-This task chooses those representations explicitly. `HttpStatusCodes` and `HttpMethods` name protocol values; `Options` holds the application's buffering limits and `MultipartOptions` configures its separate multipart limits. Response commitment is the point after which sent status, headers or body bytes cannot be replaced.
+The text helpers set `Content-Type` with the charset they use to encode the body. Encoding follows
+`String.getBytes(Charset)`, which substitutes replacement bytes for malformed or unmappable input. For Java objects,
+use an [explicit JSON codec](../../json/codec/).
 
-Use `text(value)` for a UTF-8 response or `text(value, charset)` to select another encoding; Shoostr supplies matching charset metadata. For already encoded bytes, call `body(...)` with the correct `MediaType`. `MediaType.of(...)` normalizes a bare type/subtype and rejects parameters, ranges, wildcards and surrounding whitespace. `withCharset(...)` changes only the label, so your bytes must already use that encoding. Use a String content type for arbitrary parameters.
+For encoded bytes, pass a `MediaType` that describes the body. `MediaType.of(...)` normalizes a bare `type/subtype`
+and rejects parameters, ranges, wildcards, and surrounding whitespace. `withCharset(...)` labels the bytes with a
+charset. Encode the bytes in that charset before passing them to `body(...)`. Use the `String` content-type overload
+for arbitrary parameters. `body(...)` copies the byte array, so later changes to the array leave the response intact.
 
-Text encoding follows `String.getBytes(Charset)`: malformed or unmappable input uses replacement bytes rather than strict validation.
-For object output, use an [explicit JSON codec](../../json/codec/).
-Set a response status with `status(...)`, using a named `HttpStatusCodes` constant and its `value()` when that makes the result clearer.
+[Register the `HEAD` route explicitly](../../routing/methods/). Shoostr sends representation metadata and suppresses
+the body bytes.
 
-A `HEAD` response carries representation metadata without transmitting its body, but the route must be [registered explicitly](../../routing/methods/).
-For an empty response with `204`, `205`, or `304`, leave the body unset: Shoostr rejects nonempty content during completion rather than silently discarding it.
-`304` belongs to conditional requests, not to a general “nothing to return” response; see the [HTTP status semantics](https://www.rfc-editor.org/rfc/rfc9110.html#section-15.4.5) for that distinction.
+Leave the body unset for `204`, `205`, and `304`. For requests other than `HEAD`, Shoostr rejects a staged nonempty
+body at completion and returns `500` under default error handling.
+Use [`304 Not Modified`](https://www.rfc-editor.org/rfc/rfc9110.html#section-15.4.5) for a conditional `GET` or `HEAD`
+when the client can reuse its existing representation.
 
 ## Example
 
-The messages endpoint returns `201` with UTF-8 text, while `/bytes` sends binary data and `/latin1` uses the text helper to select ISO-8859-1.
-The DELETE handler returns `204`; the matching `GET` and `HEAD` handlers for `/message` select the same representation, with HEAD suppressing the transmitted bytes.
+The messages endpoint returns `201` with UTF-8 text, while `/bytes` sends binary data and `/latin1`
+uses the text helper to select ISO-8859-1.
+The DELETE handler returns `204`; the matching `GET` and `HEAD` handlers for `/message` select the same representation,
+with HEAD suppressing the transmitted bytes.
 
-This example limits finite responses to 64 bytes through the `maxResponseBytes` setting.
-Finite output remains staged until the handler returns successfully, and selecting another body replaces the previous one rather than appending to it.
-Keep response access on the handler thread and within its lifetime; Shoostr completes the transfer, so application code must not close `Response`.
-See [exception recovery](../../errors/exceptions/) for output replacement before commitment and failures after it.
+This example caps finite response bodies at 64 bytes with `maxResponseBytes`. If the byte array exceeds that limit,
+`body(...)` throws `IllegalArgumentException` before replacing any staged output.
+
+Finite output stays staged until the handler returns successfully. Selecting another body replaces the previous
+one. Once the response commits, its status, headers, and any bytes already sent cannot be replaced.
+See [exception recovery](../../errors/exceptions/) for what Shoostr can send if an error occurs.
+
+Use `Response` on its owning thread and within the request-handling lifetime. Shoostr owns completion and closure.
+
 For file output and its longer transfer lifetime, use the [download recipe](../../resources/downloads/).
 For incremental output while the handler runs, use [response streaming](../../streaming/output/).
 
@@ -45,12 +59,20 @@ For incremental output while the handler runs, use [response streaming](../../st
 
 ## Test
 
-`TestServer` is the HTTP test fixture: it starts the application on an available loopback port and owns its shutdown.
+The HTTP tests create the app with `ResponseBodyExample.application()`. `TestServer` starts it on an available
+loopback port and shuts it down when the fixture closes.
 
-The tests check exact bytes and media metadata, the finite byte limit, bodyless status handling, and HEAD responses that retain representation headers without sending content.
+The tests compare the exact bytes and `Content-Type` for UTF-8 text, ISO-8859-1 text, and binary output. They check
+that `204`, `205`, and `304` send no content when the body is unset and produce `500` when the handler stages a
+nonempty body. The `HEAD` test checks that `Content-Length` and `Content-Type` describe the `GET` representation
+while the response body is empty.
+
+The size-limit test accepts 0 and 64 bytes. A rejected 65-byte body leaves the staged content and `Content-Type`
+intact. Another test checks that `body(...)` leaves the response uncommitted and that changes to the source array
+leave the staged bytes intact.
 
 <Code code={test} lang="java" title="ResponseBodyExampleTest.java" />
 
 ## Continue
 
-Next, [Read request bodies](../../bodies/buffered/) to accept a bounded text or byte payload.
+Next, [read request body text and bytes](../../bodies/buffered/) to accept a bounded payload.

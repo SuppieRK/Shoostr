@@ -6,45 +6,61 @@ next:
   link: ../native/
 ---
 
-import { Code } from '@astrojs/starlight/components';
+import {Code} from '@astrojs/starlight/components';
 import application from '../../../../../examples/11-websockets/src/main/java/io/github/suppierk/shoostr/example/websocket/TypedWebSocketExample.java?raw';
 import test from '../../../../../examples/11-websockets/src/test/java/io/github/suppierk/shoostr/example/websocket/TypedWebSocketExampleTest.java?raw';
 
 ## Description
 
-Typed WebSocket handling decodes complete messages into Java values and encodes values for replies. A `Codec` supplies those conversions; it does not choose the connection's application protocol or validate arbitrary schemas.
+Decode complete binary WebSocket messages into Java values and encode Java values as replies. A `Codec` supplies
+both conversions. Your application defines the payload format and decides which values to accept.
+This example uses a codec to exchange counter values over a [managed WebSocket](../managed/).
 
-Configuring the codec returns typed route registration. Its `WebSocket.Typed` callbacks receive decoded objects, and `WebSocketConnection.Typed` supplies object replies. This task builds on the message lifetime and ownership model of managed WebSockets.
+1. Call `app.codec(codec)` before startup. It returns a `Shoostr.Typed` view for registering routes on the same
+application. See [configure a codec](../../json/codec/).
+2. Register `routes.websocket(...)` through that view. Its `WebSocket.Typed` configuration provides
+`onObject(Class<T>, handler)` for receiving decoded values.
+3. Reply with `sendObject(value)` on the `WebSocketConnection.Typed` passed to the callback.
 
-Register through the typed view returned by a configured [codec](../../json/codec/). `WebSocket.Typed` supplies `onObject(Class<T>, handler)` for decoded values, and its `WebSocketConnection.Typed` supplies `sendObject(value)` for replies. Both use the same codec; ordinary text and byte-array sends bypass it.
+Both directions use the same codec. Ordinary text and byte-array sends bypass it.
 
 :::note[Object messages are binary]
-Object operations use complete binary WebSocket messages, not text messages, even when the codec produces JSON.
-Agree on the payload format with the client; Shoostr does not infer or negotiate it.
-`onObject(...)` and `onBinary(...)` share one callback slot, so the later registration replaces the earlier one; `onText(...)` remains independent.
+- Object operations use complete binary messages, even when the codec produces JSON.
+- Agree on the payload format with the client before exchanging objects.
+- `onObject(...)` and `onBinary(...)` share one callback slot. The later registration replaces the earlier one.
+`onText(...)` has its own slot for ordinary text messages.
 :::
 
-Callbacks follow the [managed WebSocket admission, lifecycle and sequential delivery rules](../managed/), and sends wait for transport completion rather than peer receipt.
-Decoding happens before the object callback runs, so that callback cannot catch a decode failure.
-An uncaught conversion failure follows the same terminal `onError(...)` and `1011` closure as other callback failures.
-Use a raw binary callback and decode inside it when your application needs to recover from individual invalid messages.
+- Typed callbacks follow managed admission, lifecycle and sequential delivery rules.
+- A send waits for the transport to finish the write. The peer can receive the message later.
+- Shoostr decodes the message before calling the object handler. To catch decode errors for individual messages,
+register `onBinary(...)` and decode inside that callback.
+- Uncaught conversion exceptions follow managed failure handling. For example, if the codec rejects an invalid payload
+with `IllegalArgumentException`, Shoostr closes with `1011` and reports the failure to `onError(...)`.
 
 ## Example
 
-The `/counter` endpoint accepts a signed integer in four bytes, most significant byte first, and replies with the incremented value in the same format.
-Bytes `00 00 00 29` represent `41`; the binary reply `00 00 00 2a` represents `42`.
-The separate text callback replies to `hello` with `text: hello`, without calling the codec.
+The `/counter` endpoint uses four-byte signed integers with the most significant byte first.
+In this exchange, it increments the request value and replies in the same format.
+
+| Message | Bytes         | Value |
+|---------|---------------|-------|
+| Request | `00 00 00 29` | `41`  |
+| Reply   | `00 00 00 2a` | `42`  |
+
+The text callback replies to `hello` with `text: hello` and bypasses the codec.
 
 <Code code={application} lang="java" title="TypedWebSocketExample.java" />
 
 ## Test
 
-`TestServer` is the HTTP test fixture: it starts the application on an available loopback port and owns its shutdown.
-
-The JDK client sends the counter across two fragments and checks the complete binary reply before exchanging an independent text message.
+`TestServer` starts the application from
+`TypedWebSocketExample.application()` on an available loopback port. The test connects with `openWebSocket(...)`,
+sends the counter in two fragments and reads the complete four-byte reply with `receiveBinary(...)`.
+It then exchanges an independent text message.
 
 <Code code={test} lang="java" title="TypedWebSocketExampleTest.java" />
 
 ## Continue
 
-Next, [Configure native WebSocket demand](../native/) to take control of Jetty listener delivery when needed.
+Next, [configure native WebSocket demand](../native/) to take control of Jetty listener delivery when needed.

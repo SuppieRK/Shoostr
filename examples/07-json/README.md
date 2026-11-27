@@ -44,4 +44,5 @@ Each recipe has a compiled factory and a live HTTP test:
 
 Run `./gradlew :json-example:test` from the repository root with Java 21.
 
-The [combined launcher fixture](legacy-json-errors/README.md) provides a separate runnable demonstration.
+The [JSON guide](../../site/src/content/docs/json/codec.mdx) explains how to register a codec
+and handle invalid input.

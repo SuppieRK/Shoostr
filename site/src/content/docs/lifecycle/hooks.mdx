@@ -6,70 +6,84 @@ next:
   link: ../executors/
 ---
 
-import { Code } from '@astrojs/starlight/components';
+import {Code} from '@astrojs/starlight/components';
 import application from '../../../../../examples/12-lifecycle/src/main/java/io/github/suppierk/shoostr/example/lifecycle/RequestHooksExample.java?raw';
 import test from '../../../../../examples/12-lifecycle/src/test/java/io/github/suppierk/shoostr/example/lifecycle/RequestHooksExampleTest.java?raw';
 
 ## Description
 
-A request hook is a callback at a named point in HTTP processing, such as after route matching or before the handler. Application hooks apply across the application; local hooks apply to a selected route or group.
+Run your code at specific points in HTTP processing. Each request hook runs during a named phase, such as
+after route matching or before the handler. The phase determines whether the callback can read or change a
+live request or response.
 
-Local configuration is supplied through `Lifecycle`, a built-in scope-configuration object. Register callbacks directly on it without creating an extension. A terminal observer instead receives `RequestOutcome`, a detached summary after application finalization and transport termination.
+Register application hooks on `Shoostr` before startup. For a route or group, register local hooks directly
+on the built-in `Lifecycle` supplied for that scope. A terminal observer receives `RequestOutcome`, a detached
+summary available after application finalization and transport termination.
 
-This task follows one request through its phases and then examines what remains available at completion. Callback timing determines whether you may read or change a live request or response.
-
-Register application hooks on `Shoostr` before startup. For a route or group, register local hooks directly on the supplied `Lifecycle`. These callbacks configure that scope's request handling.
-Each method registers a callback for the corresponding request phase:
+The example follows one request from header receipt to completion.
 
 | Method                                         | When it runs                                                                                                                          |
-| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| <code>on<wbr />Request<wbr />Headers</code>    | After request headers become available, before matched-route processing. Application-only, including requests with no matching route. |
-| <code>on<wbr />Route<wbr />Matched</code>      | After a route matches, before the known body-length check and admission gates. The composed route pattern is available.               |
-| <code>before<wbr />Route<wbr />Handler</code>  | After the known request-size check, before the handler. Throw to reject the request; response streaming is unavailable.               |
-| <code>after<wbr />Route<wbr />Handler</code>   | After the matched handler returns successfully; skipped when it throws.                                                               |
-| <code>before<wbr />Response<wbr />Flush</code> | Immediately before each framework-owned response flush. Read-only and repeatable for streaming output.                                |
-| <code>after<wbr />Response<wbr />Flush</code>  | After each committed framework-owned response flush. Read-only and repeatable for streaming output.                                   |
-| <code>after<wbr />Request</code>               | After both application finalization and transport termination. Receives a detached `RequestOutcome`, not a live request or response.  |
+|------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------|
+| `onRequestHeaders`    | After request headers become available, before matched-route processing. Application-only, including requests with no matching route. |
+| `onRouteMatched`      | After a route matches, before the known body-length check and admission gates. The composed route pattern is available.               |
+| `beforeRouteHandler`  | After the known request-size check, before the handler. Throw to reject the request; response streaming is unavailable.               |
+| `afterRouteHandler`   | After the matched handler returns successfully; skipped when it throws.                                                               |
+| `beforeResponseFlush` | Immediately before each framework-owned response flush. Read-only and repeatable for streaming output.                                |
+| `afterResponseFlush`  | After each committed framework-owned response flush. Read-only and repeatable for streaming output.                                   |
+| `afterRequest`               | After both application finalization and transport termination. Receives a detached `RequestOutcome`, not a live request or response.  |
 
-Within each matched phase, local hooks run before application hooks, retaining registration order within their scope.
-Application terminal observers also see unmatched requests, whose route pattern is absent, while local observers apply only to selected endpoints.
-An exception stops the ordinary phase; [exception handling](../../errors/exceptions/) determines how an uncommitted failure is rendered.
+- Within each matched phase, local hooks run before application hooks. Each scope keeps its registration order.
+- Application terminal observers also see unmatched requests. Local observers apply only to selected endpoints.
+- An exception stops the ordinary phase. [Exception handling](../../errors/exceptions/) determines how to
+  render a failure before the response commits.
 
-During ordinary response completion, request content remains readable in both flush callbacks, including a first read in `afterResponseFlush`.
-For an ordinary finite response without an `afterResponseFlush` callback, Shoostr discards available unread input after `beforeResponseFlush` and before committing the response.
-If input remains unavailable, HTTP/1 closes the connection and advertises `Connection: close`.
+When a handler's response completes normally, both flush callbacks can read the request body. The first read
+can happen in `afterResponseFlush`.
 
-With an `afterResponseFlush` callback, Shoostr preserves input for that callback.
-Before committing a finite HTTP/1 response, it advertises closure if some known-length body bytes have not yet been read from the transport.
-For a chunked body of unknown length, it conservatively advertises closure even if the handler has consumed the body.
-Bodyless requests and fully consumed known-length bodies can retain connection reuse.
-Streaming responses keep request input available after an early flush, and HTTP/2 does not use this connection header.
+| Situation                                        | What happens                                                                                                                                                                                                                                                        |
+| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Finite response without `afterResponseFlush`     | Shoostr discards available unread input after `beforeResponseFlush` and before commitment. If unread input is still unavailable on HTTP/1, the response advertises `Connection: close` and the connection closes.                                                   |
+| Finite response with `afterResponseFlush`        | Shoostr keeps input available for the callback. On HTTP/1, it advertises `Connection: close` before commitment if the transport has unread bytes from a known-length body. An unknown-length chunked body triggers the same header even if the handler read it all. |
+| Bodyless request or fully read known-length body | The HTTP/1 connection can be reused.                                                                                                                                                                                                                                |
+| Streaming response                               | The request body stays readable after an early flush.                                                                                                                                                                                                               |
+| HTTP/2                                           | HTTP/2 handles input without a `Connection` header.                                                                                                                                                                                                                 |
 
-Error rendering and framework-generated rejection responses can discard available request input before flushing, even when a post-flush callback is registered.
-Such a callback must not rely on a first body read.
+Error rendering and framework-generated rejections can discard available request input before the flush, even
+with a post-flush callback registered. For those responses, avoid relying on a first body read in that callback.
 
-Retain `RequestOutcome` instead of the live request or response: its status is the committed final status, or zero when none was committed, and its separate failure fields distinguish application and transport failures.
-Its `routePattern()` contains the composed registered template, such as `/jobs/{id}`, without substituting request identifiers or appending query strings; when no endpoint was selected, it remains `null` rather than exposing the requested path.
-Use this registration metadata to identify the endpoint in logs and metrics, applying any escaping your output format requires.
-The summary retains the original method and diagnostic failure objects; it does not provide a sanitized log record.
-Terminal callbacks may run on transport threads, so do not block them or assume handler thread-local state remains attached.
-Runtime failures in one terminal observer do not suppress later observers, but diagnostic failure objects must not become response bodies or metric labels.
+Retain `RequestOutcome` for work after request completion.
+
+- `statusCode()` gives the committed status, or `0` if the response never committed.
+- `applicationFailure()` and `transportFailure()` report the initiating application failure and the terminal
+  transport failure separately.
+- `routePattern()` contains only the composed registered template, such as `/jobs/{id}`. It is `null` if
+  Shoostr selected no endpoint.
+- `method()` records the original HTTP method.
+
+Use `routePattern()` to identify endpoints in logs and metrics, with any escaping the output format requires.
+Failure objects carry raw diagnostics. Review them before logging, and keep them out of response bodies and metric labels.
+
+Terminal callbacks may run on transport threads where handler thread-local state may be absent. Keep callbacks
+nonblocking. Shoostr continues with later terminal observers if one throws a runtime exception.
 
 ## Example
 
-The `/jobs` group reports each phase through a thread-safe, nonblocking sink and retains terminal summaries in a separate sink.
-Requests to `/jobs/{id}` return the job ID, while `/jobs/failure` throws so the test can verify that successful-return hooks are skipped.
+Application hooks and the local hooks for `/jobs` report phases to a thread-safe, nonblocking sink. The
+application observer sends terminal summaries to a separate sink. Requests to `/jobs/{id}` return the job ID.
+The handler at `/jobs/failure` throws, so the successful-return hooks are skipped.
 
 <Code code={application} lang="java" title="RequestHooksExample.java" />
 
 ## Test
 
-`TestServer` is the HTTP test fixture: it starts the application on an available loopback port and owns its shutdown.
+`TestServer` starts the app from `RequestHooksExample.application(...)` on an available loopback port and
+shuts it down when the fixture closes.
 
-The tests check the complete success sequence, the composed route template, omission of successful-return hooks after a failure, and application-only observation of an unmatched request.
+The tests check the full success sequence and the composed route template. They also verify that a thrown
+failure skips successful-return hooks and that only the application observer sees an unmatched request.
 
 <Code code={test} lang="java" title="RequestHooksExampleTest.java" />
 
 ## Continue
 
-Next, [Select endpoint execution](../executors/) to follow request context across a worker handoff.
+Next, [select endpoint execution](../executors/) to follow request context across a worker handoff.

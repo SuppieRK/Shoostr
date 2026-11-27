@@ -6,67 +6,96 @@ next:
   link: ../../bodies/streaming-input/
 ---
 
-import { Code } from '@astrojs/starlight/components';
+import {Code} from '@astrojs/starlight/components';
 import application from '../../../../../examples/02-application/src/main/java/io/github/suppierk/shoostr/example/application/ServerOptionsExample.java?raw';
 import test from '../../../../../examples/02-application/src/test/java/io/github/suppierk/shoostr/example/application/ServerOptionsExampleTest.java?raw';
 
 ## Description
 
-`Options` holds application settings: listener binding, transport timeouts, parser and buffered-body limits, execution mode, HTTP/2, and response compression. Create it with `new Options()`, then configure its bean properties through setters. Pass it to `new Shoostr(options)` before registering routes. `MultipartOptions` supplies the related limits for multipart fields and files.
+Configure the listener, timeouts, request and response limits, execution mode, HTTP/2 and response compression with
+`Options`. Use `MultipartOptions` for the separate limits on multipart fields and files.
 
-This application accepts a bind host and port and serves a POST `/echo` endpoint. The test selects loopback and an available port. Accepted input becomes the response. The tests exercise parser and buffered-body limits separately.
+1. Create the settings with `new Options()`, the only public constructor.
+2. Call setters for the properties you want to change. Each new instance starts with the defaults below.
+3. Pass the settings to `new Shoostr(options)`, then register routes.
 
-Every new instance initializes its field defaults. Set only the properties your application needs; each setter validates before assignment and retains the previous value if validation fails. Passing null resets only the selected property to its default. The no-argument constructor is the only public constructor. `Shoostr` captures a private snapshot during construction, so later changes to the supplied options affect only subsequent applications. Do not mutate options concurrently with application construction.
+A setter validates its input before assignment. If validation fails, the previous value stays in place. Passing
+`null` resets that property to its default.
 
-| Setting | Default | Setter |
-| ------- | ------- | ----------- |
-| `host` | `0.0.0.0` (all IPv4 interfaces) | `setHost` |
-| `port` | `8080` | `setPort` |
-| `maxRequestBytes` | 1,048,576 buffered request bytes | `setMaxRequestBytes` |
-| `maxResponseBytes` | 1,048,576 staged finite-response bytes | `setMaxResponseBytes` |
-| `maxRequestHeaderBytes` | 8,192 bytes | `setMaxRequestHeaderBytes` |
-| `idleTimeout` | 30 seconds | `setIdleTimeout` |
-| `shutdownTimeout` | 5 seconds | `setShutdownTimeout` |
-| `http2` | `false` | `setHttp2` |
-| `compression` | `false` | `setCompression` |
-| `maxParameters` | 1,000 decoded pairs per query or URL-encoded form | `setMaxParameters` |
-| `multipart` | `new MultipartOptions()` | `setMultipart` |
-| `streamBufferBytes` | 8,192 bytes per streaming response buffer | `setStreamBufferBytes` |
-| `virtualThreads` | `false` | `setVirtualThreads` |
+Shoostr takes a private copy during construction. Later edits affect only applications you construct afterward.
+Finish updating the options before another thread uses them to construct an application.
 
-The host must be nonblank. Host names are resolved when the listener starts. Ports range from `0` to `65535`; port `0` lets the operating system select an available port. Read the bound port with `app.port()` after startup.
+| Setting                 | Default                                           | Setter                     |
+|-------------------------|---------------------------------------------------|----------------------------|
+| `host`                  | `0.0.0.0` (all IPv4 interfaces)                   | `setHost`                  |
+| `port`                  | `8080`                                            | `setPort`                  |
+| `maxRequestBytes`       | 1,048,576 buffered request bytes                  | `setMaxRequestBytes`       |
+| `maxResponseBytes`      | 1,048,576 staged finite-response bytes            | `setMaxResponseBytes`      |
+| `maxRequestHeaderBytes` | 8,192 bytes                                       | `setMaxRequestHeaderBytes` |
+| `idleTimeout`           | 30 seconds                                        | `setIdleTimeout`           |
+| `shutdownTimeout`       | 5 seconds                                         | `setShutdownTimeout`       |
+| `http2`                 | `false`                                           | `setHttp2`                 |
+| `compression`           | `false`                                           | `setCompression`           |
+| `maxParameters`         | 1,000 decoded pairs per query or URL-encoded form | `setMaxParameters`         |
+| `multipart`             | `new MultipartOptions()`                          | `setMultipart`             |
+| `streamBufferBytes`     | 8,192 bytes per streaming response buffer         | `setStreamBufferBytes`     |
+| `virtualThreads`        | `false`                                           | `setVirtualThreads`        |
 
-Timeouts must be positive whole milliseconds representable by a Java `long`. `idleTimeout` measures connection inactivity. `shutdownTimeout` configures Jetty's server drain timeout; it is neither an application request deadline nor a total shutdown deadline. Jetty's platform-worker shutdown has its own timeout.
+Set values within these limits.
 
-Byte limits must be positive, and `maxRequestBytes` must also be below `Integer.MAX_VALUE`. `maxParameters` must be positive and counts repeated pairs separately for each [query or form](../../request/parameters/). Multipart requests have separate aggregate, part, and storage limits in [`MultipartOptions`](../../bodies/multipart/), which this example leaves at their defaults.
+- **Host and port**. Use a nonblank host. The listener resolves host names at startup. Ports range from `0` to
+  `65535`. Use `0` to let the operating system pick an available port, then read it with `app.port()` after startup.
+- **Timeouts**. Use positive whole milliseconds that fit in a Java `long`. `idleTimeout` measures connection inactivity.
+  `shutdownTimeout` controls Jetty's server drain. Request deadlines belong to the application, and total shutdown time
+  also includes resource cleanup. Jetty applies a separate timeout when stopping its platform worker pool.
+- **Byte limits**. Use positive values. `maxRequestBytes` must also be below `Integer.MAX_VALUE`.
+- **Parameter count**. Set `maxParameters` to a positive value. Each query or URL-encoded form has its own limit.
+  Repeated names count as separate pairs. See [request parameters](../../request/parameters/).
+- **Multipart limits**. Set the aggregate, part and storage limits through [`MultipartOptions`](../../bodies/multipart/).
 
-Platform threads are the default. `options.setVirtualThreads(true)` selects virtual execution for ordinary handlers and managed WebSocket callbacks; explicit endpoint executors and native pool configuration take precedence. See [executor selection](../../lifecycle/executors/) for execution and resource ownership.
+Use the boolean settings to select execution and transport behavior.
 
-`options.setHttp2(true)` enables HTTP/2 with HTTP/1.1 fallback. It uses ALPN when TLS is configured and h2c without TLS. `options.setCompression(true)` enables gzip for eligible responses. Request-body decompression remains disabled. A response can opt out with `response.disableCompression()`.
+- **Execution**. Platform threads are the default. Call `options.setVirtualThreads(true)` to use virtual threads for
+  ordinary handlers and managed WebSocket callbacks. Explicit endpoint executors and native pool configuration take
+  precedence. See [executor selection](../../lifecycle/executors/).
+- **HTTP/2**. Call `options.setHttp2(true)` to enable HTTP/2 with HTTP/1.1 fallback. The listener uses ALPN with TLS
+  and h2c on plaintext connections.
+- **Compression**. Call `options.setCompression(true)` to enable gzip for eligible responses. Use
+  `response.disableCompression()` to opt out for one response. Incoming request bodies receive no automatic decompression.
 
-These fields replace `app.virtualThreads()`, `app.http2()`, and `app.compression()`: set the corresponding boolean property on `Options` before constructing the application.
+You can load `Options` from external configuration and customize Jetty before startup.
 
-### Set the request header limit
-
-Call `options.setMaxRequestHeaderBytes(1024)` before constructing `new Shoostr(options)`. The HTTP parser rejects oversized headers with `431` before the endpoint handler runs. Configure buffered request bodies separately with `setMaxRequestBytes`; exceeding that limit produces `413`.
-
-Advanced [Jetty callbacks](../native-configuration/) can override the initial transport settings. They do not replace Shoostr's buffered-body and staged-response limits. Your application chooses any external configuration parser. For mappings that construct the bean and call setters for supplied properties, omitted properties retain their field defaults. Conversion of durations or nested multipart settings depends on the chosen parser and its configuration.
+- [Jetty callbacks](../native-configuration/) can override the initial transport settings. Shoostr still applies
+  its buffered request-body and staged response limits.
+- Choose your own external configuration parser. If it constructs `Options` and calls setters only for supplied
+  properties, omitted settings keep their defaults. Duration conversion and nested multipart settings depend on
+  the parser and how you configure it.
 
 ## Example
 
-The factory accepts the listener host and port and uses a 1,024-byte request-header limit, a 1,024-byte buffered request limit, a 2,048-byte staged response limit, and a 4,096-byte streaming buffer.
-The factory returns an unstarted application so its caller can finish configuration before startup and owns its closure.
+`ServerOptionsExample.application(String host, int port)` configures the listener and registers `POST /echo` to echo
+a text body. It returns an unstarted application. The caller can finish configuring it before startup and owns its closure.
+
+- `setMaxRequestHeaderBytes(1024)` sets the request header limit. The HTTP parser rejects oversized headers with
+  `431` before the endpoint handler runs.
+- `setMaxRequestBytes(1024)` sets the buffered request body limit. An oversized body receives `413`.
+- The factory also sets a 2,048-byte staged response limit and a 4,096-byte streaming buffer. Multipart settings use
+  their defaults.
 
 <Code code={application} lang="java" title="ServerOptionsExample.java" />
 
 ## Test
 
-`TestServer` is the HTTP test fixture: it starts the application on an available loopback port and owns its shutdown.
+All tests start an application from `ServerOptionsExample.application("127.0.0.1", 0)` and make HTTP requests to it.
 
-The direct-start test checks the configured listener and oversized-header rejection. The fixture tests check an ordinary echo and the 1,024/1,025-byte request boundary through real HTTP requests. `TestServer` overrides listener binding for its own test lifetime; the direct-start test exercises the application settings themselves.
+- The direct-start test calls `app.start()`, reads the assigned port and sends an echo request. It also verifies that
+  the configured HTTP parser returns `431` for oversized headers.
+- The other tests use `TestServer`, which overrides listener binding with an available loopback port and owns
+  application shutdown. They check an ordinary echo, a 1,024-byte body that succeeds and a 1,025-byte body that
+  receives `413`.
 
 <Code code={test} lang="java" title="ServerOptionsExampleTest.java" />
 
 ## Continue
 
-Next, [Process streamed input](../../bodies/streaming-input/) to consume a body without buffering it as one value.
+Next, [process streamed input](../../bodies/streaming-input/) to consume a body without buffering it as one value.

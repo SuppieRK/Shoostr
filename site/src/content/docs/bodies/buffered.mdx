@@ -9,48 +9,69 @@ prev:
   link: ../../responses/bodies/
 ---
 
-import { Code } from '@astrojs/starlight/components';
+import {Code} from '@astrojs/starlight/components';
 import application from '../../../../../examples/05-bodies/src/main/java/io/github/suppierk/shoostr/example/bodies/BufferedBodyExample.java?raw';
 import test from '../../../../../examples/05-bodies/src/test/java/io/github/suppierk/shoostr/example/bodies/BufferedBodyExampleTest.java?raw';
 
 ## Description
 
-A request body is the data sent after the HTTP headers. A buffered read collects that data before the handler uses it, which suits a bounded text or byte payload. The `Request` passed to the handler supplies those reads; the handler's `Response` supplies the reply.
+Read the same request body as bytes or as text. Shoostr buffers the input up to the byte limit set in `Options`
+and reuses the cached bytes for later reads in the same request.
 
-This task reads the same input as bytes and text. `Options` sets the buffered-byte limit, and `MultipartOptions` configures multipart limits separately. A `MediaType` describes the representation sent back to the client.
+Call `bodyBytes()` for an independent byte array on each read or `bodyText()` for UTF-8 text.
 
-Call `bodyBytes()` for bytes or `bodyText()` for UTF-8 text. Shoostr caches buffered input and returns an independent copy for each byte-array result. To decode with another charset, use `bodyText(Charset)`; this leaves the cached bytes and byte limit unchanged. The methods do not select a charset from `Content-Type`. Malformed text uses the selected charset's replacement behavior, whereas URL-encoded forms require strict UTF-8. For a Java model, continue with a [JSON codec](../../json/codec/).
+Use `bodyText(Charset)` to decode with another charset. The cached bytes and the byte limit stay the same.
+The text methods do not select a charset from `Content-Type`.
 
-Choose one body mode for each request:
+Text decoding replaces malformed input according to the selected charset. URL-encoded form reads require strict
+UTF-8. To read a body into a Java object, use a [JSON codec](../../json/codec/).
+
+Choose one body mode for each request.
 
 | Mode      | Accessors                                                                 | Reading behavior                                  |
-| --------- | ------------------------------------------------------------------------- | ------------------------------------------------- |
+|-----------|---------------------------------------------------------------------------|---------------------------------------------------|
 | Buffered  | `bodyText()`, `bodyText(Charset)`, `bodyBytes()`, URL-encoded form fields | Cached input supports repeated reads              |
 | Streaming | `input()`                                                                 | One bounded stream advances as bytes are consumed |
 | Multipart | Multipart fields and file accessors                                       | Parsed parts remain scoped to the request         |
 
-Do not combine these modes, except that URL-encoded form access shares the buffered body.
-A file lookup on a nonmultipart request returns empty without claiming its input.
+URL-encoded form access uses the same buffered body as the text and byte methods.
+A file lookup on a non-multipart request returns empty without claiming its input.
 
 ## Example
 
-The `/text` endpoint reads UTF-8, `/latin1` selects ISO-8859-1 explicitly, and `/bytes` preserves the input bytes, while `/form` reads both the original body and its decoded fields.
+The `/text` endpoint reads UTF-8, `/latin1` selects ISO-8859-1 explicitly, and `/bytes` sends the input bytes back.
+The `/form` endpoint reads the original text and the decoded form fields from the same buffered body.
 See [request parameters](../../request/parameters/) for ordinary query and form access.
 
-This example sets a 64-byte request limit and a four-pair limit for each query or URL-encoded form.
-Oversized declared input is rejected before the handler, and a buffered read also enforces the byte limit when the length is unknown.
-Byte overflow produces `413`; pair overflow produces `400`, counting repeated names as separate pairs rather than merging the query and form totals.
+This example sets a 64-byte request limit and a four-pair limit in `Options`. The pair limit applies separately to
+the query and to a URL-encoded form. Each occurrence of a repeated name counts as its own pair.
+
+| Situation | Result |
+| --- | --- |
+| Declared body length exceeds 64 bytes | Shoostr rejects the request with `413` before the handler runs. |
+| Body length is unknown and a buffered read exceeds 64 bytes | The read fails and Shoostr returns `413`. |
+| The query or URL-encoded form has more than four pairs | Shoostr returns `400` when the handler reads the parameters. |
 
 <Code code={application} lang="java" title="BufferedBodyExample.java" />
 
 ## Test
 
-`TestServer` is the HTTP test fixture: it starts the application on an available loopback port and owns its shutdown.
+The HTTP tests create the app with `BufferedBodyExample.application()`. `TestServer` starts it on an available
+loopback port and shuts it down when the fixture closes.
 
-The tests check binary preservation, default and explicit charset selection, defensive copies, compatible form reads, and exact limit boundaries.
+The tests check that binary input comes back byte for byte, text uses UTF-8 by default or the explicit ISO-8859-1
+charset, and each returned byte array is independent. They read raw text and decoded form fields from the same
+body. A text read replaces malformed UTF-8. A form read rejects it with `400`.
+
+The tests accept 64 bytes and reject 65 with `413`, even on a route that leaves a declared body unread. A
+multibyte input confirms that the limit counts bytes. Four pairs in the query and four in the form pass together.
+Adding a fifth pair to either source returns `400`.
+
+The body-mode tests verify that switching to streaming or multipart access after buffering fails, and that a file
+lookup on a non-multipart request leaves the body available to read.
 
 <Code code={test} lang="java" title="BufferedBodyExampleTest.java" />
 
 ## Continue
 
-Next, [Group and reuse routes](../../routing/groups/) to share a prefix and local behavior across endpoints.
+Next, [group and reuse routes](../../routing/groups/) to share a prefix and local behavior across endpoints.

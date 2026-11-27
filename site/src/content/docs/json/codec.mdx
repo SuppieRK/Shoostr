@@ -9,26 +9,23 @@ prev:
   link: ../../routing/groups/
 ---
 
-import { Code } from '@astrojs/starlight/components';
+import {Code} from '@astrojs/starlight/components';
 import application from '../../../../../examples/07-json/src/main/java/io/github/suppierk/shoostr/example/json/JsonCodecExample.java?raw';
 import test from '../../../../../examples/07-json/src/test/java/io/github/suppierk/shoostr/example/json/JsonCodecExampleTest.java?raw';
 
 ## Description
 
-Typed body handling converts HTTP bytes into Java values and Java values back into response bytes. A `Codec` is the conversion contract: your implementation supplies the reader and writer, using the serialization library you choose.
+Bring your own serialization library. Implement `Codec.read(...)` to turn bytes into Java values and
+`Codec.write(...)` to encode values for HTTP bodies, WebSocket messages, or SSE events. Your application chooses
+the data format and validation rules. This example uses JSON.
 
-Registering that codec gives you a typed view of route registration. Its handlers receive typed request and response helpers, while ordinary text and byte operations remain available. `MediaType` labels the outgoing representation; decoding failures in this example become `BadRequestException` responses.
-
-This task uses JSON to exchange a validated user value. The codec handles conversion; the application still decides media policy and validation.
-
-Implement `read(...)` to convert bytes to Java objects and `write(...)` to convert Java objects to bytes for HTTP bodies, WebSocket messages or SSE events.
-Shoostr delegates these conversions without choosing a serialization library or data format; JSON is one possible codec implementation, not a framework requirement.
-
-Register the codec with `app.codec(codec)` and register handlers through the returned typed view, as the example does with `.routes(...)`.
-HTTP handlers receive `Request.Typed` and `Response.Typed`; the same registration view also supplies typed WebSocket callbacks and an SSE event writer with these conversion helpers:
+Call `app.codec(codec)` and register routes with `.routes(...)` on the returned typed view. Java infers
+`Request.Typed` and `Response.Typed` for HTTP endpoint lambdas and scoped `exception(...)` lambdas. The same
+view supplies typed WebSocket callbacks and an SSE event writer. Ordinary `app.routes(...)` registrations use
+`Request` and `Response`.
 
 | Helper                               | Codec operation     | Result                                                                       |
-| ------------------------------------ | ------------------- | ---------------------------------------------------------------------------- |
+|--------------------------------------|---------------------|------------------------------------------------------------------------------|
 | `request.body(Class<T>)`             | `read(bytes, type)` | Decode the buffered request body to the requested class.                     |
 | `response.body(MediaType, Object)`   | `write(value)`      | Encode an object and stage its bytes with explicit media metadata.           |
 | `response.body(String, Object)`      | `write(value)`      | Encode an object and stage its bytes with a media type supplied as a string. |
@@ -36,37 +33,50 @@ HTTP handlers receive `Request.Typed` and `Response.Typed`; the same registratio
 | `connection.sendObject(Object)`      | `write(value)`      | Encode and send a [binary WebSocket message](../../websockets/objects/).     |
 | `events.sendObject(Object)`          | `write(value)`      | Encode UTF-8 text as [SSE event data](../../streaming/sse-objects/).         |
 
-For this JSON recipe, `response.body(MediaType.APPLICATION_JSON, user)` sets `application/json` as the response media type; the codec produces the bytes without choosing that metadata.
-Ordinary `app.routes(...)` registrations keep their original handler types.
-Text and byte-array helpers remain available in typed handlers without calling the codec; `body(..., byte[])` sends those bytes directly.
+`response.body(MediaType.APPLICATION_JSON, user)` sets the response media type to `application/json` and calls the
+codec to encode `user`. Typed handlers can still use `text(...)` and `body(..., byte[])` without calling the codec.
 
-This example implements the codec with Jackson 2's `jackson-databind` library and explicit JSON tree conversion, without mapping annotations.
-Its codec accepts only `User.class`, and the record constructor rejects blank names regardless of where a user is created.
-Malformed JSON, an invalid object shape, or a blank name becomes a JSON `400` response, while unexpected conversion failures retain their original classification.
-These checks are the example's validation choice, not a Shoostr requirement; your application decides how to validate its data structures.
-`Class<T>` describes a concrete class, not a parameterized type such as `List<User>`.
-Use [exception renderers](../../errors/exceptions/) for shared error handling, or return [Problem Details](../../errors/problem-details/) when clients need a standard error format.
+The read helper takes a `Class<T>`, so it cannot express a parameterized type such as `List<User>`. If your codec
+supports `User[]`, you can read a JSON array with `request.body(User[].class)`.
 
-Configure the shared codec before serving requests and keep it safe for concurrent HTTP handlers and WebSocket callbacks; Shoostr does not close it.
-Each HTTP body read decodes again, subject to the [buffered request-body limits](../../bodies/buffered/).
-The finite HTTP response limit applies after body encoding, not to WebSocket or SSE object sends; transport buffering cannot bound allocations or execution time inside the codec.
+- Configure the codec before registration and keep it safe for concurrent HTTP handlers and WebSocket callbacks.
+  Your application owns any codec cleanup.
+- Each typed HTTP body read decodes the bytes again. The [buffered request-body limits](../../bodies/buffered/)
+  still apply.
+- Shoostr checks the finite HTTP response-byte limit after encoding. WebSocket and SSE object sends are outside
+  that limit.
+- Transport buffering cannot bound allocations or execution time inside the codec.
 
 ## Example
 
-`POST /users` returns the validated user as JSON with status `201`; `/help` shows that ordinary text output remains available.
-The handler explicitly selects JSON output: typed conversion does not check the request's `Content-Type` or negotiate its `Accept` header.
-Use [content negotiation](../negotiation/) when a response must match the client's preferences.
+`POST /users` returns the validated user as JSON with status `201`. `/help` uses ordinary text output.
+
+The codec uses Jackson 2's `jackson-databind`. It calls `readValue(...)` for the requested class and
+`writeValueAsBytes(...)` for the outgoing object. Jackson maps the `User` record without annotations, and the
+record constructor requires a nonblank name.
+
+The codec reports malformed JSON and invalid input as `BadRequestException`. The scoped exception handler uses
+the same codec to write an error map as a JSON `400` response. Use [exception renderers](../../errors/exceptions/)
+for shared error handling or return [Problem Details](../../errors/problem-details/) when clients need a standard
+error format.
+
+The handler selects JSON output explicitly. The example accepts valid user JSON regardless of the request's
+`Content-Type` and sends JSON regardless of `Accept`. Set your own input media policy and use
+[content negotiation](../negotiation/) when a response needs to match the client's preferences.
 
 <Code code={application} lang="java" title="JsonCodecExample.java" />
 
 ## Test
 
-`TestServer` is the HTTP test fixture: it starts the application on an available loopback port and owns its shutdown.
+The HTTP tests create the app with `JsonCodecExample.application()`. `TestServer` starts it on an available
+loopback port and shuts it down when the fixture closes.
 
-The tests cover Unicode and escaping, malformed and invalid input, JSON error output, ordinary text, and the absence of automatic media enforcement.
+The tests check Unicode and escaping in the returned JSON, a JSON `400` for malformed or invalid input, and the
+plain-text response from `/help`. They also send valid JSON with `Content-Type: text/plain` and
+`Accept: application/xml` and check that the example still returns JSON with status `201`.
 
 <Code code={test} lang="java" title="JsonCodecExampleTest.java" />
 
 ## Continue
 
-Next, [Handle application failures](../../errors/exceptions/) to choose a shared error response policy.
+Next, [handle application failures](../../errors/exceptions/) to choose a shared error response policy.

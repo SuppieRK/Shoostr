@@ -1,47 +1,71 @@
 ---
 title: Trust proxy headers and resolve forwarded metadata
-description: Select trusted physical proxy peers and one forwarding header family to read the effective client address, URL, and security state without changing transport TLS.
+description: Trust proxy headers from selected peers to resolve the client address and effective URL. Distinguish forwarded HTTPS from transport TLS.
 next:
   label: Inspect resolved request metadata
   link: ../../request/metadata/
 ---
 
-import { Code } from '@astrojs/starlight/components';
+import {Code} from '@astrojs/starlight/components';
 import application from '../../../../../examples/14-security/src/main/java/io/github/suppierk/shoostr/example/authentication/TrustedProxyExample.java?raw';
 import test from '../../../../../examples/14-security/src/test/java/io/github/suppierk/shoostr/example/authentication/TrustedProxyExampleTest.java?raw';
 
 ## Description
 
-A reverse proxy can forward the original client address and request scheme to the application. Those headers are assertions from the proxy, not facts that an arbitrary caller may supply authoritatively.
+A reverse proxy can report the original client address and request scheme in forwarding headers. Accept those
+assertions only from proxies you control. The physical peer is the host that connects directly to Shoostr.
 
-This task configures which physical peers are trusted and which header format they may assert. `ForwardedHeaders` selects that format before startup; handlers then read resolved metadata through the normal request API.
+1. Identify the proxy IP addresses you control. Use a thread-safe, nonblocking predicate to select them.
+2. Before startup, call `trustedProxies(...)` with that predicate and one `ForwardedHeaders` family.
+   `RFC7239` reads the standard `Forwarded` field and is the default for the one-argument overload.
+   `X_FORWARDED` reads the legacy fields. Shoostr uses only the selected family. See
+   [RFC 7239](https://www.rfc-editor.org/rfc/rfc7239.html).
 
-Before startup, select controlled proxy addresses with `trustedProxies(...)` and choose one `ForwardedHeaders` family. Shoostr checks the physical peer first and ignores forwarding assertions from an untrusted peer. `RFC7239` reads the standardized [Forwarded field](https://www.rfc-editor.org/rfc/rfc7239.html); `X_FORWARDED` reads the legacy fields. It does not merge assertions from the other family.
+Shoostr checks the physical peer's IP address before reading any forwarding headers. It ignores forwarding input from an
+untrusted peer.
 
-The trust walk proceeds from the rightmost entry through known proxies and stops at the first untrusted node rather than accepting an arbitrary leftmost address.
-Your edge proxy must remove untrusted forwarding input or append truthful entries, because trusting its address does not make client-supplied assertions true.
-Malformed selected metadata from a trusted peer receives `400`; any supplied legacy host, protocol, or port lists must align with the X-Forwarded-For hop count.
+- From a trusted peer, Shoostr starts at the rightmost entry and walks left through trusted proxy addresses.
+  It uses the first untrusted or undisclosed hop, or the leftmost entry if the walk reaches it.
+- Configure your edge proxy to remove untrusted forwarding input or append values it observes at its own hop.
+  See [RFC 7239's guidance on header integrity](https://www.rfc-editor.org/rfc/rfc7239.html#section-8.1).
+- Malformed input in the selected family from a trusted peer receives `400`. In the legacy family, any supplied
+  `X-Forwarded-Host`, `X-Forwarded-Proto` or `X-Forwarded-Port` list must have the same number of entries
+  as `X-Forwarded-For`.
 
 ## Example
 
-The factory captures a peer-address snapshot and the chosen family, then exposes `clientAddress()` and `effectiveUrl()` at `/metadata`.
-These are proxy-aware values, unlike the [direct request metadata](../../request/metadata/) used to describe the transport itself.
+`GET /metadata` returns the resolved client address from `clientAddress()` and the proxy-aware URL from
+`effectiveUrl()`. The factory copies the supplied set of trusted proxy addresses before startup and uses
+that fixed set for trust checks. In the tests that exercise both header families, the fixture trusts
+`127.0.0.1` and selects `RFC7239` or `X_FORWARDED` for each run.
 
-`isSecure()` reports actual transport TLS only.
-`isEffectivelySecure()` instead uses an explicitly trusted forwarding protocol when present and otherwise falls back to transport TLS; an effective URL scheme alone is not proof of security.
-This distinction matters when a trusted proxy receives HTTPS but forwards to Shoostr over HTTP, and is the security accessor used by the [pac4j adapter](../pac4j/).
+| Accessor | Reports |
+| --- | --- |
+| `isSecure()` | Whether the direct connection to Shoostr uses TLS. |
+| `isEffectivelySecure()` | Whether the trusted forwarded protocol is HTTPS, when supplied. Otherwise it reports direct transport security. This is the accessor used by the pac4j adapter. |
+
+When a trusted proxy receives HTTPS and forwards over plain HTTP, an accepted HTTPS assertion makes
+`isEffectivelySecure()` return `true`. The plain connection makes `isSecure()` return `false`. Use these accessors for
+security checks. The scheme in `effectiveUrl()` can also come from the request's URL text. See
+[request metadata](../../request/metadata/) and the [pac4j adapter](../pac4j/).
 
 <Code code={application} lang="java" title="TrustedProxyExample.java" />
 
 ## Test
 
-`TestServer` is the HTTP test fixture: it starts the application on an available loopback port and owns its shutdown.
+The tests start `TrustedProxyExample.application(trustedPeers, family)` with `TestServer` on an available
+loopback port. The fixture owns application shutdown.
 
-The tests cover both header families, conflicting unselected assertions, trusted-hop selection, ignored untrusted input, malformed selected metadata, and a stable peer snapshot.
-Their HTTP exchanges distinguish a trusted HTTPS assertion from the plain underlying connection without claiming that forwarded headers establish TLS.
+- Each header family supplies its own client address and URL, even when the other family is present.
+- The trust walk stops at the first untrusted hop. Forwarding input from an untrusted physical peer is ignored.
+- The tests assert `400` for malformed forwarding from a trusted peer and for legacy lists with different hop counts.
+- Adding a trusted address to the original set after application construction leaves the configured trust set intact.
+
+The HTTP tests assert `transportSecure=false` and `effectiveSecure=true` for a trusted HTTPS assertion over
+a plain connection.
 
 <Code code={test} lang="java" title="TrustedProxyExampleTest.java" />
 
 ## Continue
 
-Next, [Inspect resolved request metadata](../../request/metadata/) to see the values made available to the handler.
+Next, [inspect resolved request metadata](../../request/metadata/) to see the values made available to the handler.

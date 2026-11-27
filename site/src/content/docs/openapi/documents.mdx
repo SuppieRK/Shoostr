@@ -1,62 +1,92 @@
 ---
 title: Describe HTTP operations with OpenAPI
-description: Generate an OpenAPI document from selected routes and explicit schemas, describe request and response bodies, and keep independent documents frozen before serving traffic.
+description: Generate OpenAPI documents from selected routes and explicit schemas. Describe request and response bodies and keep each document independent.
 next:
   label: Serve an OpenAPI UI
   link: ../ui/
 ---
 
-import { Code } from '@astrojs/starlight/components';
+import {Code} from '@astrojs/starlight/components';
 import application from '../../../../../examples/16-openapi/src/main/java/io/github/suppierk/shoostr/example/openapi/OpenApiDocumentExample.java?raw';
 import test from '../../../../../examples/16-openapi/src/test/java/io/github/suppierk/shoostr/example/openapi/OpenApiDocumentExampleTest.java?raw';
 
 ## Description
 
-An OpenAPI document describes an HTTP API's operations, parameters and representations. It is a description for readers and tools; it does not implement the API or enforce its validation and access rules.
+Publish an OpenAPI document so readers and tools can see your API's operations, parameters and representations.
+The application still implements those operations, validates input, selects codecs and enforces access rules.
+Each document describes the routes that select its provider. Configure access separately for the operations and
+for each document URL. See the [OpenAPI 3.1.1 specification](https://spec.openapis.org/oas/v3.1.1.html).
 
-This example uses `shoostr-openapi` and Jackson 3's `jackson-databind` library for its JSON request and response handling.
+:::note[Libraries required]
+- `io.github.suppierk:shoostr-openapi` provides `OpenApi` and brings in the Swagger model classes.
+- `tools.jackson.core:jackson-databind` is the Jackson 3 library the example uses to read and write JSON. The provider already includes it as a dependency.
 
-Shoostr's `OpenApi` provider collects explicit operation descriptions from registered routes. Use the route's `Lifecycle` configuration object to select it with `withExtension(...)` and supply operation settings. The first selection establishes shared setup automatically. Mounting the generated document is a separate route.
+See [Maven and Gradle installation](../../start/libraries/) for published Shoostr coordinates.
+:::
 
-This task describes an item API, serves its document, and keeps another document independent. `MediaType` names representations, while the handler uses `BadRequestException` for invalid input independently of the schema.
+Shoostr's `OpenApi` provider collects explicit operation descriptions from registered routes. This example describes
+an item API and serves its document alongside a separate operations document.
 
-Build explicit Swagger OpenAPI models, create an `OpenApi` instance from `shoostr-openapi`, and select it in the relevant route or group configuration. A group supplies independent operation defaults; an endpoint can replace its summary, identifier, parameters, representations and responses. Serve the generated JSON by separately registering `docs.handler()`. Shared setup does not expose a URL or infer a document by scanning classes, annotations or codecs.
+1. Create an `OpenApi` instance and register reusable schemas as explicit Swagger `Schema` models.
+2. Select it with `lifecycle.withExtension(docs)` in the route or group's `Lifecycle` callback. Set operation metadata on the
+   returned `OpenApiOperation`. The first selection installs the provider automatically.
+3. Register `docs.handler()` on its own GET route to serve the JSON document.
 
-Schemas describe the API rather than validate requests, choose a codec or enforce authentication.
-Keep those responsibilities in the actual handlers and security configuration, even when an operation declares required fields or a security scheme.
-Likewise, separate documents provide separate descriptions, not access-control boundaries.
-The [OpenAPI 3.1.1 specification](https://spec.openapis.org/oas/v3.1.1.html) explains operations, reusable schemas and security descriptions in more detail.
+The provider builds the document from registered route metadata and your explicit models. Supply schemas and media types
+even when the handler uses a codec.
 
-Construct native `Schema` models for OpenAPI 3.1 rather than relying on annotation scanning or model inference.
-Explicit path parameters must match the route template and be required. Constrained path parameters need an inline schema with exactly the string type; a referenced, content-based or non-string declaration is rejected. An existing pattern is intersected with the route constraint.
-Published catch-all paths, unsupported HTTP methods, missing path declarations and duplicate operation identifiers fail startup.
-Known local component references are checked against the document. External and other JSON Schema references are preserved without fetching them or claiming complete JSON Schema validation.
+Shoostr checks the published operations during startup.
 
-Operation defaults are independent. Summary, description and operation identifier replace inherited scalar values; tags accumulate without duplicates. A parameter replaces the same name/location, and a response replaces the same status, preserving unrelated entries. Request-body and security declarations replace their entire inherited values. See [OpenApiOperation](https://github.com/SuppieRK/Shoostr/blob/main/openapi/src/main/java/io/github/suppierk/shoostr/openapi/OpenApiOperation.java) for replacement and accumulation rules.
-Generated JSON remains subject to the application's finite-response limit. Large schemas do not bypass that limit; UI assets use bounded streaming.
+- Declare every path parameter by its exact template name and mark it required.
+- For a constrained parameter, supply an inline schema whose only type is `string`. Shoostr rejects references and
+  content-based declarations for these parameters. The published schema requires both the route constraint and any
+  pattern already in the schema.
+- A published catch-all route, unsupported HTTP method, missing path parameter declaration, duplicate operation identifier
+  or ambiguous operation path prevents startup.
+- Shoostr checks known local component references against the document. It preserves external references and other JSON
+  Schema references as supplied. Use a separate validator for full JSON Schema validation or reference resolution.
+
+An endpoint starts with its own copy of any group defaults. Changes to that copy follow these rules.
+
+| Field | Effect of setting it in a child scope |
+| --- | --- |
+| Summary, description, operation identifier | Replace the inherited value for that field. |
+| Tags | Add tags and keep each name once. |
+| Parameters | Replace the parameter with the same name and location. Other parameters stay available. |
+| Responses | Replace the response with the same status. Other statuses stay available. |
+| Request body, security | Replace the entire inherited declaration for that field. |
+
+For the configuration methods, see [OpenApiOperation](https://github.com/SuppieRK/Shoostr/blob/main/openapi/src/main/java/io/github/suppierk/shoostr/openapi/OpenApiOperation.java).
+The generated JSON must fit the application's finite-response byte limit. The optional UI sends its assets using bounded streaming.
 
 ## Example
 
-The item API defines a reusable schema, a constrained path parameter, and JSON request and response representations.
-Its POST handler checks the input independently, including malformed JSON, missing or blank names, and trailing JSON values.
-The operations endpoint selects another `OpenApi` instance, so it appears only in the separate operations document.
+The item API reuses the `Item` schema for JSON requests and responses. The GET route declares its numeric `id`
+parameter, and `POST /api/items` checks the input itself. It returns `400` for malformed JSON, a missing, non-string or
+blank name, or trailing JSON values. `GET /operations/status` selects a second `OpenApi` instance and appears only in
+the document at `/internal-openapi.json`. The item operations appear in `/openapi.json`.
 
-Generation runs before the listener starts and serves a fixed byte snapshot afterward, without executing documented handlers or evaluating availability conditions.
-A conditional route remains described even when currently unavailable; use `hidden()` to exclude a selected binding instead of treating a runtime condition as documentation selection.
-Keep operation identifiers unique within each document, and avoid conflicting method/path descriptions that the OpenAPI format cannot distinguish.
-Protect specification URLs explicitly when they describe private operations; the [local UI recipe](../ui/) covers the page, assets and specification together.
+Generation uses route metadata before the listener starts. The document handler then serves the same JSON bytes.
+Document generation leaves handler execution and availability checks to real requests. A conditional route stays in the
+document even while unavailable. Use `hidden()` to omit a selected route or group.
+
+Protect a document URL explicitly when it describes private operations. The [OpenAPI UI guide](../ui/) covers protecting
+the page, assets and document together.
 
 <Code code={application} lang="java" title="OpenApiDocumentExample.java" />
 
 ## Test
 
-`TestServer` is the HTTP test fixture: it starts the application on an available loopback port and owns its shutdown.
+The tests start `OpenApiDocumentExample.application()` with `TestServer` on an available loopback port. The fixture owns
+application shutdown. The tests inspect the generated operations and schemas, call the GET and POST handlers, check
+`400` responses for invalid input, and verify which operations appear in each document.
 
-The tests inspect the generated schemas and operations, invoke the described POST, reject invalid input, and verify document isolation.
-A separate public-API fixture checks detached schema models, frozen configuration, repeated specification bytes and conditional metadata without synthetic handler execution.
+A separate fixture changes a schema after registration and checks that the document keeps the registered copy. It also
+checks that startup freezes configuration, repeated requests return identical document bytes, and `/preview` is documented
+before any availability check or handler invocation occurs. A real request to `/preview` returns `404`.
 
 <Code code={test} lang="java" title="OpenApiDocumentExampleTest.java" />
 
 ## Continue
 
-Next, [Serve an OpenAPI UI](../ui/) to let readers explore the generated document in a browser.
+Next, [serve an OpenAPI UI](../ui/) to let readers explore the generated document in a browser.

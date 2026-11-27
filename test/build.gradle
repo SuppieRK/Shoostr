@@ -2,9 +2,9 @@ plugins {
 	id 'java-library'
 }
 
-version = '2026.11.21.0'
+version = '2026.11.27.0'
 
 dependencies {
-	api shoostrDependency('core', '2026.11.21.0')
+	api shoostrDependency('core', '2026.11.27.0')
 	testImplementation 'nl.jqno.equalsverifier:equalsverifier:4.5.2'
 }

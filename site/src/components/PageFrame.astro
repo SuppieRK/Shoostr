@@ -1,0 +1,80 @@
+---
+import DefaultPageFrame from '@astrojs/starlight/components/PageFrame.astro';
+import { Icon } from '@astrojs/starlight/components';
+---
+
+<DefaultPageFrame>
+  <slot name="header" slot="header" />
+  <slot name="sidebar" slot="sidebar" />
+  <slot />
+
+  <!-- Place the control alongside the isolated content pane so it can sit above the desktop table of contents. -->
+  <div class="scroll-to-top">
+    <button id="scroll-to-top" type="button" aria-label="Scroll to top" title="Scroll to top" hidden>
+      <Icon name="up-arrow" size="1.35rem" aria-hidden="true" />
+    </button>
+  </div>
+</DefaultPageFrame>
+
+<script>
+  const button = document.querySelector<HTMLButtonElement>('#scroll-to-top');
+
+  if (button) {
+    const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
+    const updateVisibility = () => {
+      button.hidden = window.scrollY < 320 && document.activeElement !== button;
+    };
+
+    button.addEventListener('click', () => {
+      const heading = document.querySelector<HTMLElement>('main h1');
+      if (heading) {
+        if (!heading.hasAttribute('tabindex')) heading.tabIndex = -1;
+        heading.focus({ preventScroll: true });
+      }
+
+      window.scrollTo({ top: 0, behavior: reducedMotion.matches ? 'auto' : 'smooth' });
+    });
+
+    button.addEventListener('blur', updateVisibility);
+    window.addEventListener('scroll', updateVisibility, { passive: true });
+    window.addEventListener('pageshow', updateVisibility);
+    updateVisibility();
+  }
+</script>
+
+<style>
+  .scroll-to-top {
+    padding-block-end: max(1rem, env(safe-area-inset-bottom));
+  }
+
+  button {
+    position: fixed;
+    right: max(1rem, env(safe-area-inset-right));
+    bottom: max(1rem, env(safe-area-inset-bottom));
+    z-index: var(--sl-z-index-toc);
+    display: grid;
+    place-items: center;
+    width: 2.75rem;
+    height: 2.75rem;
+    border: 1px solid var(--sl-color-gray-4);
+    border-radius: 50%;
+    background: var(--sl-color-bg-nav);
+    color: var(--sl-color-text-accent);
+    box-shadow: var(--sl-shadow-md);
+    cursor: pointer;
+  }
+
+  button:hover {
+    background: var(--sl-color-accent-low);
+  }
+
+  button[hidden] {
+    display: none;
+  }
+
+  @media print {
+    .scroll-to-top {
+      display: none;
+    }
+  }
+</style>

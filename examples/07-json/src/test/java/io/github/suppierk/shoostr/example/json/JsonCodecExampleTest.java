@@ -1,60 +1,71 @@
 package io.github.suppierk.shoostr.example.json;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-
+import com.fasterxml.jackson.databind.ObjectMapper;
+import io.github.suppierk.shoostr.example.json.JsonCodecExample.User;
 import io.github.suppierk.shoostr.testing.TestServer;
-import java.io.IOException;
-import java.net.http.HttpResponse;
-import java.nio.charset.StandardCharsets;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
+import java.io.IOException;
+import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
+
 @Timeout(15)
 class JsonCodecExampleTest {
-  @Test
-  void leavesMediaEnforcementToTheHandlerRatherThanTheCodec() throws Exception {
+    private static final ObjectMapper MAPPER = new ObjectMapper();
 
-    try (var test = TestServer.start(JsonCodecExample.application())) {
-      var response = sendResponseForLeavesMediaEnforcementToTheHandlerRatherThanTheCodec(test);
+    @Test
+    void leavesMediaEnforcementToTheHandlerRatherThanTheCodec() throws Exception {
+        try (var test = TestServer.start(JsonCodecExample.application())) {
+            var body = MAPPER.createObjectNode()
+                .put("name", "Ada")
+                .put("ignored", true);
 
-      assertEquals(201, response.statusCode());
-      assertEquals("application/json", response.headers().firstValue("Content-Type").orElseThrow());
-      assertEquals("{\"name\":\"Ada\"}", response.body());
+            var response = postUser(
+                test,
+                MAPPER.writeValueAsBytes(body),
+                "text/plain",
+                "application/xml"
+            );
+
+            assertEquals(201, response.statusCode());
+            assertEquals("application/json", response.headers()
+                .firstValue("Content-Type")
+                .orElseThrow());
+            assertEquals(
+                new User("Ada"),
+                MAPPER.readValue(response.body(), User.class)
+            );
+        }
     }
-  }
 
-  private HttpResponse<String> sendResponseForLeavesMediaEnforcementToTheHandlerRatherThanTheCodec(
-      TestServer test) throws IOException, InterruptedException {
-    return test.send(
-        request ->
-            request
-                .path("/users")
-                .method("POST")
-                .header("Content-Type", "text/plain")
-                .header("Accept", "application/xml")
-                .body("{\"name\":\"Ada\"}".getBytes(StandardCharsets.UTF_8)),
-        HttpResponse.BodyHandlers.ofString());
-  }
+    @Test
+    void keepsOrdinaryTextAvailableWithTypedApplication() throws Exception {
+        try (var test = TestServer.start(JsonCodecExample.application())) {
+            var response = test.send(request -> request
+                .path("/help"),
+                HttpResponse.BodyHandlers.ofString()
+            );
 
-  @Test
-  void keepsOrdinaryTextAvailableWithTypedApplication() throws Exception {
-
-    try (var test = TestServer.start(JsonCodecExample.application())) {
-      var response =
-          test.send(request -> request.path("/help"), HttpResponse.BodyHandlers.ofString());
-
-      assertEquals(200, response.statusCode());
-      assertEquals(
-          "text/plain; charset=utf-8", response.headers().firstValue("Content-Type").orElseThrow());
-      assertEquals("Send a JSON object with a nonblank name", response.body());
+            assertEquals(200, response.statusCode());
+            assertEquals(
+                "text/plain; charset=utf-8",
+                response.headers()
+                    .firstValue("Content-Type")
+                    .orElseThrow()
+            );
+            assertEquals(
+                "Send a JSON object with a nonblank name",
+                response.body()
+            );
+        }
     }
-  }
 
-  @ParameterizedTest
-  @ValueSource(
-      strings = {
+    @ParameterizedTest
+    @ValueSource(strings = {
         "",
         "{broken",
         "[]",
@@ -62,56 +73,69 @@ class JsonCodecExampleTest {
         "{}",
         "{\"name\":null}",
         "{\"name\":1}",
+        "{\"name\":1.5}",
+        "{\"name\":false}",
         "{\"name\":\" \"}",
         "{\"name\":\"Ada\"} trailing",
         "{\"name\":\"Ada\"}{}"
-      })
-  void rejectsMalformedJsonAndInvalidNamesWithSafeJsonError(String body) throws Exception {
+    })
+    void rejectsMalformedJsonAndInvalidNamesWithSafeJsonError(String body) throws Exception {
+        try (var test = TestServer.start(JsonCodecExample.application())) {
+            var response = postUser(
+                test,
+                body.getBytes(StandardCharsets.UTF_8),
+                "application/json",
+                "application/json"
+            );
 
-    try (var test = TestServer.start(JsonCodecExample.application())) {
-      var response =
-          sendResponseForRejectsMalformedJsonAndInvalidNamesWithSafeJsonError(test, body);
-
-      assertEquals(400, response.statusCode());
-      assertEquals("application/json", response.headers().firstValue("Content-Type").orElseThrow());
-      assertEquals("{\"error\":\"invalid_user\"}", response.body());
+            assertEquals(400, response.statusCode());
+            assertEquals(
+                "application/json",
+                response.headers()
+                    .firstValue("Content-Type")
+                    .orElseThrow()
+            );
+            assertEquals(
+                MAPPER.readTree("{\"error\":\"invalid_user\"}"),
+                MAPPER.readTree(response.body())
+            );
+        }
     }
-  }
 
-  private HttpResponse<String> sendResponseForRejectsMalformedJsonAndInvalidNamesWithSafeJsonError(
-      TestServer test, String body) throws IOException, InterruptedException {
-    return test.send(
-        request ->
-            request
-                .path("/users")
-                .method("POST")
-                .header("Content-Type", "application/json")
-                .body(body.getBytes(StandardCharsets.UTF_8)),
-        HttpResponse.BodyHandlers.ofString());
-  }
+    @Test
+    void returnsValidatedUserAsJsonWithUnicodeAndEscapedCharacters() throws Exception {
+        var user = new User("Zoë \"Z\"\nLee");
 
-  @Test
-  void returnsValidatedUserAsJsonWithUnicodeAndEscapedCharacters() throws Exception {
+        try (var test = TestServer.start(JsonCodecExample.application())) {
+            var response = postUser(
+                test,
+                MAPPER.writeValueAsBytes(user),
+                "application/json",
+                "application/json"
+            );
 
-    try (var test = TestServer.start(JsonCodecExample.application())) {
-      var response = sendResponseForReturnsValidatedUserAsJsonWithUnicodeAndEscapedCharacters(test);
-
-      assertEquals(201, response.statusCode());
-      assertEquals("application/json", response.headers().firstValue("Content-Type").orElseThrow());
-      assertEquals("{\"name\":\"Zoë \\\"Z\\\"\\nLee\"}", response.body());
+            assertEquals(201, response.statusCode());
+            assertEquals(
+                "application/json",
+                response.headers()
+                    .firstValue("Content-Type")
+                    .orElseThrow()
+            );
+            assertEquals(user, MAPPER.readValue(response.body(), User.class));
+        }
     }
-  }
 
-  private HttpResponse<String>
-      sendResponseForReturnsValidatedUserAsJsonWithUnicodeAndEscapedCharacters(TestServer test)
-          throws IOException, InterruptedException {
-    return test.send(
-        request ->
-            request
-                .path("/users")
-                .method("POST")
-                .header("Content-Type", "application/json")
-                .body("{\"name\":\"Zoë \\\"Z\\\"\\nLee\"}".getBytes(StandardCharsets.UTF_8)),
-        HttpResponse.BodyHandlers.ofString());
-  }
+    private HttpResponse<byte[]> postUser(
+        TestServer test,
+        byte[] body,
+        String contentType,
+        String accept
+    ) throws IOException, InterruptedException {
+        return test.send(request -> request
+            .path("/users")
+            .method("POST")
+            .header("Content-Type", contentType)
+            .header("Accept", accept)
+            .body(body));
+    }
 }

@@ -27,7 +27,7 @@ final class DemoAuthentication {
         authenticationClient(),
         "Basic realm=\"shoostr-demo\", charset=\"UTF-8\"",
         // This authorization callback requires the admin role only for /private/admin.
-        (context, ignoredSessionStore, profiles) ->
+        (context, sessionStore, profiles) ->
             !"/private/admin".equals(context.getPath())
                 || profiles.getFirst().getRoles().contains(ADMIN));
   }

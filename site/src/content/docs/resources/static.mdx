@@ -6,51 +6,68 @@ next:
   link: ../../security/authentication/
 ---
 
-import { Code } from '@astrojs/starlight/components';
+import {Code} from '@astrojs/starlight/components';
 import application from '../../../../../examples/09-resources/src/main/java/io/github/suppierk/shoostr/example/resources/StaticResourcesExample.java?raw';
 import test from '../../../../../examples/09-resources/src/test/java/io/github/suppierk/shoostr/example/resources/StaticResourcesExampleTest.java?raw';
 
 ## Description
 
-A static mount maps a URL prefix to existing files instead of an endpoint handler for each file. Its source can be a public filesystem directory or resources packaged on the application's classpath.
+Serve public files under a single URL prefix. A static mount maps that prefix to a directory on disk or to assets
+packaged on the application's classpath.
 
-`StaticOptions` configures a mount's resource-serving behavior. This task chooses the source and prefix before registering the mount, then checks how it interacts with explicit routes and resource metadata.
+Mount a public directory with `staticFiles(...)` or packaged assets with `classpathResources(...)`. Both mounts
+support `GET` and `HEAD`. A missing resource produces `404` if the mount has no fallback file to serve. Shoostr
+chooses the media type from the filename and uses `application/octet-stream` for unknown extensions. Explicit
+routes win over mounts even when you register them later.
 
-Mount a public directory with `staticFiles(...)`, or packaged assets with `classpathResources(...)`. Existing resources are served through `GET` and `HEAD`. Explicit routes win over a mount even when registered later. The filename determines the media type, with `application/octet-stream` for an unknown extension.
+Directory listings stay disabled. Welcome files and single-page application (SPA) fallback are off by default.
+`StaticOptions` enables either behavior.
 
-Directory listings, welcome files and single-page application (SPA) fallback are disabled by default.
-Enable welcome-file or fallback behavior through `StaticOptions` when the mount needs it: a welcome file belongs to the requested directory, while the fallback comes from the mount root.
-Fallback does not make unsafe traversal valid, and an external directory alias can select the fallback without exposing its target.
+- A welcome file comes from the requested directory.
+- An SPA fallback comes from the mount root. Shoostr checks it when a request has no file or welcome file to serve.
 
-Keep each mount limited to public assets rather than exposing a project or storage root.
-Filesystem mounts use Jetty resources and reject aliased paths, including symbolic links beneath the mount. Classpath mounts also reject aliased resources.
+Shoostr rejects unsafe traversal even with fallback enabled. When a mount rejects an external directory alias,
+it can still serve its SPA fallback from the mount root.
 
-Keep the publication directory and its ancestors under the control of the application or deployment owner, with operating-system permissions that exclude untrusted writers. Path checks and file opens are separate operations, so a mount does not protect against hostile concurrent filesystem changes. Replacing the mounted pathname can change later responses or produce a 404; the mount does not retain the original directory after a rename.
-Missing resources outside a configured fallback produce `404`.
-Keep untrusted executable HTML and JavaScript off the application's trusted origin; follow the [browser trust guidance](../../security/csrf/#description) to use a separate origin and host with host-only application cookies.
+- Mount only public assets. Keep project and storage roots outside the mount.
+- Filesystem mounts use Jetty resources and reject aliased paths, including symbolic links beneath the mount.
+  Classpath mounts also reject aliased resources.
+- Keep the mounted directory and its ancestors under the control of the application or deployment owner.
+  Use operating-system permissions to exclude untrusted writers. A writer could otherwise change the
+  filesystem between Shoostr checking the path and opening the file.
+- Later requests still use the mounted pathname after a rename. Replacing or moving the directory can change
+  later responses or produce `404`.
+- Serve untrusted executable HTML and JavaScript from a separate origin on a separate host. Keep application cookies
+  host-only. See the [browser trust guidance](../../security/csrf/#description).
 
 ## Example
 
-The same filesystem directory is mounted as ordinary files under `/files` and as a SPA under `/app`.
-Only the latter enables `index.html` as a welcome file and fallback, while its explicit `/app/version` endpoint still wins over a file with that name.
-The classpath directory `/recipe-public` is available separately under `/bundled`.
+| Prefix     | Source                               | Behavior                                                                                                                             |
+| ---------- | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `/files`   | Filesystem directory                 | Serves ordinary files.                                                                                                               |
+| `/app`     | Same filesystem directory            | Uses `index.html` for welcome files and SPA fallback. The explicit `/app/version` route takes precedence over a file with that name. |
+| `/bundled` | Classpath directory `/recipe-public` | Serves packaged assets.                                                                                                              |
 
-Mounts use HTTP validators and a `no-cache` policy, which permits storage but requires revalidation; this is not an application cache.
-See [file ranges and conditional requests](../caching/) for validator handling, or [downloads](../downloads/) to select a file directly.
-Keep source files available through transfer completion, not merely until the handler returns.
+Mounts use HTTP validators and `Cache-Control: no-cache`. HTTP caches can store the response and must revalidate
+it before reuse. See [file ranges and conditional requests](../caching/) for validator handling or
+[downloads](../downloads/) to select a file directly.
+
+Keep source files available until the transfer completes.
 
 <Code code={application} lang="java" title="StaticResourcesExample.java" />
 
 ## Test
 
-`TestServer` is the HTTP test fixture: it starts the application on an available loopback port and owns its shutdown.
+`TestServer` starts the app from `StaticResourcesExample.application(...)` on an available loopback port and
+shuts it down when the fixture closes.
 
-The test constructs both resource directories itself and adds the bundled directory to a temporary classloader.
-Its boundary checks distinguish a missing file, a rejected traversal and an external directory alias that selects the SPA shell instead of its target.
-The test uses a directory junction on Windows and a symbolic link on other systems.
+The tests create both resource directories and make the bundled files visible through a temporary classloader.
+They check media types, `HEAD` metadata, welcome files, fallback and explicit-route precedence. The path checks
+cover a missing file, rejected traversal and an external directory alias that selects the SPA shell under
+`/app`. The alias test uses a directory junction on Windows and a symbolic link on other systems.
 
 <Code code={test} lang="java" title="StaticResourcesExampleTest.java" />
 
 ## Continue
 
-Next, [Require an authenticated caller](../../security/authentication/) to protect resources whose contents are private.
+Next, [require an authenticated caller](../../security/authentication/) to protect resources whose contents are private.

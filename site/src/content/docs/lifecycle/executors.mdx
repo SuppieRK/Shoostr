@@ -1,96 +1,75 @@
 ---
-title: Select endpoint executors and compose stream admission
-description: Select endpoint execution, carry observation context, and compose stream admission with a caller-owned Resilience4j bulkhead.
+title: Select endpoint execution
+description: Choose platform threads, virtual threads or a caller-owned endpoint executor, and carry observation context across a worker handoff.
 next:
-  label: Close the application
-  link: ../shutdown/
+  label: Limit concurrent streams
+  link: ../stream-admission/
 ---
 
-import { Code } from '@astrojs/starlight/components';
+import {Code} from '@astrojs/starlight/components';
 import application from '../../../../../examples/12-lifecycle/src/main/java/io/github/suppierk/shoostr/example/lifecycle/ExecutorExample.java?raw';
 import test from '../../../../../examples/12-lifecycle/src/test/java/io/github/suppierk/shoostr/example/lifecycle/ExecutorExampleTest.java?raw';
-import bulkhead from '../../../../../examples/12-lifecycle/src/main/java/io/github/suppierk/shoostr/example/lifecycle/StreamBulkheadExample.java?raw';
-import bulkheadTest from '../../../../../examples/12-lifecycle/src/test/java/io/github/suppierk/shoostr/example/lifecycle/StreamBulkheadExampleTest.java?raw';
 
 ## Description
 
-An executor chooses where application work runs. Shoostr normally invokes ordinary handlers through Jetty's platform-thread pool, and it can use virtual threads or an endpoint-specific executor instead. The request and response remain live objects with one active application owner, even when that work moves to another thread.
+Choose where your handlers run. Use Jetty's platform threads, opt into virtual threads for the application,
+or give an endpoint its own executor.
 
-An observation tracks a request across that handoff. `RequestObservation` manages context attachment and cleanup around invocation; `RequestOutcome` is the detached summary supplied at terminal completion. This task first chooses execution and follows that context, then separately demonstrates admission for a long-lived stream.
+| Choice | How to select it | What runs there |
+| --- | --- | --- |
+| Platform threads | Use the default options. | Ordinary handlers and managed WebSocket callbacks run on Jetty's platform-thread pool. |
+| Virtual threads | Call `options.setVirtualThreads(true)` before passing the options to the `Shoostr` constructor. | Ordinary handlers and managed WebSocket callbacks run on virtual threads. |
+| Endpoint executor | Pass an `ExecutorService` to the route overload. | The matched work for that endpoint runs on the supplied executor in either application mode. |
 
-Select virtual execution with `options.setVirtualThreads(true)` before passing those options to the `Shoostr` constructor when that mode suits ordinary handlers and managed WebSocket callbacks. Jetty retains its platform pool for transport work. Native [pool configuration](../../application/native-configuration/) remains authoritative: native callbacks can override the initial selection from `Options`.
+Jetty keeps its platform-thread pool for transport work in both application modes. Native callbacks can override
+the initial choice through [Jetty pool configuration](../../application/native-configuration/).
 
-Choose the mode after measuring your request mix and downstream limits.
-Virtual threads can help when concurrent tasks wait on resources that have spare capacity, but they do not remove CPU, database connection, or service capacity limits; see [Webtide's workload analysis](https://webtide.com/if-virtual-threads-are-the-solution-what-is-the-problem/).
-Jetty's [threading guide](https://jetty.org/docs/jetty/12.1/programming-guide/arch/threads.html) explains native pool sizing and virtual execution.
+Measure your workload before changing execution modes. Virtual threads can help when tasks spend time waiting on
+resources with capacity to spare. CPU, database connections and downstream services still have their own limits.
+See [Webtide's workload analysis](https://webtide.com/if-virtual-threads-are-the-solution-what-is-the-problem/) and
+[Jetty's threading guide](https://jetty.org/docs/jetty/12.1/programming-guide/arch/threads.html).
 
-An explicit endpoint `ExecutorService` selects that endpoint's matched work independently of the application mode.
-Pass that executor to the route overload when the matched lifecycle needs a separate worker pool; headers and lookup happen before handoff, while matched hooks, admission and the handler run on its worker.
-The executor must dispatch asynchronously rather than running work on the submitting thread, and remains owned by its caller.
+With an endpoint executor, Shoostr runs request-header hooks and looks up the route before submitting the work.
+Matched hooks, admission and the handler run on the selected worker. Use an executor that dispatches asynchronously
+or explicitly rejects a submission. Shoostr rejects execution on the submitting thread. Keep the executor available
+until the application has closed and its running handlers have finished.
 
-Shoostr transfers exclusive request ownership to the selected worker, not permission to share `Request` or `Response` across arbitrary tasks.
-Do not retain either object for concurrent or later use, and do not assume arbitrary thread-local values follow the handoff.
-For instrumentation context, an observation can explicitly reattach its captured value through `RequestObservation.attach()` and restore each scope on the thread that opened it.
+A handoff transfers exclusive access to the live request and response. A `RequestObservation` can carry instrumentation
+context across that handoff and later receive a detached `RequestOutcome` at terminal completion.
+
+- Access `Request` and `Response` only on their current owner thread during request handling. Capture detached values
+  for work outside that scope.
+- Each thread keeps its own thread-local values. Use `RequestObservation.attach()` to install captured context on the
+  worker. Shoostr closes the attachment on that same thread so it can restore the previous value.
 
 ## Example
 
-`/default` reports whether its handler uses a virtual thread, while `/selected` runs on the supplied pool in either mode and reads the attached request identifier.
-The observation captures only a string and the context carrier, restoring the original admission scope before handoff and the worker's previous value after invocation.
-The identifier is caller-supplied diagnostic data, not a verified identity.
+`/default` reports whether its handler runs on a virtual thread. `/selected` uses the supplied executor in both
+application modes and reads the request ID from the attached context. The example treats the client-supplied ID
+as diagnostic data.
 
-A rejected submission reattaches observation context on the admission thread for error rendering; the example maps it to 503 without invoking the endpoint.
-Observation `close()` restores an invocation scope rather than marking the request complete, and `complete(...)` receives the terminal summary separately.
-Application closure does not shut down this pool or interrupt a running borrowed worker; coordinate outstanding tasks before releasing resources they still need.
+- If the executor rejects a submission, Shoostr reattaches observation context on the submitting thread. The example
+  returns `503` with the request ID, and the endpoint handler is skipped.
+- Observation `close()` restores the original invocation context. `complete(...)` receives the terminal result
+  after application cleanup and transport termination.
+- A running worker on the caller's pool can outlive application closure. Coordinate outstanding tasks before
+  releasing resources they still use. See [application shutdown](../shutdown/).
 
 <Code code={application} lang="java" title="ExecutorExample.java" />
 
 ## Test
 
-`TestServer` is the HTTP test fixture: it starts the application on an available loopback port and owns its shutdown.
-
-The tests exercise default platform execution, explicit virtual opt-in, a named platform worker with an existing context value, pool reuse after application closure, and rejection by a stopped executor.
-Terminal outcomes verify the rejection is an application failure, while a subsequent task on the same worker checks that its previous context was restored.
+`TestServer` starts the application from `ExecutorExample.application(...)` on an available loopback port
+and owns its shutdown. The tests check platform and virtual execution, then verify that `/selected` runs on
+the named worker in both modes. A second task checks that the worker's previous context was restored,
+and the caller can submit work after the application closes.
+With the pool stopped, `/selected` returns `503` with the request ID and the terminal outcome records the rejection
+as an application failure.
 
 <Code code={test} lang="java" title="ExecutorExampleTest.java" />
 
-## Compose stream admission
-
-A long-lived handler occupies its task while waiting for events or writing output.
-Virtual execution lets idle tasks release their carriers; application admission
-still controls how many HTTP exchanges remain active.
-Add `resilience4j-bulkhead` to use an application-configured semaphore bulkhead
-without introducing another worker pool or Shoostr policy object.
-
-This public `/events` endpoint sends `ready`, waits for its application producer,
-then sends the producer's text. `/health` uses the same HTTP server and stays outside
-the stream bulkhead. Select `maxConcurrentCalls` for the deployment and set
-`maxWaitDuration(Duration.ZERO)` for immediate rejection. The example maps a full
-bulkhead to HTTP 503 before starting SSE; this mapping is application policy.
-
-The group callback receives `Lifecycle`, Shoostr's built-in scope-configuration
-object. Its `observe(...)` method attaches the observation that manages
-admission. The observation retains only a detached acquisition flag. Its terminal `complete(...)` releases the permit after both
-application cleanup and transport termination, including the framework's final write.
-Observation `close()` and handler return happen earlier and cannot release this
-HTTP-lifetime permit. A rejected request acquired no permit and releases none.
-
-The caller owns the bulkhead and producer. The producer runs on the HTTP owner and
-must return or cooperate with interruption; admission does not forcibly stop Java work.
-A disconnected idle client releases capacity only after the handler/transport observes
-termination. Coordinate producers during shutdown. This example limits its event route,
-not MCP native callbacks, all application traffic or a distributed deployment.
-
-<Code code={bulkhead} lang="java" title="StreamBulkheadExample.java" />
-
-### Test stream admission
-
-The tests hold more streams open than the configured native platform-worker budget,
-verify prompt health responses and excess-stream rejection, then release producers
-and reuse capacity. Additional checks cover terminal output, failure and shutdown.
-These deadlines are test bounds, not a production service-level guarantee.
-
-<Code code={bulkheadTest} lang="java" title="StreamBulkheadExampleTest.java" />
-
 ## Continue
 
-Next, [Close the application](../shutdown/) to coordinate draining with resource ownership.
+<span id="compose-stream-admission"></span>
+
+Next, [limit concurrent streams](../stream-admission/) to control how many long-lived exchanges stay open.

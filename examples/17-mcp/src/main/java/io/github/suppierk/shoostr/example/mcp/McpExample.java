@@ -55,7 +55,7 @@ public final class McpExample {
     return app.routes(
         routes -> {
           routes
-              .get("/health", (ignored, response) -> response.text("healthy"))
+              .get("/health", (request, response) -> response.text("healthy"))
               // The extension contributes its protocol handlers beneath Shoostr's /mcp route group.
               .path("/mcp", mcp::routes);
         });

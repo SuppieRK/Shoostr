@@ -15,37 +15,36 @@ import test from '../../../../../examples/03-routing/src/test/java/io/github/sup
 
 ## Description
 
-A route associates an HTTP method and path with a handler. The handler is the Java callback that reads the request and prepares its response. The same path can bind different handlers for different methods.
+One path can serve several HTTP methods. Register each method with a handler, the Java callback that prepares the response. In this example, `GET /notes` returns text and `POST /notes` returns `201`.
 
-This task registers those bindings before startup and checks both successful matches and router-generated failures. `HttpMethods` names method tokens when the generic registration API is needed.
+If no route matches the path, Shoostr returns `404`. If the path matches but none of its routes handles the requested method, Shoostr returns `405` with an `Allow` header.
 
-Bind each supported method to its own handler. This application registers the seven convenience methods at `/notes`, then uses `route(...)` with an explicit method token for `PROPFIND` at `/properties`.
+For ordinary routes, `Allow` lists the registered methods from every complete [path match](../patterns/), including less specific matches.
 
-An unknown path receives `404`, while a matching path without the requested method receives `405` with an `Allow` header.
-That header includes registered methods from every matching path pattern, not just the most specific one; see [path matching](../patterns/) for overlapping routes.
 Customize the generated response with a [status renderer](../../errors/statuses/).
 
-Ordinary GET routes do not provide implicit HEAD or OPTIONS handlers, so `/read-only` rejects both methods.
-Static-resource HEAD handling and admitted CORS preflight have separate behavior.
-Register WebSocket handshakes with the [WebSocket APIs](../../websockets/managed/); their [HTTP/2 extended CONNECT path](../../websockets/native/) is separate from ordinary CONNECT routing.
+An ordinary `GET` registration handles only `GET`. In the example, `/read-only` returns `405` for both `HEAD` and `OPTIONS`. Register those methods explicitly where you need them.
+
+[Static resource mounts](../../resources/static/) handle `HEAD` for existing files. A [CORS policy](../../security/cors/) can answer an allowed preflight directly with `204`.
+
+Register WebSocket handshakes with the [WebSocket APIs](../../websockets/managed/). Shoostr handles [HTTP/2 extended `CONNECT` for WebSockets](../../websockets/native/) separately from ordinary `CONNECT` routing.
 
 ## Example
 
-[Static resource mounts](../../resources/static/) handle HEAD separately from ordinary registered routes.
+The example registers seven methods at `/notes` before startup. The `HEAD` handler sets `X-Notes-Mode` and returns an empty body. The `OPTIONS` handler returns `204` and sets `Allow` to the methods registered at `/notes`.
 
-The HEAD handler returns metadata without a body, and the OPTIONS handler explicitly advertises the methods supported at `/notes`.
-The generic registration uses a recognized `HttpMethods` value; string overloads accept recognized, case-sensitive wire names rather than arbitrary custom verbs.
+Use `route(...)` for methods without a convenience helper. The example passes the method token `HttpMethods.PROPFIND` to register `/properties`. The string overload accepts recognized, case-sensitive method names. It accepts `"PROPFIND"` and rejects `"get"` and `"FETCH"` with `IllegalArgumentException` during registration.
 
 <Code code={application} lang="java" title="MethodsExample.java" />
 
 ## Test
 
-`TestServer` is the HTTP test fixture: it starts the application on an available loopback port and owns its shutdown.
+The HTTP tests create the app with `MethodsExample.application()`. `TestServer` starts it on an available loopback port and shuts it down when the fixture closes.
 
-The tests distinguish explicit HEAD and OPTIONS handlers from generated `405` responses, checking `Allow` membership without depending on header ordering.
+The tests exercise each registered method, check explicit `HEAD` and `OPTIONS` responses, and distinguish an unknown path (`404`) from an unsupported method (`405`). When `Allow` lists several methods, the tests compare them as a set so header order does not affect the result. Separate registration tests accept `"PROPFIND"` and reject `"get"` and `"FETCH"`.
 
 <Code code={test} lang="java" title="MethodsExampleTest.java" />
 
 ## Continue
 
-Next, [Match paths and capture parameters](../patterns/) to accept values in the URL.
+Next, [match paths and capture parameters](../patterns/) to accept values in the URL.

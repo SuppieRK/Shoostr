@@ -6,51 +6,66 @@ next:
   link: ../sse-objects/
 ---
 
-import { Code } from '@astrojs/starlight/components';
+import {Code} from '@astrojs/starlight/components';
 import application from '../../../../../examples/10-streaming/sse/src/main/java/io/github/suppierk/shoostr/example/sse/SseFeedExample.java?raw';
 import test from '../../../../../examples/10-streaming/sse/src/test/java/io/github/suppierk/shoostr/example/sse/SseFeedExampleTest.java?raw';
 
 ## Description
 
-Server-sent events (SSE) keep an HTTP response open to send text events to a client. An event stream is the response writer for those frames. `SseEvent` describes event data and optional names, IDs and retry hints.
+Server-sent events (SSE) let the server send text events over an open HTTP response. An `SseEvent` carries data
+and can include a name, an ID and a retry hint. This example sends event frames and shows how to resume a feed
+from the cursor a client sends when it reconnects.
 
-The handler reads the reconnect cursor from its incoming `Request`; `BadRequestException` rejects an invalid cursor with `400` before the stream starts.
+1. Register the GET route with `routes.sse(...)`.
+2. Validate the request, then call `startEventStream()` to commit the response.
+3. Call `send(String)` for data alone or `send(SseEvent)` to include the optional fields.
+   Each line of multiline data becomes a separate `data:` field in the same event.
 
-This task first sends frames, then demonstrates how an application can resume its own feed from a supplied cursor. Reconnection is a client behavior; replay requires application-held history and a cursor policy. Validate an unacceptable cursor before starting and committing the event stream.
+Payloads are UTF-8 text. To encode Java objects with a codec, use [object events](../sse-objects/).
 
-Register the GET event route with `routes.sse(...)`. Validate input before committing it with `startEventStream()`. Use `send(String)` for data alone or `SseEvent` for names, IDs and retry hints; multiline data is split into frame fields. Payloads are UTF-8 text rather than automatic JSON. Use [object events](../sse-objects/) when a codec should encode the payload.
+The handler chooses when to call `comment(...)` and `heartbeat()`. Each call flushes its frame, and the client
+ignores both when dispatching events. Keep the handler active to continue writing. Shoostr finishes the stream
+when the handler returns. See the [streaming lifetime and backpressure rules](../output/).
 
-Comments and heartbeats do not dispatch data events, and each call sends its frame immediately.
-They are explicit writes rather than an automatic timer: the handler must remain active for further output, and returning finishes this finite stream.
-The [streaming lifetime and backpressure rules](../output/) also apply to event streams.
-A handler active for the feed's lifetime occupies its selected task; use
-[execution selection and application-owned bulkheads](../../lifecycle/executors/#compose-stream-admission)
-for long-lived feeds.
+An open feed occupies its handler task. For long-lived feeds, choose an [execution mode](../../lifecycle/executors/)
+and consider a [limit on concurrent streams](../../lifecycle/stream-admission/).
 
-Event names and IDs must fit on one line without NUL characters, while retry durations must be nonnegative and are sent in milliseconds.
-The model permits text IDs; the integer cursor used below is this application's replay policy, not a framework restriction.
-Shoostr does not retain event history or replay it automatically.
+- Keep event names and IDs on one line and omit NUL characters.
+- Set a nonnegative retry duration. Shoostr sends it in milliseconds.
+- IDs are text. The example interprets them as integer positions in its feed.
+
+When a client reconnects, read its `Last-Event-ID` header from the `Request`. Use it to find the next entry
+in the history your application keeps. Your application decides which cursors to accept and what to replay.
 
 ## Example
 
-The `/events` endpoint demonstrates data, comments, a heartbeat and named events with IDs and a retry hint.
-The `/replay` endpoint instead uses a fixed three-entry feed: it validates `Last-Event-ID` before opening the stream and sends only entries after that cursor.
-An absent cursor starts at the beginning; invalid cursors receive `400`, while cursor `3` receives `204` without opening a stream, telling [EventSource](https://html.spec.whatwg.org/multipage/server-sent-events.html) to stop reconnecting.
+- `/events` sends data, a comment, a heartbeat and named events with IDs and a retry hint. The handler sends
+  the same demonstration frames on each request, so a reconnecting browser can receive them again.
+- `/replay` uses `Last-Event-ID` as a cursor into a fixed three-entry feed.
 
-This feed is not durable storage and does not promise exactly-once delivery.
-The framing-only `/events` endpoint does not implement replay, so a reconnecting browser can receive its demonstration events again.
-Once a stream is committed, a transport failure aborts it rather than allowing a replacement HTTP error; see [exception recovery](../../errors/exceptions/) for that boundary.
+| Cursor for `/replay` | Result |
+| --- | --- |
+| Absent or parses as `0` | Sends all three entries. |
+| Parses as `1` or `2` | Sends only the entries after that ID. |
+| Parses as `3`, the final entry | Returns `204 No Content` without opening an event stream. |
+| Fails to parse as an integer or falls outside `0` through `3` | Returns `400 Bad Request`. The handler throws `BadRequestException` before opening the stream. |
+
+The `204` tells `EventSource` to stop reconnecting.
+See the [HTML Standard](https://html.spec.whatwg.org/multipage/server-sent-events.html).
+Durable history and duplicate handling belong to the application.
+After commitment, a transport failure aborts the stream. See [exception recovery](../../errors/exceptions/).
 
 <Code code={application} lang="java" title="SseFeedExample.java" />
 
 ## Test
 
-`TestServer` is the HTTP test fixture: it starts the application on an available loopback port and owns its shutdown.
-
-The tests check complete wire frames and replay from a supplied cursor, then distinguish a rejected cursor from a completed feed that must not start another event stream.
+`TestServer` starts the application from `SseFeedExample.application()` on an available loopback port
+and owns its shutdown. The tests compare complete wire frames, check that a missing cursor starts at the first
+entry, and verify that cursor `1` resumes at entry `2`. They also check for `400` on invalid input and a
+`204` without a body or `Content-Type` after the last entry.
 
 <Code code={test} lang="java" title="SseFeedExampleTest.java" />
 
 ## Continue
 
-Next, [Send object events](../sse-objects/) to apply a codec to event payloads.
+Next, [send object events](../sse-objects/) to apply a codec to event payloads.

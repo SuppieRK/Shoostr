@@ -2,45 +2,64 @@
 title: Read request cookie and header values
 description: Read individual and repeated request headers or cookies while preserving their different naming and decoding rules.
 next:
-  label: Set response cookies
+  label: Set or delete a response cookie
   link: ../../responses/cookies/
 ---
 
-import { Code } from '@astrojs/starlight/components';
+import {Code} from '@astrojs/starlight/components';
 import application from '../../../../../examples/04-request/src/main/java/io/github/suppierk/shoostr/example/request/HeadersCookiesExample.java?raw';
 import test from '../../../../../examples/04-request/src/test/java/io/github/suppierk/shoostr/example/request/HeadersCookiesExampleTest.java?raw';
 
 ## Description
 
-Headers carry metadata about an HTTP request. Cookies are client-supplied values carried in its Cookie header, commonly used to return state established by a previous response. Neither value is trusted identity by itself.
+Header names are case-insensitive. Cookie names are case-sensitive, and Shoostr reads cookie values without URL
+decoding. Clients send cookies in the `Cookie` header. Before trusting a request's identity, use
+[authentication](../../security/authentication/) to verify credentials from a header or cookie.
 
-The handler's `Request` provides accessors for one value, repeated values or the full collection. This task reads both forms and makes their naming and repetition rules visible in the response.
+The preferences example reads headers and cookies from the handler's `Request` and shows what each accessor returns.
 
-Choose `cookie(...)` or `header(...)` for a first value, `cookies(...)` or `headers(...)` for repeated values, and `cookieMap()` or `headerMap()` for the full collection. Header lookup is case-insensitive, including map access. Cookie names remain case-sensitive, so `theme` and `Theme` are distinct.
+| Source | First value by name | All values for one name, in arrival order | All entries   |
+|--------|---------------------|-------------------------------------------|---------------|
+| Header | `header(...)`       | `headers(...)`                            | `headerMap()` |
+| Cookie | `cookie(...)`       | `cookies(...)`                            | `cookieMap()` |
 
-Repeated header fields retain their order without splitting comma-separated content.
-Cookie values are not URL-decoded, so `a+b%2F` remains unchanged.
-Duplicate cookie names remain visible; reject ambiguous duplicates when a value affects security rather than silently trusting the first one.
+Case-insensitive header lookup also applies to `headerMap()`. Repeated header field lines keep their order, and a
+comma within a field stays part of the value. For example, `first,second` stays a single value.
+
+The cookie accessors treat `theme` and `Theme` as separate names. A value like `a+b%2F` keeps that spelling.
+Use `cookies(...)` or `cookieMap()` to see duplicate values for a name.
+
+Reject ambiguous duplicates when a cookie value affects a security decision.
 
 ## Example
 
-The preferences endpoint shows all three accessor forms for `X-Label` and the nonsecurity `theme` preference.
-It only reads incoming cookies; [setting and deleting response cookies](../../responses/cookies/) is a separate operation.
+The `/preferences` endpoint shows all three accessor forms for `X-Label` and the non-security `theme` preference.
+It uses `x-LaBeL` to look up `X-Label` in the header map. Use the [response cookie API](../../responses/cookies/) to
+set or delete cookies.
 
-Header collections capture construction-time fields after native customization, and cookie parsing follows the configured transport policy.
-The default cookie policy can discard malformed fragments or unquote values, so do not rely on every malformed cookie being rejected.
-Retain a [snapshot](../state/) rather than the live request when values are needed after handling ends.
+Header collections capture construction-time fields after native customization,
+and cookie parsing follows the configured transport policy.
+
+The default cookie policy can discard malformed fragments or unquote values,
+so do not rely on every malformed cookie being rejected.
+Retain a [snapshot](../state/) if you need the values after request handling ends.
 
 <Code code={application} lang="java" title="HeadersCookiesExample.java" />
 
 ## Test
 
-`TestServer` is the HTTP test fixture: it starts the application on an available loopback port and owns its shutdown.
+The HTTP tests create the app with `HeadersCookiesExample.application()`. `TestServer` starts it on an available
+loopback port and shuts it down when the fixture closes.
 
-The tests distinguish repeated field lines from comma-separated text, compare header and cookie name handling, and verify that returned collections cannot be changed.
+The tests distinguish empty header and cookie values from missing ones. They verify case-insensitive header lookup,
+including map access, and check that repeated field lines keep their order and comma-separated text stays in one
+value. The cookie checks cover exact name matching, duplicate names, and percent-encoded text.
+
+Both maps and their value lists are immutable. The tests also check the lists returned by `headers(...)` and
+`cookies(...)`.
 
 <Code code={test} lang="java" title="HeadersCookiesExampleTest.java" />
 
 ## Continue
 
-Next, [Set response cookies](../../responses/cookies/) to send state that a client can return later.
+Next, learn to [set or delete a response cookie](../../responses/cookies/) to manage state a client can return later.

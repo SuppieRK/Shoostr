@@ -6,44 +6,51 @@ next:
   link: ../caching/
 ---
 
-import { Code } from '@astrojs/starlight/components';
+import {Code} from '@astrojs/starlight/components';
 import application from '../../../../../examples/09-resources/src/main/java/io/github/suppierk/shoostr/example/resources/DownloadExample.java?raw';
 import test from '../../../../../examples/09-resources/src/test/java/io/github/suppierk/shoostr/example/resources/DownloadExampleTest.java?raw';
 
 ## Description
 
-A file response transfers a file selected by application code. An attachment adds a suggested download filename through HTTP metadata; it does not change or encode the file's contents.
+Send an application-selected file without loading the whole file into memory. Use `response.file(...)` for
+inline output or `response.attachment(...)` to suggest a download filename in `Content-Disposition`.
+Both send the file's existing bytes.
 
-This task builds a file-serving `Handler`, the Java callback that receives the request and response, and registers it as an endpoint. The application selects both the file and its media type before transfer begins.
+- Supply a media type that describes the file, including its charset when applicable.
+- Shoostr sends the suggested attachment name in two forms, an ASCII `filename` and a UTF-8 `filename*`.
+- Use a nonempty attachment name. Shoostr rejects ASCII control characters and path separators.
 
-Choose `response.file(...)` for a selected file, adding `attachment(...)` when the client should receive a download filename in `Content-Disposition`. Supply the media type; these methods neither infer it from the filename nor encode the contents. An attachment name has an ASCII fallback and a UTF-8 extended form. Control characters and path separators are rejected.
-
-Select the path in application code rather than passing an unchecked request parameter to the filesystem.
-File output supports readable regular files on the default filesystem and is separate from finite bodies and streaming: do not combine those output modes on one response.
-For a directory mount instead, use [static resources](../static/).
+Select the path in application code. Validate any request input that influences the path before passing it
+to the filesystem. File output works with readable regular files on the default filesystem. Choose one
+output mode for the response, since file transfers, finite bodies and streaming are separate modes.
+Use [static resources](../static/) to mount a directory.
 
 ## Example
 
-The `/file` endpoint sends a CSV report without an attachment header, and `/download` presents the same bytes as `résumé.csv`.
-Both endpoints register `HEAD` explicitly so clients can inspect the representation without receiving its body.
+The `/file` endpoint sends a CSV report inline. The `/download` endpoint presents the same bytes as
+`résumé.csv`. Both endpoints register `HEAD` explicitly so clients can inspect the representation headers alone.
 
-Shoostr stages the transfer during the handler and sends the file afterward rather than copying it into the finite response buffer.
-Keep the file readable and its representation stable until terminal transfer completion; do not delete it in a handler's `finally` block.
-A successful staging call does not guarantee that the later transfer succeeds, and [error replacement](../../errors/exceptions/) is no longer possible after commitment.
-The same file responses support [ranges and conditional requests](../caching/).
+Keep the file readable and its representation stable until the transfer completes. Shoostr stages the
+transfer during the handler and sends the file after the handler returns. A handler's `finally` block
+runs before that transfer, so wait until transfer completion to delete a temporary file.
+
+A staged transfer can still fail. [Error replacement](../../errors/exceptions/) is possible only before
+the response is committed.
 
 <Code code={application} lang="java" title="DownloadExample.java" />
 
 ## Test
 
-`TestServer` is the HTTP test fixture: it starts the application on an available loopback port and owns its shutdown.
+`TestServer` starts the app from `DownloadExample.application(report)` on an available loopback port and
+shuts it down when the fixture closes.
 
-The download test saves the HTTP response to a separate file with Java's `BodyHandlers.ofFile(...)` and verifies its contents after the server closes.
-The remaining checks distinguish inline output from an attachment, verify the two filename forms and exercise both explicit HEAD routes.
-The report remains available after the application closes because the application does not own its storage.
+The download test saves the HTTP response to a separate file with Java's `BodyHandlers.ofFile(...)`
+and checks both filename forms. It verifies the saved copy after the server closes. The other checks
+distinguish inline output from an attachment and exercise both explicit `HEAD` routes. They also read the
+original report after shutdown, confirming that its storage belongs to the caller.
 
 <Code code={test} lang="java" title="DownloadExampleTest.java" />
 
 ## Continue
 
-Next, [Handle conditional file requests](../caching/) to support validators and a selected byte range.
+Next, [handle conditional file requests](../caching/) to support validators and a selected byte range.

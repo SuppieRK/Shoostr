@@ -1,65 +1,99 @@
 ---
 title: Protect MCP identity, permissions and sessions
-description: Authenticate MCP requests, bind sessions to verified user and client identities, enforce current scopes and exact Origin admission, and bound session capacity, idle lifetime and token expiry.
+description: Authenticate MCP requests, enforce scopes and allowed origins, bind sessions to verified callers, and set capacity, idle and credential expiry limits.
 next:
   label: Request MCP client input
   link: ../interactions/
 ---
 
-import { Code } from '@astrojs/starlight/components';
+import {Code} from '@astrojs/starlight/components';
 import application from '../../../../../examples/17-mcp/src/main/java/io/github/suppierk/shoostr/example/mcp/McpSecurityExample.java?raw';
 import test from '../../../../../examples/17-mcp/src/test/java/io/github/suppierk/shoostr/example/mcp/McpSecurityExampleTest.java?raw';
 
 ## Description
 
-A protected MCP endpoint must establish who is calling before accepting session work. A session identifier names protocol state; it is not a credential. Authentication verifies credentials, while authorization decides which operations that verified caller may perform.
+Verify the caller on every request to a protected MCP endpoint. A session ID identifies protocol state.
+Authentication verifies the caller's credentials, and authorization checks which operations that identity may perform.
 
-Use the optional `shoostr-mcp` library for this integration.
+:::note[Libraries required]
+- `io.github.suppierk:shoostr-mcp` provides Shoostr's MCP server and Streamable HTTP integration.
 
-Here an `AuthenticationExtension` is the request authenticator registered with Shoostr. The mounted `Mcp` provider supplies the SDK server and transport. `McpHttpSecurity` connects admission to a detached `McpIdentity`, and `McpSessionLimits` bounds protocol-session allocation.
+See [Maven and Gradle installation](../../start/libraries/) for published Shoostr coordinates.
+:::
 
-The authenticator receives the incoming `Request` and outgoing `Response`. It throws `AuthenticationRequiredException` to request credentials with a `401` challenge when the supplied token is missing or invalid.
+This example adds identity and session policy to the [MCP transport](../server/).
 
-This task connects those roles before handling messages. It builds on the basic transport model, but defines the identity and session policy needed by its own example.
+| Role | Provided by |
+| --- | --- |
+| Authenticate HTTP requests | An `AuthenticationExtension` selected on the MCP route group. |
+| Mount the SDK server over HTTP | The `Mcp` provider. |
+| Admit origins, extract identity and authorize messages | `McpHttpSecurity`, which carries a detached `McpIdentity` into message processing. |
+| Limit session allocation and idle lifetime | `McpSessionLimits`. |
 
-Check credentials on every POST, GET and DELETE, and bind the resulting MCP session to that verified identity. `McpHttpSecurity` supplies exact Origin admission, detached identity and a policy before message dispatch. The group callback receives `Lifecycle`, the built-in scope-configuration object. Select the managed authenticator there with `withExtension(authentication)` so identity extraction receives its authenticated principal. An allowed Origin or a session ID does not authenticate a caller.
+Check credentials on every POST, GET and DELETE and bind the session to the verified owner.
 
-This self-contained example uses fixed, development-only Bearer credentials with expiry stored in a local registry.
-It does not implement an OAuth provider, cryptographic token verification or external discovery.
-Before using private data, replace that lookup with verification of the token's issuer, intended audience, validity and permissions, following the [MCP authorization specification](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization) and [security guidance](https://modelcontextprotocol.io/docs/2025-11-25/tutorials/security/security_best_practices).
-The HTTPS metadata URL in the code is illustrative; the example does not host that document or an authorization service.
+1. Implement the authenticator. Its `handle(request, response)` method receives the live `Request` and `Response`.
+   For missing or invalid credentials, throw `AuthenticationRequiredException` to send a `401` with `WWW-Authenticate`.
+2. Select it with `lifecycle.withExtension(authentication)` on the `Lifecycle` supplied to the group callback.
+3. Configure `McpHttpSecurity` with the exact allowed origins, an identity extractor that reads the authenticated
+   principal, and a policy that checks incoming messages before SDK dispatch.
+
+The example serves only the MCP endpoint. It uses fixed development Bearer credentials and a local registry in place
+of cryptographic token verification. The HTTPS metadata URL is a placeholder for discovery.
+
+Before using private data, verify each token's issuer, intended audience, validity and permissions. For OAuth
+deployment, configure discovery metadata and an authorization server that clients can reach.
+[MCP authorization specification](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization) ·
+[MCP security guidance](https://modelcontextprotocol.io/docs/2025-11-25/tutorials/security/security_best_practices)
 
 ## Example
 
-The registry creates each credential's actual expiry once, rather than granting a fresh lifetime on every request.
-It stores immutable claims in the principal and native transport context, without retaining a Shoostr request, response or mutable provider profile.
-The session owner encodes the subject and client separately, keeping scopes and expiry outside the key so refreshed credentials can use the same session.
-An application that accepts multiple identity issuers must distinguish the issuer in that key too.
+The credential registry sets each token's expiry once when the application is created.
 
-Authentication requires `mcp:access` on every mounted transport method, including GET and DELETE, while the message policy checks incoming JSON-RPC messages before SDK dispatch and requires `tools:read` for tool discovery and calls.
-Insufficient scopes produce HTTP 403 with a scope and resource-metadata challenge; these HTTP checks are separate from native tool errors returned by a callback.
-Origin admission runs before authentication: requests without Origin are allowed for non-browser clients, and a present Origin must match the single configured browser origin.
+- The authenticator puts immutable claims in the principal. The identity extractor passes those claims in detached
+  transport context so the SDK callback can read them during a tool call.
+- The session owner key encodes the subject and client separately. It stays the same when scopes or expiry change,
+  so a refreshed credential for that owner can use the session. If you accept multiple issuers, include the verified
+  issuer in the key.
 
-The deliberately small limits allow four sessions overall, two per owner and ten seconds of quiescence; they demonstrate policy rather than recommend production capacity.
-Initialization and native cleanup both count against capacity, so an expired session can become unavailable before its reservation is released.
-The short-lived credential ends an open stream at its fixed expiry without deleting the owner's session; fresh credentials for that owner can still use it.
-Idle expiry and explicit session deletion instead end session ownership, with cleanup releasing capacity afterward.
+Origin admission and scope checks happen before the SDK handles a message.
+
+- Shoostr checks `Origin` before authentication. Requests without that header pass origin admission. A present
+  value must match `https://client.example` in this example.
+- Every mounted transport method requires `mcp:access`. The message policy also checks the current token's
+  `tools:read` scope for tool discovery and calls.
+- Insufficient scope returns HTTP `403` with a `WWW-Authenticate` challenge naming the required scope and metadata
+  URL. Native tool errors come from callbacks after dispatch.
+
+The example allows four session allocations overall, two per owner, and a ten-second idle timeout. These small
+limits make capacity and expiry visible in the tests.
+
+- Initialization and native cleanup count against capacity. An expired session can become unavailable before
+  cleanup releases its reservation.
+- An open stream ends when its credential reaches its fixed expiry. Fresh credentials for the same owner can
+  still use the session.
+- Idle expiry and explicit deletion end the session. Capacity becomes available when native cleanup finishes.
+
+Session limits govern native session allocation. Set limits for callback work separately in your application.
 
 <Code code={application} lang="java" title="McpSecurityExample.java" />
 
-Session limits govern native session allocation. Compose [application work limits](../server/#compose-blocking-tools-with-resilience4j) independently through existing libraries.
-
 ## Test
 
-`TestServer` is the HTTP test fixture: it starts the application on an available loopback port and owns its shutdown.
+The tests start `McpSecurityExample.application()` with `TestServer` on an available loopback port. The fixture owns
+application shutdown.
 
-The SDK client invokes a tool using detached verified claims, while the HTTP checks cover credentials, Origin admission, current scopes, credential refresh and user/client isolation.
-The quota checks begin at capacity and use Awaitility (`org.awaitility:awaitility`) to verify recovery after deletion or bounded idle cleanup.
-The credential-expiry check uses fresh credentials to keep the session active while the original stream expires, proving that fresh credentials do not extend that stream's deadline.
-A separate idle-expiry check leaves its session quiet and waits for the stream to close.
+- The native SDK client calls the `identity` tool and receives the subject and client from the detached claims.
+- HTTP checks cover invalid and duplicate credentials, exact origin admission, current scopes, and credential
+  refresh. A different subject or client cannot use or delete the session.
+- The quota test fills the per-owner and total limits, then verifies that deletion makes room for another session.
+- The credential-expiry test keeps the session active with a valid credential and waits for the original stream
+  to end at its own deadline. The session remains usable with the valid credential.
+- The idle-expiry test leaves a session quiet until its stream closes, then uses Awaitility
+  (`org.awaitility:awaitility`) to wait for cleanup to release the reservation.
 
 <Code code={test} lang="java" title="McpSecurityExampleTest.java" />
 
 ## Continue
 
-Next, [Request MCP client input](../interactions/) to use negotiated client capabilities.
+Next, [request MCP client input](../interactions/) to use negotiated client capabilities.

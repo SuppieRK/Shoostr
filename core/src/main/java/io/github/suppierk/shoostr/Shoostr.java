@@ -1024,7 +1024,8 @@ public final class Shoostr {
    * @param <E> exception family
    * @return this application
    * @throws IllegalStateException if startup has begun or the application is closed
-   * @throws IllegalArgumentException if this exact class already has a registered callback
+   * @throws IllegalArgumentException if this exact class already has a registered callback or the
+   *     callback requires a typed registration view
    * @throws NullPointerException if type or handler is null
    */
   public <E extends Exception> Shoostr exception(
@@ -1038,6 +1039,11 @@ public final class Shoostr {
 
           Objects.requireNonNull(type);
           Objects.requireNonNull(handler);
+          if (handler instanceof ExceptionHandler.Typed<?>) {
+            throw new IllegalArgumentException(
+                "Register typed exception handlers through Routes.Typed");
+          }
+
           if (exceptionHandlers.containsKey(type)) {
             throw new IllegalArgumentException(
                 "An exception handler is already registered for " + type.getName());

@@ -49,12 +49,12 @@ public final class WebSocketExample {
               routes
                   .exception(
                       BadRequestException.class,
-                      (ignored, ignoredRequest, response) ->
+                      (exception, request, response) ->
                           response.status(HttpStatusCodes.BAD_REQUEST.value()).text("Invalid room"))
                   // Open this plain-text page before using the same-origin browser-console recipes.
                   .get(
                       "/",
-                      (ignoredRequest, response) ->
+                      (request, response) ->
                           response.text("WebSocket endpoints: /echo, /rooms/{room}, /numbers"))
                   // WebSocketConnection comes from core: send waits for transport completion, and
                   // each connection's callbacks run sequentially using the application's execution
@@ -69,7 +69,7 @@ public final class WebSocketExample {
                             // it.
                             .onOpen(connection -> LOGGER.debug("Opened {}", connection.path()))
                             .onClose(
-                                (connection, code, ignoredCloseReason) ->
+                                (connection, code, closeReason) ->
                                     LOGGER.debug("Closed {} ({})", connection.path(), code))
                             .onError(
                                 (connection, failure) ->
@@ -85,7 +85,7 @@ public final class WebSocketExample {
                         // Throw during beforeUpgrade to use ordinary HTTP exception handling.
                         websocket
                             .beforeUpgrade(
-                                (request, ignoredResponse) -> {
+                                (request, response) -> {
                                   if (request.pathParam("room").orElseThrow().length() > 32) {
                                     throw new BadRequestException(
                                         "Room name exceeds this example's limit");
@@ -126,7 +126,7 @@ public final class WebSocketExample {
                             // Jetty's StatusCode constants are WebSocket close codes, not HTTP
                             // statuses.
                             .onBinary(
-                                (connection, ignoredByteValues) ->
+                                (connection, bytes) ->
                                     connection.close(
                                         StatusCode.BAD_DATA, "Text messages required"));
                       });
@@ -143,7 +143,7 @@ public final class WebSocketExample {
         "/session-echo",
         websocket -> {
           websocket
-              .beforeUpgrade((request, ignoredResponse) -> requireSessionOrigin(request))
+              .beforeUpgrade((request, response) -> requireSessionOrigin(request))
               .onText(WebSocketConnection::send);
         });
   }

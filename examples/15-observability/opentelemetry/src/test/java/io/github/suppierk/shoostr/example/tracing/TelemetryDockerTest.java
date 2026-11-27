@@ -59,7 +59,7 @@ class TelemetryDockerTest {
       compose(false, "up", "--no-build", "--pull", "never", "-d");
       for (var uri :
           List.of(
-              APP.resolve("/hello/Ready"), JAEGER.resolve("/"), GRAFANA.resolve("/api/health"))) {
+              helloUri("Ready"), JAEGER.resolve("/"), GRAFANA.resolve("/api/health"))) {
         await("Backend readiness: " + uri)
             .atMost(Duration.ofMinutes(2))
             .pollInterval(Duration.ofMillis(200))
@@ -272,7 +272,7 @@ class TelemetryDockerTest {
       sendGreetingRequestForDiscoversRecentServerTracesThroughTheDashboardQuery(String traceId)
           throws IOException, InterruptedException {
     return client.send(
-        HttpRequest.newBuilder(APP.resolve("/hello/Dashboard"))
+        HttpRequest.newBuilder(helloUri("Dashboard"))
             .header("traceparent", "00-" + traceId + "-00f067aa0ba902b7-01")
             .timeout(Duration.ofSeconds(5))
             .GET()
@@ -357,7 +357,7 @@ class TelemetryDockerTest {
   private HttpResponse<String> sendResponseForDisplaysTheActualServerSpanThroughGrafana(
       String traceId) throws IOException, InterruptedException {
     return client.send(
-        HttpRequest.newBuilder(APP.resolve("/hello/Ada"))
+        HttpRequest.newBuilder(helloUri("Ada"))
             .header("traceparent", "00-" + traceId + "-00f067aa0ba902b7-01")
             .timeout(Duration.ofSeconds(5))
             .GET()
@@ -468,7 +468,7 @@ class TelemetryDockerTest {
   private HttpResponse<Void> sendResponseForRetainsTheGreetingSpanContextAcrossInternalMethodCalls(
       String traceId) throws IOException, InterruptedException {
     return client.send(
-        HttpRequest.newBuilder(APP.resolve("/hello/Methods"))
+        HttpRequest.newBuilder(helloUri("Methods"))
             .header("traceparent", "00-" + traceId + "-00f067aa0ba902b7-01")
             .timeout(Duration.ofSeconds(5))
             .GET()
@@ -490,5 +490,9 @@ class TelemetryDockerTest {
         .filter(span -> "GET /hello/{name}".equals(span.path("operationName").asText()))
         .findFirst()
         .orElseThrow();
+  }
+
+  private static URI helloUri(String name) {
+    return APP.resolve("/hello/" + name);
   }
 }

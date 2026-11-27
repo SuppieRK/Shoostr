@@ -2,7 +2,7 @@ plugins {
 	id 'java-library'
 }
 
-version = '2026.11.21.0'
+version = '2026.11.27.0'
 
 dependencies {
 	testImplementation 'nl.jqno.equalsverifier:equalsverifier:4.5.2'

@@ -15,6 +15,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpResponse;
 import java.net.http.WebSocket;
 import java.net.http.WebSocketHandshakeException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.concurrent.CountDownLatch;
@@ -313,7 +314,8 @@ class RouteExceptionTest {
               group.path(
                   "/child",
                   child ->
-                      child.get((ignoredTypedRequest, ignoredTypedResponse) -> {
+                      child.post((request, response) -> {
+                        request.attribute("originalResponse", response);
                         throw new IllegalArgumentException();
                       }));
 
@@ -321,17 +323,77 @@ class RouteExceptionTest {
                   group,
                   group.exception(
                       IllegalArgumentException.class,
-                      (ignoredFailure, ignoredRequest, response) -> response.text("typed error")));
+                      (failure, request, response) -> {
+                        assertSame(request.attribute("originalResponse").orElseThrow(), response);
+                        response.body("application/json", "typed " + request.body(String.class));
+                      }));
             });
 
         try (var test = TestServer.start(app)) {
           assertEquals(
-              "typed error",
+              "\"typed error\"",
               test.send(
-                      request -> request.path("/typed/child"), HttpResponse.BodyHandlers.ofString())
+                      request ->
+                          request
+                              .path("/typed/child")
+                              .method("POST")
+                              .body("error".getBytes(StandardCharsets.UTF_8)),
+                      HttpResponse.BodyHandlers.ofString())
                   .body());
         }
       }
+    }
+  }
+
+  @Test
+  void acceptsExistingHandlerTypesOnTheTypedView() throws Exception {
+    var app = new Shoostr();
+
+    try (Closeable cleanup = app::close) {
+      ExceptionHandler<Exception> ordinary =
+          (failure, request, response) -> response.text("ordinary");
+      ExceptionHandler<Exception> typed =
+          (ExceptionHandler.Typed<Exception>)
+              (failure, request, response) -> response.body("application/json", "typed");
+
+      app.codec(new TestCodec())
+          .routes()
+          .exception(IllegalArgumentException.class, typed)
+          .exception(IllegalStateException.class, ordinary);
+
+      app.routes()
+          .get("/typed", REJECT)
+          .get(
+              "/ordinary",
+              (request, response) -> {
+                throw new IllegalStateException();
+              });
+
+      try (var test = TestServer.start(app)) {
+        assertEquals(
+            "\"typed\"",
+            test.send(request -> request.path("/typed"), HttpResponse.BodyHandlers.ofString())
+                .body());
+        assertEquals(
+            "ordinary",
+            test.send(request -> request.path("/ordinary"), HttpResponse.BodyHandlers.ofString())
+                .body());
+      }
+    }
+  }
+
+  @Test
+  void rejectsTypedExceptionHandlersOnOrdinaryRegistrations() throws Exception {
+    var app = new Shoostr();
+
+    try (Closeable cleanup = app::close) {
+      ExceptionHandler.Typed<Exception> renderer =
+          (failure, request, response) -> response.body("application/json", "typed");
+
+      assertThrows(IllegalArgumentException.class, () -> app.exception(Exception.class, renderer));
+      var routes = app.routes();
+      assertThrows(
+          IllegalArgumentException.class, () -> routes.exception(Exception.class, renderer));
     }
   }
 

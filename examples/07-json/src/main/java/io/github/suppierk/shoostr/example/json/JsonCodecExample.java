@@ -1,145 +1,117 @@
 package io.github.suppierk.shoostr.example.json;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.exc.StreamReadException;
 import com.fasterxml.jackson.databind.DeserializationFeature;
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.cfg.CoercionAction;
+import com.fasterxml.jackson.databind.cfg.CoercionInputShape;
+import com.fasterxml.jackson.databind.exc.MismatchedInputException;
+import com.fasterxml.jackson.databind.exc.ValueInstantiationException;
+import com.fasterxml.jackson.databind.type.LogicalType;
 import io.github.suppierk.shoostr.Codec;
 import io.github.suppierk.shoostr.Shoostr;
 import io.github.suppierk.shoostr.http.MediaType;
 import io.github.suppierk.shoostr.http.exceptions.BadRequestException;
+
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-import java.util.Objects;
+import java.util.Map;
 
-/** Converts an explicit user representation to and from JSON. */
+/**
+ * Converts Java values to and from JSON through Jackson.
+ */
 public final class JsonCodecExample {
-  /** Prevents construction of this example factory. */
-  private JsonCodecExample() {}
-
-  /**
-   * Creates an unstarted application.
-   *
-   * @return application owned by its caller
-   */
-  public static Shoostr application() {
-    var app = new Shoostr();
-    // This registration view supplies typed helpers without changing ordinary app.routes().
-    app.codec(new UserCodec())
-        .routes(
-            routes ->
-                routes
-                    .exception(
-                        BadRequestException.class,
-                        (ignored, ignoredRequest, response) ->
-                            response
-                                .status(400)
-                                // Error bytes bypass the codec, which only supports the User class.
-                                .body(
-                                    MediaType.APPLICATION_JSON,
-                                    "{\"error\":\"invalid_user\"}"
-                                        .getBytes(StandardCharsets.UTF_8)))
-                    // The same codec decodes the request into User and encodes the returned User.
-                    .post(
-                        "/users",
-                        (request, response) ->
-                            response
-                                .status(201)
-                                .body(MediaType.APPLICATION_JSON, request.body(User.class)))
-                    .get(
-                        "/help",
-                        (ignoredTypedRequest, response) ->
-                            response.text("Send a JSON object with a nonblank name")));
-
-    return app;
-  }
-
-  /**
-   * A user whose name is present and nonblank.
-   *
-   * @param name user name
-   */
-  public record User(String name) {
     /**
-     * Validates the name before publishing the user.
+     * Creates an unstarted application.
      *
-     * @param name user name
-     * @throws NullPointerException if the name is null
-     * @throws IllegalArgumentException if the name is blank
+     * @return application owned by its caller
      */
-    public User {
-      // These example invariants also apply to users constructed without JSON input.
-      Objects.requireNonNull(name);
-      if (name.isBlank()) {
-        throw new IllegalArgumentException("A user name is required");
-      }
-    }
-  }
-
-  /** Converts only this example's user model with explicit JSON tree operations. */
-  private static final class UserCodec implements Codec {
-    private final ObjectMapper mapper;
-
-    /** Configures the mapper before concurrent use. */
-    private UserCodec() {
-      // Configure the shared mapper once before concurrent handlers can use it.
-      this.mapper = new ObjectMapper().enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
+    public static Shoostr application() {
+        return new Shoostr().codec(new JsonCodec()).routes(routes -> routes
+            .exception(
+                BadRequestException.class,
+                (failure, request, response) -> response
+                    .body(
+                        MediaType.APPLICATION_JSON,
+                        Map.of("error", "invalid_user")
+                    ))
+            .post("/users", (request, response) -> response
+                .status(201)
+                .body(MediaType.APPLICATION_JSON, request.body(User.class)))
+            .get("/help", (request, response) -> response
+                .text("Send a JSON object with a nonblank name")));
     }
 
     /**
-     * Reads one user from a JSON object.
+     * A user whose name is present and nonblank.
      *
-     * @param source finite JSON bytes
-     * @param type supported user class
-     * @param <T> requested result type
-     * @return validated user
-     * @throws IOException if an unexpected reading failure occurs
-     * @throws IllegalArgumentException if the class is unsupported
-     * @throws BadRequestException if the JSON or user input is invalid
+     * @param name username
      */
-    @Override
-    public <T> T read(byte[] source, Class<T> type) throws IOException {
-      if (type != User.class) {
-        throw new IllegalArgumentException("This codec supports only User");
-      }
-
-      JsonNode tree;
-
-      // Classify recognized input errors as 400; unexpected I/O failures remain server failures.
-      try {
-        tree = mapper.readTree(source);
-      } catch (JsonProcessingException failure) {
-        throw new BadRequestException("Malformed JSON", failure);
-      }
-
-      // Check the JSON shape before constructing the domain value.
-      if (tree == null || !tree.isObject() || !tree.path("name").isTextual()) {
-        throw new BadRequestException("A string name is required");
-      }
-
-      try {
-        return type.cast(new User(tree.path("name").asText()));
-      } catch (IllegalArgumentException failure) {
-        throw new BadRequestException("Invalid user name", failure);
-      }
+    public record User(String name) {
+        /**
+         * Validates the name before publishing the user.
+         *
+         * @param name username
+         * @throws IllegalArgumentException if the name is missing or blank
+         */
+        public User {
+            if (name == null || name.isBlank()) {
+                throw new IllegalArgumentException("Username is required");
+            }
+        }
     }
 
     /**
-     * Writes one user's JSON representation.
-     *
-     * @param value validated user
-     * @return encoded JSON bytes
-     * @throws IOException if encoding fails
-     * @throws IllegalArgumentException if the value is unsupported
+     * Converts Jackson-supported classes without annotations on the models.
      */
-    @Override
-    public byte[] write(Object value) throws IOException {
-      if (!(value instanceof User(var name))) {
-        throw new IllegalArgumentException("This codec supports only User");
-      }
+    private static final class JsonCodec implements Codec {
+        private final ObjectMapper mapper;
 
-      // Explicit tree conversion needs no mapping annotations on the model.
-      return mapper.writeValueAsBytes(mapper.createObjectNode().put("name", name));
+        /**
+         * Sets the JSON input rules before the mapper is shared.
+         */
+        private JsonCodec() {
+            this.mapper = new ObjectMapper()
+                .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
+                .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES);
+
+            // Require a JSON string for a String property,
+            // including the user's name.
+            mapper.coercionConfigFor(LogicalType.Textual)
+                .setCoercion(CoercionInputShape.Integer, CoercionAction.Fail)
+                .setCoercion(CoercionInputShape.Float, CoercionAction.Fail)
+                .setCoercion(CoercionInputShape.Boolean, CoercionAction.Fail);
+        }
+
+        /**
+         * {@inheritDoc}
+         */
+        @Override
+        public <T> T read(byte[] source, Class<T> type) throws IOException {
+            try {
+                var value = mapper.readValue(source, type);
+
+                if (value == null) {
+                    throw new BadRequestException("JSON value is required");
+                }
+
+                return value;
+            } catch (StreamReadException | MismatchedInputException failure) {
+                throw new BadRequestException("Invalid JSON input", failure);
+            } catch (ValueInstantiationException failure) {
+                if (failure.getCause() instanceof IllegalArgumentException) {
+                    throw new BadRequestException("Invalid JSON value", failure);
+                }
+
+                throw failure;
+            }
+        }
+
+        /**
+         * {@inheritDoc}
+         */
+        @Override
+        public byte[] write(Object value) throws IOException {
+            return mapper.writeValueAsBytes(value);
+        }
     }
-  }
 }

@@ -11,13 +11,17 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.net.http.WebSocket;
 import java.nio.channels.ServerSocketChannel;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.WeakHashMap;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Consumer;
@@ -26,7 +30,7 @@ import org.eclipse.jetty.server.ServerConnector;
 import org.eclipse.jetty.server.SslConnectionFactory;
 import org.jspecify.annotations.Nullable;
 
-/** A real HTTP fixture owning the supplied application's lifetime on loopback. */
+/** A real HTTP and WebSocket fixture owning the supplied application's lifetime on loopback. */
 public final class TestServer implements Closeable {
   private static final Map<Shoostr, ReentrantLock> STARTUP_LOCKS = new WeakHashMap<>();
   private static final ReentrantLock STARTUP_LOCKS_GUARD = new ReentrantLock();
@@ -35,6 +39,7 @@ public final class TestServer implements Closeable {
   private final URI baseUri;
   private final HttpClient client;
   private final @Nullable ServerSocketChannel reservation;
+  private final Set<TestWebSocket> webSockets;
   private final ReentrantLock closeLock;
   private volatile boolean closed;
 
@@ -52,6 +57,7 @@ public final class TestServer implements Closeable {
     this.baseUri = baseUri;
     this.client = client;
     this.reservation = reservation;
+    this.webSockets = ConcurrentHashMap.newKeySet();
     this.closeLock = new ReentrantLock();
     this.closed = false;
   }
@@ -475,6 +481,98 @@ public final class TestServer implements Closeable {
   }
 
   /**
+   * Opens a WebSocket using this fixture's client and a three-second handshake timeout.
+   *
+   * @param path relative route path, optionally including a raw query
+   * @return connected test socket, also owned by this fixture
+   * @throws IOException if the handshake or transport fails
+   * @throws InterruptedException if the caller is interrupted while opening the socket
+   */
+  public TestWebSocket openWebSocket(String path) throws IOException, InterruptedException {
+    return openWebSocket(path, ignored -> {});
+  }
+
+  /**
+   * Opens a WebSocket through the fixture's configured client. The callback can set handshake
+   * headers, subprotocols and the handshake timeout. Close the returned socket to release it early.
+   * A rejected handshake preserves the JDK exception and its HTTP response.
+   *
+   * @param path relative route path, optionally including a raw query
+   * @param configure synchronous WebSocket builder configuration
+   * @return connected test socket, also owned by this fixture
+   * @throws IOException if the handshake or transport fails
+   * @throws InterruptedException if the caller is interrupted while opening the socket
+   * @throws IllegalStateException if the fixture is closed
+   */
+  public TestWebSocket openWebSocket(String path, Consumer<WebSocket.Builder> configure)
+      throws IOException, InterruptedException {
+    Objects.requireNonNull(configure);
+    final var target = TestRequest.resolvePath(baseUri(), path);
+    final var scheme = "https".equals(target.getScheme()) ? "wss" : "ws";
+    // Replacing only the scheme keeps the encoded path and query in the resolved URI.
+    final var uri = URI.create(scheme + target.toString().substring(target.getScheme().length()));
+    final var builder = client.newWebSocketBuilder().connectTimeout(Duration.ofSeconds(3));
+    configure.accept(builder);
+    final var socket = new TestWebSocket(webSockets::remove);
+
+    try {
+      socket.awaitOpen(startWebSocket(socket, builder, uri));
+      return socket;
+    } catch (IOException | InterruptedException | RuntimeException failure) {
+      try (socket) {
+        throw failure;
+      }
+    }
+  }
+
+  /**
+   * Fills named path segments and appends query parameters before configuring the handshake. Both
+   * callbacks run synchronously before the fixture starts the upgrade.
+   *
+   * @param template relative path template with an optional raw query
+   * @param configurePath path parameter and query configuration
+   * @param configureHandshake JDK WebSocket builder configuration
+   * @return connected test socket, also owned by this fixture
+   * @throws IOException if the handshake or transport fails
+   * @throws InterruptedException if the caller is interrupted while opening the socket
+   * @throws IllegalArgumentException if the template or a parameter is invalid
+   * @throws IllegalStateException if the fixture is closed or a placeholder lacks a value
+   * @throws NullPointerException if an argument is null
+   */
+  public TestWebSocket openWebSocket(
+      String template,
+      Consumer<TestRequest.PathBuilder> configurePath,
+      Consumer<WebSocket.Builder> configureHandshake)
+      throws IOException, InterruptedException {
+    Objects.requireNonNull(configureHandshake);
+    baseUri();
+
+    return openWebSocket(
+        TestRequest.buildPathFromTemplate(template, configurePath), configureHandshake);
+  }
+
+  /**
+   * Registers the pending connection before releasing the fixture lock to wait for the upgrade.
+   *
+   * @param socket fixture-owned test socket
+   * @param builder configured JDK handshake builder
+   * @param uri absolute WebSocket target on the fixture origin
+   * @return pending handshake
+   */
+  private CompletableFuture<WebSocket> startWebSocket(
+      TestWebSocket socket, WebSocket.Builder builder, URI uri) {
+    closeLock.lock();
+
+    try {
+      baseUri();
+      webSockets.add(socket);
+      return socket.start(builder, uri);
+    } finally {
+      closeLock.unlock();
+    }
+  }
+
+  /**
    * Returns the actual loopback origin for browser debugging or independently owned native clients.
    * Ordinary requests use {@link #send(Consumer)} instead of assembling URLs.
    *
@@ -504,8 +602,8 @@ public final class TestServer implements Closeable {
   }
 
   /**
-   * Cancels owned client work, then stops the application and releases its listener. Safe to call
-   * repeatedly. Waits at most three seconds for client termination, not indefinitely for a body.
+   * Closes test sockets, cancels owned client work, then stops the application and releases its
+   * listener. Safe to call repeatedly. Waits at most three seconds for client termination.
    * Application shutdown retains its native drain timeout and reports stop failures; it does not
    * promise to finish caller-owned work or an uncooperative handler.
    *
@@ -522,9 +620,31 @@ public final class TestServer implements Closeable {
 
       closed = true;
 
-      closeResources(app, client, reservation);
+      try (Closeable resources = () -> closeResources(app, client, reservation)) {
+        closeWebSockets();
+      }
     } finally {
       closeLock.unlock();
+    }
+  }
+
+  /** Releases every socket even when one fails during local cleanup. */
+  private void closeWebSockets() {
+    Throwable failure = null;
+    for (final var socket : List.copyOf(webSockets)) {
+      try {
+        socket.close();
+      } catch (RuntimeException cleanup) {
+        if (failure == null) {
+          failure = cleanup;
+        } else if (!failure.equals(cleanup)) {
+          failure.addSuppressed(cleanup);
+        }
+      }
+    }
+
+    if (failure instanceof RuntimeException ordinary) {
+      throw ordinary;
     }
   }
 

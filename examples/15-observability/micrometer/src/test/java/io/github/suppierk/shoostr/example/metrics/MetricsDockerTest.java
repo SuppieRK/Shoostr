@@ -165,10 +165,7 @@ class MetricsDockerTest {
       assertEquals("Hello, " + name + "!", response.body());
     }
 
-    var query =
-        URLEncoder.encode(
-            "http_server_requests_seconds_count{route=\"/hello/{name}\",status=\"200\"}",
-            StandardCharsets.UTF_8);
+    var query = "http_server_requests_seconds_count{route=\"/hello/{name}\",status=\"200\"}";
     await("The three additional completed requests must reach Prometheus")
         .atMost(Duration.ofSeconds(30))
         .pollInterval(Duration.ofMillis(200))
@@ -218,7 +215,7 @@ class MetricsDockerTest {
   private HttpResponse<String> sendResponseForExportsThreeGreetingRequestsUnderTheirTemplate(
       String name) throws IOException, InterruptedException {
     return client.send(
-        HttpRequest.newBuilder(APP.resolve("/hello/" + name))
+        HttpRequest.newBuilder(helloUri(name))
             .timeout(Duration.ofSeconds(5))
             .GET()
             .build(),
@@ -227,8 +224,11 @@ class MetricsDockerTest {
 
   private HttpResponse<String> sendMetricsQuery(String query)
       throws IOException, InterruptedException {
+    var encodedQuery = URLEncoder.encode(query, StandardCharsets.UTF_8);
+    var target = "/api/v1/query?query=" + encodedQuery;
+
     return client.send(
-        HttpRequest.newBuilder(PROMETHEUS.resolve("/api/v1/query?query=" + query))
+        HttpRequest.newBuilder(PROMETHEUS.resolve(target))
             .timeout(Duration.ofSeconds(5))
             .GET()
             .build(),
@@ -310,7 +310,7 @@ class MetricsDockerTest {
         200,
         client
             .send(
-                HttpRequest.newBuilder(APP.resolve("/hello/Grafana"))
+                HttpRequest.newBuilder(helloUri("Grafana"))
                     .timeout(Duration.ofSeconds(5))
                     .GET()
                     .build(),
@@ -383,5 +383,9 @@ class MetricsDockerTest {
             .POST(HttpRequest.BodyPublishers.ofString(body))
             .build(),
         HttpResponse.BodyHandlers.ofString());
+  }
+
+  private static URI helloUri(String name) {
+    return APP.resolve("/hello/" + name);
   }
 }

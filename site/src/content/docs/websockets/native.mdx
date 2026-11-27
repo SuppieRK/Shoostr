@@ -1,55 +1,77 @@
 ---
 title: Configure native WebSocket message limits and demand
 description: Select an offered WebSocket subprotocol, control native listener demand, copy borrowed binary buffers, and enforce incoming message limits.
+head:
+  - tag: title
+    content: Native WebSocket demand and limits | Shoostr
 next:
   label: Observe request completion
   link: ../../lifecycle/hooks/
 ---
 
-import { Code } from '@astrojs/starlight/components';
+import {Code} from '@astrojs/starlight/components';
 import application from '../../../../../examples/11-websockets/src/main/java/io/github/suppierk/shoostr/example/websocket/NativeWebSocketExample.java?raw';
 import test from '../../../../../examples/11-websockets/src/test/java/io/github/suppierk/shoostr/example/websocket/NativeWebSocketExampleTest.java?raw';
 
 ## Description
 
-Native WebSocket handling exposes Jetty's listener and explicit message-demand APIs. Demand controls when the transport may deliver further events; it is a transport interaction rather than an application's work queue.
+Choose the native `routes.websocket(...)` overload when you need a Jetty `Session.Listener`, explicit demand,
+subprotocol selection or connection limits. Call `Session.demand()` to let Jetty deliver the next event to a
+listener that uses explicit demand. For sequential application callbacks on complete messages, use
+[managed WebSockets](../managed/).
 
-This task creates a fresh listener for each accepted HTTP upgrade and copies any required admission data before live request access ends. `HttpHeaders` supplies protocol names. `BadRequestException` rejects invalid upgrades with `400`, and `ForbiddenException` rejects forbidden upgrades with `403`, before connection handling starts.
+The factory runs during HTTP admission and creates a fresh listener for each accepted connection. Copy any path
+or identity values the listener needs before the factory returns. Keep the live handshake request and upgrade
+response within that callback.
 
-Choose the native `routes.websocket(...)` overload for Jetty `Session.Listener`, explicit demand, subprotocol selection or connection limits. Its factory runs during HTTP admission and creates a listener for each accepted connection. Copy the needed path or identity there; do not retain the live handshake request or upgrade response. Use [managed callbacks](../managed/) for ordinary complete messages with sequential application callbacks.
-
-Native callbacks retain [Jetty's execution contract](https://jetty.org/docs/jetty/12.1/programming-guide/client/websocket.html), so follow its callback and demand rules when sending asynchronously.
-A `Session.Listener` must demand the next event explicitly, and a binary receive callback controls the lifetime of its borrowed buffer.
-The [Jetty WebSocket architecture](https://jetty.org/docs/jetty/12.1/programming-guide/client/websocket.html) explains both contracts in more detail.
+Jetty can reuse the binary receive buffer as soon as you complete the `Callback` passed to
+`onWebSocketBinary(...)`. Copy any bytes you need to keep before completing it.
+For asynchronous replies, see [Jetty's server endpoint guide](https://jetty.org/docs/jetty/12.1/programming-guide/server/websocket.html#jetty-endpoints)
+and the [send and demand rules shared by clients and servers](https://jetty.org/docs/jetty/12.1/programming-guide/client/websocket.html#architecture).
 
 ## Example
 
-The `/native/{room}` route first requires exactly one trusted Origin, then requires an offered `chat.v2` subprotocol and selects it before returning the listener.
-Its listener prefixes text with the detached room name, echoes binary bytes, and requests another event only after the preceding write completes.
-Binary input is copied before its receive callback is completed, keeping the outgoing bytes valid after Jetty can reuse the receive buffer.
-A failed write disconnects the session rather than leaving the listener waiting indefinitely.
+The factory for `/native/{room}` checks the handshake before creating the listener.
 
-The listener sets incoming text and binary message limits to 64 bytes each (UTF-8 bytes for text) and permits at most two pending outgoing data frames when the session opens.
-These limits do not provide an application producer queue; if external producers send concurrently, bound their pending work and serialize native writes yourself.
-Jetty owns the upgraded session and releases its transport resources when the connection or application closes.
-The native factory performs its Origin check before returning the listener, following the same admission rule as [managed WebSockets](../managed/).
-HTTP CORS and CSRF do not protect this handshake; authenticate private endpoints separately, because neither Origin nor a negotiated subprotocol establishes identity.
+1. Require exactly one `Origin` header with the value `https://app.example`. Throw `ForbiddenException` to return
+   `403` if the check fails.
+2. Require the client to offer `chat.v2`. Throw `BadRequestException` to return `400` if it is missing.
+3. Select `chat.v2`, then create the listener with a prefix built from the captured room name.
 
-Setting `options.setHttp2(true)` before application construction also enables negotiated HTTP/2 extended CONNECT for registered WebSocket routes, while HTTP/1.1 GET upgrades remain available.
-Only extended CONNECT with the `websocket` protocol enters that handshake path; ordinary CONNECT requests do not become WebSockets.
-The routing key remains GET for both transports, but a selected HTTP/2 request reports CONNECT through the public request and outcome APIs.
+Shoostr skips HTTP CORS and CSRF for recognized WebSocket routes. Use the Origin check for browser admission.
+Authenticate private endpoints separately from the Origin check and subprotocol selection.
+
+When the session opens, the listener limits incoming text and binary messages to 64 bytes each. For text,
+the limit counts UTF-8 bytes. Jetty allows up to two outgoing data frames to wait for sending. If external
+producers send concurrently, bound their pending work and serialize their writes.
+
+The listener calls `demand()` on open. It prefixes text replies with the room name and copies binary input
+before acknowledging receipt, so the echo can use its own bytes. After a successful write, the listener
+calls `demand()` again. If the write fails, it disconnects the session. Jetty owns the session and releases
+its transport resources when the connection or application closes.
+
+To enable HTTP/2 WebSockets, call `options.setHttp2(true)` before constructing the application. HTTP/1.1
+`GET` upgrades are still available.
+
+- On HTTP/2, Shoostr runs the handshake for extended `CONNECT` with the `websocket` protocol. Ordinary
+  `CONNECT` follows ordinary HTTP routing.
+- Register WebSocket routes the same way for both transports. Shoostr looks up the route with `GET` and
+  reports the actual `CONNECT` method in `Request` and `RequestOutcome` for HTTP/2.
 
 <Code code={application} lang="java" title="NativeWebSocketExample.java" />
 
 ## Test
 
-`TestServer` is the HTTP test fixture: it starts the application on an available loopback port and owns its shutdown.
+The tests start `NativeWebSocketExample.application()` with `TestServer` on an available loopback port.
+The fixture owns application shutdown. Use `openWebSocket(...)` to send fragments, read complete replies
+and check close codes. The tests use it to verify repeated demand, fragmented binary echo, the 64-byte
+limit and the `400` and `403` handshake responses. One test uses the JDK client's `getSubprotocol()`
+to check that the server selected `chat.v2` from the offered values.
 
-The JDK WebSocket client verifies Origin rejection, offered-subprotocol selection, repeated demand, fragmented binary transfer, incoming limits, and normal closure.
-These exchanges use HTTP/1.1; they do not prove HTTP/2 WebSocket negotiation.
+These tests exercise HTTP/1.1 upgrades. HTTP/2 negotiation requires a client that supports extended `CONNECT`.
 
 <Code code={test} lang="java" title="NativeWebSocketExampleTest.java" />
 
 ## Continue
 
-Next, [Observe request completion](../../lifecycle/hooks/) to understand the HTTP upgrade outcome boundary.
+Next, [observe request completion](../../lifecycle/hooks/) to see what Shoostr reports when an HTTP exchange ends.

@@ -1,65 +1,84 @@
 ---
 title: Start an application and shut it down safely
-description: Start the listener, signal waiting handlers before graceful shutdown, and release application resources after framework cleanup, including startup failures.
+description: Start Shoostr, signal waiting handlers before graceful shutdown, and release owned resources when shutdown or startup failure triggers cleanup.
 next:
   label: Configure native Jetty settings
   link: ../../application/native-configuration/
 ---
 
-import { Code } from '@astrojs/starlight/components';
+import {Code} from '@astrojs/starlight/components';
 import application from '../../../../../examples/12-lifecycle/src/main/java/io/github/suppierk/shoostr/example/lifecycle/ShutdownExample.java?raw';
 import test from '../../../../../examples/12-lifecycle/src/test/java/io/github/suppierk/shoostr/example/lifecycle/ShutdownExampleTest.java?raw';
 
 ## Description
 
-A Shoostr application owns a listener and the resources it has accepted for cleanup. Shutdown first gives active work a chance to finish, then releases owned resources. An application owner must close the application even when it was configured but never started.
+Close the Shoostr application you configure, even if you never start it.
+When the server is running, graceful shutdown gives active requests time to finish.
+Shoostr releases its owned resources during shutdown. Borrowed components keep their original owner.
 
-This task registers shutdown callbacks and demonstrates caller-managed lifetime. Borrowed application components keep their original owner; registering them for use does not transfer their cleanup automatically.
+Register shutdown callbacks before startup. This example uses one callback to wake waiting
+handlers and another to release an application resource after framework cleanup.
 
-Register shutdown callbacks while configuring the application, before it starts. Keep the configured instance with an owner that will close it, regardless of whether startup eventually occurs.
+| Method        | When it runs                                                                                                                                              |
+|---------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `start`       | Called by the owner to compile routes and start the listener. Successful startup freezes registration.                                                    |
+| `close`       | Called explicitly or by the JVM shutdown hook. Startup failures after route compilation also invoke it; repeated calls do nothing.                        |
+| `beforeClose` | Registered callbacks run in registration order at the start of the first closure, before native graceful shutdown. Use them to signal long-lived work.    |
+| `afterClose`  | Registered callbacks run in reverse registration order after framework and extension cleanup. Use them for final disposal of application-owned resources. |
 
-| Method        | When it runs                                                                                                                                               |
-| ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `start`       | Called by the owner to compile routes and start the listener. Successful startup freezes registration.                                                     |
-| `close`       | Called explicitly or by the JVM shutdown hook. Startup failures after route compilation also invoke it; repeated calls do nothing. |
-| `beforeClose` | Registered callbacks run in registration order at the start of the first closure, before native graceful shutdown. Use them to signal long-lived work.     |
-| `afterClose`  | Registered callbacks run in reverse registration order after framework and extension cleanup. Use them for final disposal of application-owned resources.  |
+- Construction registers one JVM shutdown hook. Explicit closure removes it when the JVM allows removal.
+`start()` adds no hook.
+- `Shoostr` implements neither `Closeable` nor `AutoCloseable`. The owner manages its lifetime.
+In HTTP tests, the closeable `TestServer` fixture can own shutdown.
+- Both callback lists run synchronously on the closing thread, even when the application never started.
+- Create a new application to start again after closure.
 
-Construction registers one JVM shutdown hook, even before startup; explicit closure removes it, while `start()` adds no further hook.
-`Shoostr` does not implement `Closeable` or `AutoCloseable`; keep its lifetime with the application owner. `TestServer` remains a closeable fixture that owns application shutdown in HTTP tests.
-Both shutdown callback lists run synchronously on the closing thread, including when an application closes without starting, and a closed application cannot restart.
+Return promptly from signaling callbacks so Jetty can begin graceful shutdown. Signal waiting
+handlers and let them finish during the drain. Executor ownership determines who stops the pool
+and who coordinates any work still running.
 
-Keep signalling callbacks prompt so they do not wait for the handlers they must release.
-Caller-owned executor tasks can outlive the native drain, so coordinate those tasks before disposing any resource they still use; see [endpoint executors](../executors/).
-Jetty stops its native platform pool with the server, and Shoostr closes the dedicated executor it creates when virtual execution is enabled.
-Executors supplied through native configuration remain caller-owned unless their lifecycle is explicitly registered with Jetty.
+| Executor or task                                         | Who handles cleanup                                                                                                                                   |
+|----------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Jetty's platform thread pool                             | Jetty stops it with the server.                                                                                                                       |
+| The dedicated virtual-thread executor created by Shoostr | Shoostr closes it.                                                                                                                                    |
+| An executor supplied through native configuration        | The caller owns it unless its lifecycle is explicitly registered with Jetty.                                                                          |
+| Tasks on a caller-owned executor                         | The caller coordinates them before disposing of resources they still use. Tasks can outlive the Jetty drain. See [endpoint executors](../executors/). |
 
-A rejected route compilation leaves registration open for correction, whereas failures after compilation close acquired resources and prevent another startup attempt.
-`RuntimeException` failures from shutdown callbacks are collected without skipping later callbacks or cleanup.
-An `Error` stops the remaining callbacks in that phase. Framework cleanup is still attempted,
-and the separate `afterClose` phase begins after it; an error in that phase stops
-its remaining callbacks. The first `Error` is rethrown after cleanup, with other
-failures retained as suppressed exceptions. When no error occurs, ordinary failures
-keep the existing `IOException` contract.
+Whether you can retry startup depends on when it failed. During shutdown, the type of callback failure
+determines whether the remaining callbacks in that phase run.
+
+| Failure                                         | What happens                                                                                                                                                           |
+|-------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Route compilation is rejected                   | Registration stays open so the owner can correct the routes and retry.                                                                                                 |
+| Startup fails after route compilation           | Shoostr closes acquired resources and prevents another startup attempt.                                                                                                |
+| A shutdown callback throws a `RuntimeException` | Shoostr collects the failure, runs later callbacks, and still attempts cleanup.                                                                                        |
+| A shutdown callback throws an `Error`           | Shoostr stops the remaining callbacks in that phase. After a `beforeClose` error, Shoostr still attempts framework cleanup, then runs the separate `afterClose` phase. |
+
+Shoostr rethrows the first `Error` after cleanup and retains other failures as suppressed exceptions.
+If no `Error` occurs, `close()` reports shutdown failures through `IOException`.
 
 ## Example
 
-`/wait-for-shutdown` waits for a shutdown signal or returns 204 after 30 seconds without one.
-The signal releases waiting requests while their resources remain available, and `dispose` runs during final cleanup.
+`/wait-for-shutdown` returns `200` with `stopping` when it receives the shutdown signal. After 30 seconds without
+a signal, it returns `204`. The `beforeClose` callback wakes waiting handlers while their resources are still available.
+The example registers the caller's `dispose` callback with `afterClose` for final cleanup.
 
 <Code code={application} lang="java" title="ShutdownExample.java" />
 
 ## Test
 
-`TestServer` is the HTTP test fixture: it starts the application on an available loopback port and owns its shutdown.
-
-The startup-failure fixture activates an `ApplicationExtension<Object>` with application lifetime callbacks. Its `beforeStart()` callback deliberately fails so the test can check cleanup after startup fails.
-
-The live request test closes the application while a handler is waiting, then verifies its response and final cleanup.
-The other tests cover normal traffic, repeated closure, callback order before startup, cleanup after startup failure, and final resource disposal when a signalling callback throws `Error`.
+- `TestServer` starts the application from `ShutdownExample.application(...)` on an available loopback port.
+  `/ready` responds before cleanup, and closing the fixture runs `dispose` once.
+- With a handler waiting, the test closes the application and checks for a `200` response with `stopping` in the body.
+  It also verifies final cleanup.
+- Closing an unstarted application twice runs each callback once in the documented order. A later start attempt fails.
+- An `ApplicationExtension<Object>` throws from `beforeStart()` so the test can verify cleanup and check that a second
+  start attempt fails.
+- When a signaling callback throws an `Error`, the final cleanup callback runs before `close()` rethrows the error.
 
 <Code code={test} lang="java" title="ShutdownExampleTest.java" />
 
 ## Continue
 
-Next, [Configure native Jetty settings](../../application/native-configuration/) to adjust the listener and transport before startup.
+Next, [configure native Jetty settings](../../application/native-configuration/)
+to adjust the listener and transport before startup.

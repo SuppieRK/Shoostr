@@ -46,5 +46,3 @@ These compiled factories support the routing recipes, with a complete test besid
   and [test](src/test/java/io/github/suppierk/shoostr/example/routing/ConditionalRoutesExampleTest.java).
 
 Run `./gradlew :routing-example:test` from the repository root with Java 21.
-
-The [combined launcher fixture](legacy-requests/README.md) provides a separate runnable demonstration.

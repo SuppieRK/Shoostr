@@ -6,49 +6,60 @@ next:
   link: ../sse/
 ---
 
-import { Code } from '@astrojs/starlight/components';
+import {Code} from '@astrojs/starlight/components';
 import application from '../../../../../examples/10-streaming/finite/src/main/java/io/github/suppierk/shoostr/example/streaming/FiniteStreamingExample.java?raw';
 import test from '../../../../../examples/10-streaming/finite/src/test/java/io/github/suppierk/shoostr/example/streaming/FiniteStreamingExampleTest.java?raw';
 
 ## Description
 
-A streamed response sends output incrementally while its handler is active. Starting the stream commits the selected response metadata; after that point, the application cannot replace already-sent output with a new HTTP error body.
+Send output while the handler is still running. Write chunks through `response.startStream(...)` or pass an input
+source to `response.input(...)`. Both bypass the finite-body size limit and use a bounded output buffer.
 
-This task writes a finite response and transfers an input source through a bounded output buffer. Backpressure means a write waits for transport progress before reusing that buffer. The buffer limit bounds pending application bytes, not the total transfer or its duration.
+The buffer capacity limits how many bytes can be pending at once. A large transfer can flush and reuse that buffer
+for as long as the handler and transport keep the stream open.
 
-Write incrementally through `startStream(...)`, or give `response.input(...)` an input source for transfer. Both use the bounded output buffer and bypass the finite-body limit. The `streamBufferBytes` setting limits that application buffer, not total bytes or duration. Filling the buffer or calling `flush()` waits for transport progress before reuse, providing backpressure to the handler.
+- The buffer grows as needed up to its default capacity of 8 KiB (8,192 bytes) and flushes automatically when full.
+- Call `flush()` to send pending bytes before the buffer fills. Either kind of flush waits until the transport
+  has finished using the buffer. That wait applies backpressure to the handler. The bytes can reach the client later.
+- Shoostr sends any remaining bytes when the handler returns.
+- To change Shoostr's buffer capacity, call `options.setStreamBufferBytes(16_384)` before constructing
+  `new Shoostr(options)`. Jetty's native output-buffer settings apply at the transport layer.
+  See [application settings](../../application/server-options/).
 
-The default stream buffer capacity is 8 KiB (8,192 bytes). It flushes automatically when full; returning from the handler sends any remaining bytes. To change the capacity for an application, call `options.setStreamBufferBytes(16_384)` before passing those options to `new Shoostr(options)`; see [application settings](../../application/server-options/). The buffer grows as needed up to that capacity.
-Call `flush()` when output must be submitted before the buffer fills. It waits for transport consumption so the buffer can be reused; it does not guarantee that the client has received the bytes. Native Jetty output-buffer settings do not change Shoostr’s stream capacity.
+Starting a stream commits the selected status and headers. If a failure occurs after commitment, Shoostr aborts
+the transfer. See [exception recovery](../../errors/exceptions/).
 
-Starting the stream commits the response, so select its status and headers first and do not mix streaming with a staged body or file transfer.
-Text writes use UTF-8 even if different charset metadata was supplied; encode other charsets yourself and write matching bytes instead.
-For replaceable, buffered output, use [finite response bodies](../../responses/bodies/), or use [file downloads](../../resources/downloads/) for a transfer staged from a path.
+- Set the status and headers before starting the stream.
+- Select one output mode per response. Use [finite response bodies](../../responses/bodies/) for replaceable output
+  or [file downloads](../../resources/downloads/) to stage a transfer from a path.
+- `Stream.write(String)` always encodes as UTF-8. To use another charset, declare it in the content type,
+  encode the text yourself and write the resulting bytes.
 
 ## Example
 
-The `/chunks` handler flushes the CSV header before writing two records; returning from the handler finishes the stream and sends any remaining bytes.
-The `/input` handler opens a report and passes it to `response.input(...)`, which closes that source before returning, including when reading or output fails.
+The `/chunks` handler flushes the CSV header before writing two records. The `/input` handler opens the report
+and passes the source to `response.input(...)`. That call closes the source when it exits, including if reading
+or writing fails.
 
-Keep the response and stream on the handler thread and within its lifetime; retaining either for background work does not keep the HTTP response open.
-Do not close `Response` yourself. Release handler-owned input resources when their use ends.
-After the handler returns, the framework still completes pending output and the final transport write.
-An admission permit protecting the HTTP exchange must remain held through terminal request completion;
-see [stream admission](../../lifecycle/executors/#compose-stream-admission).
-A disconnected client or a failure after commitment aborts output rather than producing a replacement error body; see [exception recovery](../../errors/exceptions/) for that boundary.
+- Use the response and stream on the handler thread while the handler is active. Shoostr owns response completion.
+- Close any other input sources you open when you finish using them.
+- Hold any admission permit for the HTTP exchange through terminal request completion, including the final transport
+  write after the handler returns. See [limit concurrent streams](../../lifecycle/stream-admission/).
+- A client disconnect can abort the exchange while output is still pending.
+
 For event framing and client replay, use [server-sent events](../sse/).
 
 <Code code={application} lang="java" title="FiniteStreamingExample.java" />
 
 ## Test
 
-`TestServer` is the HTTP test fixture: it starts the application on an available loopback port and owns its shutdown.
-
-The tests transfer more than the default finite-body limit and coordinate a client with a paused handler to prove that a flushed chunk is visible before handler completion.
-Public input-stream fixtures also verify source closure after successful transfer and after a read failure aborts committed output.
+`TestServer` starts the application from `FiniteStreamingExample.application(report)` on an available loopback port
+and owns its shutdown. The tests compare every byte of an input larger than the default finite-body limit and confirm
+that a client reads the flushed CSV header while the handler is still paused. They also verify that the input source
+closes on success and when a read failure aborts an already committed response.
 
 <Code code={test} lang="java" title="FiniteStreamingExampleTest.java" />
 
 ## Continue
 
-Next, [Send server-sent events](../sse/) to frame a text event feed over HTTP.
+Next, [send server-sent events](../sse/) to frame a text event feed over HTTP.

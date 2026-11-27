@@ -23,8 +23,10 @@ class OpenApiExampleTest {
           "healthy",
           test.send(request -> request.path("/health"), HttpResponse.BodyHandlers.ofString())
               .body());
-      assertEquals(200, test.send(request -> request.path("/users/123")).statusCode());
-      assertEquals(404, test.send(request -> request.path("/users/alice")).statusCode());
+      assertEquals(200, test.send(
+          request -> request.pathTemplate("/users/{id}", path -> path.pathParam("id", "123"))).statusCode());
+      assertEquals(404, test.send(
+          request -> request.pathTemplate("/users/{id}", path -> path.pathParam("id", "alice"))).statusCode());
       assertEquals(
           401,
           test.send(

@@ -41,7 +41,7 @@ public final class StreamingExample {
                   .classpathResources("/assets", "/public")
                   .get(
                       "/download",
-                      (ignored, response) -> {
+                      (request, response) -> {
                         // Shoostr's response stream writes incrementally; flush sends the first
                         // chunk.
                         var output = response.startStream("text/csv; charset=utf-8");

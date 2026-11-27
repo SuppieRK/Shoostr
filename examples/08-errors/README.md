@@ -47,4 +47,5 @@ Each error-handling recipe has a compiled factory and a live HTTP test:
 
 Run `./gradlew :errors-example:test` from the repository root with Java 21.
 
-The [combined launcher fixture](legacy-exceptions/README.md) provides a separate runnable demonstration.
+The [exception-handling guide](../../site/src/content/docs/errors/exceptions.mdx) explains how to register a
+renderer for the application or a route group.

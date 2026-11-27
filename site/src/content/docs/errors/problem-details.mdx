@@ -6,41 +6,55 @@ next:
   link: ../statuses/
 ---
 
-import { Code } from '@astrojs/starlight/components';
+import {Code} from '@astrojs/starlight/components';
 import application from '../../../../../examples/08-errors/src/main/java/io/github/suppierk/shoostr/example/errors/ProblemDetailsExample.java?raw';
 import test from '../../../../../examples/08-errors/src/test/java/io/github/suppierk/shoostr/example/errors/ProblemDetailsExampleTest.java?raw';
 
 ## Description
 
-Problem Details is a standard JSON representation for an API error. Shoostr's `ProblemDetails` model holds its fields; your handler still selects the HTTP status and encodes the response body. It is a data model, rather than an exception renderer or serializer.
+Return API errors as <a href="https://www.rfc-editor.org/rfc/rfc9457.html" target="_blank" rel="noopener noreferrer">Problem Details</a>,
+the format defined by RFC 9457. Shoostr's `ProblemDetails` model holds the public fields for the response.
+This example registers a JSON codec with `app.codec(codec)` to encode them.
 
-This task returns a not-found problem using Jackson to encode the model's map. `NotFoundException` supplies an HTTP failure when the requested resource does not exist; its representation remains application policy.
+1. Build a `ProblemDetails` with the fields you want to send.
+2. Set the HTTP status with `response.status(...)`.
+3. Pass `application/problem+json` and the map returned by `toMap()` to the typed `response.body(...)` helper.
+   The codec encodes the map.
 
-Create `ProblemDetails`, encode `toMap()`, and send those bytes as `application/problem+json`. Set the actual response status yourself: the model neither renders output nor selects that status. If you include a problem `status` field, make it agree with the HTTP status. This application uses Jackson 2's `jackson-databind` to encode the map and needs no installed codec.
+If you include a `status` member in the body, use the same code in the HTTP response.
 
-Standard members are optional, and `toMap()` omits members that were not supplied.
-Custom members appear at the top level but cannot replace standard names.
-Use public explanations rather than exception messages or internal diagnostics; see [RFC 9457](https://www.rfc-editor.org/rfc/rfc9457.html) for the field semantics and security considerations.
+- Standard members are optional. `toMap()` omits any you leave unset.
+- Extension members appear at the top level. The builder rejects names reserved for standard members.
+
+Write explanations for the client and keep exception messages and internal diagnostics private.
 
 ## Example
 
-The missing `/items/42` resource throws `NotFoundException`, and its renderer creates a problem with matching HTTP and JSON statuses of `404`.
-It supplies a type, title, public detail, instance URI, and numeric `itemId` extension, then sends the encoded bytes explicitly.
-For renderer selection, see [exception handling](../exceptions/); ordinary typed object conversion belongs to the [JSON codec recipe](../../json/codec/).
+The handler for `/items/42` throws `NotFoundException`. Its route-scope renderer sets both the HTTP status
+and the JSON `status` to `404`. The problem also includes a type, title, public detail, instance URI reference
+and numeric `itemId` extension. The renderer passes the map to `response.body(...)`, and `JacksonCodec`
+encodes it with Jackson 2's `jackson-databind`.
 
-`ProblemDetails` copies map and list extension containers, but arbitrary objects and map keys remain shared references; it does not guarantee that custom values can be encoded as JSON.
-Keep extensions JSON-compatible, and treat the fresh top-level map from `toMap()` as an encoding projection rather than the stored problem itself.
+Choose extension values your JSON serializer can encode. `ProblemDetails` recursively copies extension maps
+and lists into unmodifiable containers. Other objects and map keys stay shared with the caller. `toMap()`
+returns a fresh, mutable top-level map for encoding.
+
+See [exception handling](../exceptions/) for renderer selection. For codec-backed object conversion, see the
+[JSON codec recipe](../../json/codec/).
 
 <Code code={application} lang="java" title="ProblemDetailsExample.java" />
 
 ## Test
 
-`TestServer` is the HTTP test fixture: it starts the application on an available loopback port and owns its shutdown.
+`TestServer` starts the app from `ProblemDetailsExample.application()` on an available loopback port and
+shuts it down when the fixture closes.
 
-The test checks the HTTP status, problem media type, parsed standard and custom members, and correct quoting without exposing the private failure message.
+The test checks the HTTP `404`, the `application/problem+json` media type and the parsed standard and
+extension members. It verifies that the quotes around `42` survive JSON encoding and parsing, and that the
+body omits the private failure message.
 
 <Code code={test} lang="java" title="ProblemDetailsExampleTest.java" />
 
 ## Continue
 
-Next, [Customize generated statuses](../statuses/) to give router failures their own representation.
+Next, [customize generated statuses](../statuses/) to give router failures their own representation.
